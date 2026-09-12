@@ -249,10 +249,6 @@ public class EmberClickGui extends TabScreen {
         drawConfigButton(r, delta, fade);
         drawGearButton(r, fade);
 
-        // The popup draws into this same renderer. Giving it its own begin/end cycle left
-        // its labels emitted but never drawn once the GUI scale grew.
-        popup.render(r, mx, my, delta);
-
         r.end();
 
         for (Panel p : panels) {
@@ -262,6 +258,15 @@ public class EmberClickGui extends TabScreen {
         }
         drawSearchText(graphics);
         drawConfigButtonText(graphics);
+        // Its own pass, after the background text: the popup is modal, so its panel and
+        // labels must sit above text that is drawn later in the frame.
+        if (popup.isVisible()) {
+            GuiRenderer pr = new GuiRenderer();
+            pr.theme = theme;
+            pr.begin(graphics);
+            popup.render(pr, mx, my, delta);
+            pr.end();
+        }
         popup.renderText(graphics);
     }
 
@@ -347,9 +352,6 @@ public class EmberClickGui extends TabScreen {
     }
 
     private void drawConfigButtonText(DrawContext gfx) {
-        // The popup is modal and its panel is drawn in the shape pass, so background
-        // labels drawn afterwards would paint straight over it.
-        if (popup.isVisible()) return;
         double bx = configButtonX(), by = configButtonY();
 
         theme.textRenderer().begin(theme.scale(0.95));
@@ -602,9 +604,6 @@ public class EmberClickGui extends TabScreen {
     // --- Text ---
 
     private void drawPanelText(DrawContext gfx, Panel p) {
-        // The popup is modal and its panel is drawn in the shape pass, so background
-        // labels drawn afterwards would paint straight over it.
-        if (popup.isVisible()) return;
         double x = p.x, y = p.y;
         List<Module> mods = filtered(p);
 
@@ -634,9 +633,6 @@ public class EmberClickGui extends TabScreen {
     }
 
     private void drawClientPanelText(DrawContext gfx, Panel p) {
-        // The popup is modal and its panel is drawn in the shape pass, so background
-        // labels drawn afterwards would paint straight over it.
-        if (popup.isVisible()) return;
         double x = p.x, y = p.y;
         theme.textRenderer().begin(theme.scale(0.9));
         theme.textRenderer().render("Client", x + 26, y + (HH - theme.textHeight()) / 2, HEADER_TEXT, false);
@@ -670,9 +666,6 @@ public class EmberClickGui extends TabScreen {
     }
 
     private void drawThemePanelText(DrawContext gfx, Panel p) {
-        // The popup is modal and its panel is drawn in the shape pass, so background
-        // labels drawn afterwards would paint straight over it.
-        if (popup.isVisible()) return;
         double x = p.x, y = p.y;
         theme.textRenderer().begin(theme.scale(0.9));
         theme.textRenderer().render("Themes", x + 26, y + (HH - theme.textHeight()) / 2, HEADER_TEXT, false);
@@ -702,9 +695,6 @@ public class EmberClickGui extends TabScreen {
     }
 
     private void drawSearchText(DrawContext gfx) {
-        // The popup is modal and its panel is drawn in the shape pass, so background
-        // labels drawn afterwards would paint straight over it.
-        if (popup.isVisible()) return;
         double w = 220, h = 26;
         double x = (getWindowWidth() - w) / 2, y = 8;
         theme.textRenderer().begin(theme.scale(0.78));
