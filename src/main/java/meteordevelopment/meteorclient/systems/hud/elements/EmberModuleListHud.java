@@ -145,7 +145,7 @@ public class EmberModuleListHud extends HudElement {
             double slide = (1 - a) * Math.min(rw, 60 * s) * (fromRight ? 1 : -1);
             double rx = x + alignX(rw, alignment.get()) + slide;
 
-            if (glow.get()) renderer.glow(rx, cy, rw, rowH, 6 * s, new Color(accent.r, accent.g, accent.b, (int) (70 * a)));
+            if (glow.get()) renderer.softGlow(rx, cy, rw, rowH, 6 * s, new Color(accent.r, accent.g, accent.b, (int) (140 * a)));
             renderer.roundedQuad(rx, cy, rw, rowH, radius, new Color(panel.r, panel.g, panel.b, (int) (215 * a)));
 
             double barX = fromRight ? rx + rw - bar - 3 * s : rx + 3 * s;

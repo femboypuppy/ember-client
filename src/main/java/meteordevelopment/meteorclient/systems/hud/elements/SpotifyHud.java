@@ -171,7 +171,7 @@ public class SpotifyHud extends HudElement {
             renderer.roundedQuad(x - spread, y - spread + 2.5 * s, w + spread * 2, h + spread * 2,
                 radius + spread, new Color(0, 0, 0, 30 - i * 3));
         }
-        if (glow.get()) renderer.glow(x, y, w, h, 10 * s, new Color(accent.r, accent.g, accent.b, 120));
+        if (glow.get()) renderer.softGlow(x, y, w, h, 10 * s, new Color(accent.r, accent.g, accent.b, 190));
 
         renderer.roundedQuad(x, y, w, h, radius, bg);
 

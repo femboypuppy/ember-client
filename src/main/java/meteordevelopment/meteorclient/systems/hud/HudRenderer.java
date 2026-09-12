@@ -170,21 +170,31 @@ public class HudRenderer {
      * Soft glow, same look as the GUI's. Drawn immediately, while widget bodies are batched
      * until the end of the frame, so it always sits underneath every widget.
      */
-    public void glow(double x, double y, double width, double height, double size, Color color) {
+    /**
+     * Soft glow built from stacked rounded quads.
+     *
+     * The GUI's texture-based glow must not be used here. Drawing it mid-HUD-frame needs its
+     * own mesh and a bound sampler, and doing that produced no visible glow at all while
+     * leaving state that made the next text draw - the ClickGUI's popup labels - invisible.
+     * It only ever went wrong with a glowing widget enabled, which is how it was found.
+     */
+    public void softGlow(double x, double y, double width, double height, double size, Color color) {
         if (width <= 0 || height <= 0 || size <= 0 || color.a <= 0) return;
 
-        // Its own batch: the shared TEXTURE one is mid-build for widget textures during a
-        // frame, and beginning it here threw those quads away. Built lazily so it is not
-        // constructed before the render context exists.
-        if (glowBatch == null) glowBatch = new Renderer2D(true);
+        int layers = 6;
 
-        glowBatch.begin();
-        meteordevelopment.meteorclient.gui.renderer.GuiRenderer.addGlowQuads(glowBatch, x, y, width, height, size, color);
-        glowBatch.end();
-        meteordevelopment.meteorclient.gui.renderer.GuiRenderer.renderGlow(glowBatch);
+        for (int i = layers; i >= 1; i--) {
+            double spread = size * ((double) i / layers);
+
+            // Low alpha per layer, so the stack reads as a falloff rather than hard rings.
+            int alpha = (int) (color.a * 0.18 * (1.0 - (double) (i - 1) / layers));
+            if (alpha <= 0) continue;
+
+            double w = width + spread * 2, h = height + spread * 2;
+            roundedQuad(x - spread, y - spread, w, h, Math.min(w, h) / 2,
+                new Color(color.r, color.g, color.b, alpha));
+        }
     }
-
-    private static Renderer2D glowBatch;
 
     public double text(String text, double x, double y, Color color, boolean shadow, double scale) {
         if (scale == -1) scale = hud.getTextScale();

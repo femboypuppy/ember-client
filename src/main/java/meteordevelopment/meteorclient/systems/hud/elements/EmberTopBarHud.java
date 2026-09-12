@@ -218,7 +218,7 @@ public class EmberTopBarHud extends HudElement {
             renderer.roundedQuad(x - spread, y - spread + 2.5 * s, total + spread * 2, height + spread * 2,
                 radius + spread, new Color(0, 0, 0, 30 - i * 3));
         }
-        if (glow.get()) renderer.glow(x, y, total, height, 10 * s, new Color(accent.r, accent.g, accent.b, 120));
+        if (glow.get()) renderer.softGlow(x, y, total, height, 10 * s, new Color(accent.r, accent.g, accent.b, 190));
 
         renderer.roundedQuad(x, y, total, height, radius, bg);
         renderer.roundedQuad(x + 3 * s, y + 4 * s, 2 * s, height - 8 * s, 1 * s, accent);
