@@ -347,6 +347,9 @@ public class EmberClickGui extends TabScreen {
     }
 
     private void drawConfigButtonText(GuiGraphicsExtractor gfx) {
+        // The popup is modal and its panel is drawn in the shape pass, so background
+        // labels drawn afterwards would paint straight over it.
+        if (popup.isVisible()) return;
         double bx = configButtonX(), by = configButtonY();
 
         theme.textRenderer().begin(gfx, theme.scale(0.95));
@@ -589,6 +592,9 @@ public class EmberClickGui extends TabScreen {
     // --- Text ---
 
     private void drawPanelText(GuiGraphicsExtractor gfx, Panel p) {
+        // The popup is modal and its panel is drawn in the shape pass, so background
+        // labels drawn afterwards would paint straight over it.
+        if (popup.isVisible()) return;
         double x = p.x, y = p.y;
         List<Module> mods = filtered(p);
 
@@ -618,6 +624,9 @@ public class EmberClickGui extends TabScreen {
     }
 
     private void drawClientPanelText(GuiGraphicsExtractor gfx, Panel p) {
+        // The popup is modal and its panel is drawn in the shape pass, so background
+        // labels drawn afterwards would paint straight over it.
+        if (popup.isVisible()) return;
         double x = p.x, y = p.y;
         theme.textRenderer().begin(gfx, theme.scale(0.9));
         theme.textRenderer().render("Client", x + 26, y + (HH - theme.textHeight()) / 2, HEADER_TEXT, false);
@@ -651,6 +660,9 @@ public class EmberClickGui extends TabScreen {
     }
 
     private void drawThemePanelText(GuiGraphicsExtractor gfx, Panel p) {
+        // The popup is modal and its panel is drawn in the shape pass, so background
+        // labels drawn afterwards would paint straight over it.
+        if (popup.isVisible()) return;
         double x = p.x, y = p.y;
         theme.textRenderer().begin(gfx, theme.scale(0.9));
         theme.textRenderer().render("Themes", x + 26, y + (HH - theme.textHeight()) / 2, HEADER_TEXT, false);
@@ -680,6 +692,9 @@ public class EmberClickGui extends TabScreen {
     }
 
     private void drawSearchText(GuiGraphicsExtractor gfx) {
+        // The popup is modal and its panel is drawn in the shape pass, so background
+        // labels drawn afterwards would paint straight over it.
+        if (popup.isVisible()) return;
         double w = 220, h = 26;
         double x = (getWindowWidth() - w) / 2, y = 8;
         theme.textRenderer().begin(gfx, theme.scale(0.78));
