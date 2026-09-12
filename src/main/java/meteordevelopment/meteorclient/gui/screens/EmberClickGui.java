@@ -258,6 +258,16 @@ public class EmberClickGui extends TabScreen {
         drawSearchText(graphics);
         drawConfigButtonText(graphics);
 
+        // Temporary A/B marker: text drawn from this screen's own working text pass while a
+        // popup is open. If this shows and the popup's labels do not, the popup's own flush
+        // is at fault rather than its coordinates. Remove once the cause is known.
+        if (popup.isVisible()) {
+            theme.textRenderer().begin(graphics, theme.scale(0.95));
+            theme.textRenderer().render("POPUP TEXT TEST", 20, getWindowHeight() - 150,
+                new Color(255, 90, 90, 255), false);
+            theme.textRenderer().end();
+        }
+
         popup.render(graphics, mouseX, mouseY, delta);
     }
 
