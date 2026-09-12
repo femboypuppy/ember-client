@@ -74,6 +74,13 @@ public class ServerSpoof extends Module {
     private MutableText msg;
     public boolean silentAcceptResourcePack = false;
 
+    /** Ember: on by default, so the brand and channel spoofing is active without being asked for. */
+    @meteordevelopment.meteorclient.utils.PostInit
+    public static void ember$enableByDefault() {
+        ServerSpoof module = meteordevelopment.meteorclient.systems.modules.Modules.get().get(ServerSpoof.class);
+        if (module != null && !module.isActive()) module.toggle();
+    }
+
     public ServerSpoof() {
         super(Categories.Misc, "server-spoof", "Spoof client brand, resource pack and channels.");
 
