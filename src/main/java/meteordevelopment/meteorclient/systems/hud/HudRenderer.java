@@ -178,7 +178,7 @@ public class HudRenderer {
      * leaving state that made the next text draw - the ClickGUI's popup labels - invisible.
      * It only ever went wrong with a glowing widget enabled, which is how it was found.
      */
-    public void softGlow(double x, double y, double width, double height, double size, Color color) {
+    public void softGlow(double x, double y, double width, double height, double radius, double size, Color color) {
         if (width <= 0 || height <= 0 || size <= 0 || color.a <= 0) return;
 
         int layers = 6;
@@ -191,7 +191,7 @@ public class HudRenderer {
             if (alpha <= 0) continue;
 
             double w = width + spread * 2, h = height + spread * 2;
-            roundedQuad(x - spread, y - spread, w, h, Math.min(w, h) / 2,
+            roundedQuad(x - spread, y - spread, w, h, Math.min(Math.min(w, h) / 2, radius + spread),
                 new Color(color.r, color.g, color.b, alpha));
         }
     }
