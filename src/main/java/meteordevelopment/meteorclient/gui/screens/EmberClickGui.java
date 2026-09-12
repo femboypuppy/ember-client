@@ -268,6 +268,7 @@ public class EmberClickGui extends TabScreen {
             pr.end();
         }
         popup.renderText(graphics);
+
     }
 
     private double computeBodyH(Panel p) {
