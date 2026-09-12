@@ -264,7 +264,9 @@ public class EmberClickGui extends TabScreen {
             GuiRenderer pr = new GuiRenderer();
             pr.theme = theme;
             pr.begin(graphics);
-            popup.render(pr, mx, my, delta);
+            // The real cursor, not the off-screen value used to keep panels from reacting -
+            // the popup needs it for hover and for dragging sliders.
+            popup.render(pr, rawMx, rawMy, delta);
             pr.end();
         }
         popup.renderText(graphics);

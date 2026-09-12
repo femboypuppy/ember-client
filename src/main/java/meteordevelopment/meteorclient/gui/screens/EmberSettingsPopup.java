@@ -88,6 +88,8 @@ public class EmberSettingsPopup {
     private boolean mouseDown;
 
     private StringSetting editing;
+    /** Numeric box being typed into; separate because `editing` is typed to StringSetting. */
+    private Row editingNumber;
     private String editBuffer = "";
 
     private Keybind capturing;
@@ -393,8 +395,16 @@ public class EmberSettingsPopup {
         hits.add(new Hit(trackX - 6, cy - 12, trackW + 12, 24, row, "slider"));
 
         double boxX = ctrlX + CTRL_W - boxW;
-        r.roundedRect(boxX, cy - boxH / 2, boxW, boxH, 7, alpha(CONTROL_BG, fade));
-        text(sliderText(row), boxX + boxW / 2, cy - 4.5, alpha(TEXT, fade), SMALL_SCALE + 0.06, 2, 0);
+        boolean typing = editingNumber == row;
+        float ba = anim(row + "box", typing || over(boxX, cy - boxH / 2, boxW, boxH), dt);
+
+        if (typing) r.glow(boxX, cy - boxH / 2, boxW, boxH, 8, accentAlpha((int) (130 * fade)), false);
+        r.roundedRect(boxX, cy - boxH / 2, boxW, boxH, 7, alpha(lerp(CONTROL_BG, CONTROL_HOVER, ba), fade));
+
+        String shown = typing ? editBuffer + "|" : sliderText(row);
+        text(shown, boxX + boxW / 2, cy - 4.5, alpha(typing ? accent() : TEXT, fade), SMALL_SCALE + 0.06, 2, 0);
+
+        hits.add(new Hit(boxX, cy - boxH / 2, boxW, boxH, row, "box"));
     }
 
     private void drawEnum(GuiRenderer r, Row row, double ctrlX, double cy, float fade, float dt) {
@@ -684,6 +694,15 @@ public class EmberSettingsPopup {
                     applySlider(row, hit, cx);
                 }
             }
+            case "box" -> {
+                if (button == 1) {
+                    reset(row);
+                } else if (editingNumber != row) {
+                    stopEditing(false);
+                    editingNumber = row;
+                    editBuffer = sliderText(row);
+                }
+            }
             case "enumPrev", "enumNext" -> {
                 if (button == 1) reset(row);
                 else cycleEnum(row, hit.area().equals("enumNext") ? 1 : -1);
@@ -755,7 +774,7 @@ public class EmberSettingsPopup {
             return true;
         }
 
-        if (editing != null) {
+        if (editing != null || editingNumber != null) {
             switch (key) {
                 case GLFW_KEY_ESCAPE -> stopEditing(false);
                 case GLFW_KEY_ENTER, GLFW_KEY_KP_ENTER -> stopEditing(true);
@@ -774,9 +793,21 @@ public class EmberSettingsPopup {
 
     public boolean charTyped(CharInput input) {
         if (target == null) return false;
-        if (editing == null) return true;
+        if (editing == null && editingNumber == null) return true;
 
         char c = (char) input.codepoint();
+
+        if (editingNumber != null) {
+            // Only what can form a number, and no decimal point where the value is an int.
+            boolean digit = c >= '0' && c <= '9';
+            boolean sign = c == '-' && editBuffer.isEmpty();
+            boolean point = c == '.' && !editBuffer.contains(".")
+                && editingNumber.kind() != Kind.INT && editingNumber.kind() != Kind.CHANNEL;
+
+            if ((digit || sign || point) && editBuffer.length() < 16) editBuffer += c;
+            return true;
+        }
+
         if (c >= 32 && editBuffer.length() < 256) editBuffer += c;
         return true;
     }
@@ -787,8 +818,42 @@ public class EmberSettingsPopup {
         capturingSetting = null;
     }
 
+    /** Parses a typed number and clamps it to the setting's own limits. */
+    private void commitNumber(Row row, String typed) {
+        String text = typed.trim();
+        if (text.isEmpty() || text.equals("-")) return;
+
+        double value;
+        try {
+            value = Double.parseDouble(text);
+        } catch (NumberFormatException e) {
+            return;
+        }
+
+        if (row.kind() == Kind.CHANNEL) {
+            @SuppressWarnings("unchecked")
+            Setting<SettingColor> cs = (Setting<SettingColor>) row.setting();
+            SettingColor c = cs.get();
+            int[] rgba = {c.r, c.g, c.b, c.a};
+            rgba[row.channel()] = (int) MathHelper.clamp(Math.round(value), 0, 255);
+            c.set(rgba[0], rgba[1], rgba[2], rgba[3]);
+            cs.onChanged();
+            return;
+        }
+
+        if (row.setting() instanceof IntSetting is) {
+            is.set((int) MathHelper.clamp(Math.round(value), is.min, is.max));
+        }
+        else if (row.setting() instanceof DoubleSetting ds) {
+            ds.set(MathHelper.clamp(value, ds.min, ds.max));
+        }
+    }
+
     private void stopEditing(boolean commit) {
         if (editing != null && commit) editing.set(editBuffer);
+        if (editingNumber != null && commit) commitNumber(editingNumber, editBuffer);
+
+        editingNumber = null;
         editing = null;
         editBuffer = "";
     }
