@@ -93,6 +93,9 @@ public class EmberSettingsPopup {
     private Keybind capturing;
     private Setting<?> capturingSetting;
 
+    private boolean diagnosed;
+    private int diagnosedScales;
+
     public EmberSettingsPopup(GuiTheme theme) {
         this.theme = theme;
     }
@@ -113,6 +116,8 @@ public class EmberSettingsPopup {
     public void open(Target target) {
         this.target = target;
         closing = false;
+        diagnosed = false;
+        diagnosedScales = 0;
         openAnim = 0;
         scroll = 0;
         expandedColors.clear();
@@ -492,12 +497,42 @@ public class EmberSettingsPopup {
     }
 
     private void flushText(GuiGraphicsExtractor graphics) {
+        // Temporary: one line per popup open, to find why labels go missing at high
+        // resolution. Remove once that is understood.
+        if (!diagnosed) {
+            diagnosed = true;
+            meteordevelopment.meteorclient.MeteorClient.LOG.info(
+                "[EmberPopup] ops={} window={}x{} guiScale={} themeScale={} customFont={} renderer={}",
+                texts.size(), getWindowWidth(), getWindowHeight(),
+                net.minecraft.client.Minecraft.getInstance().getWindow().getGuiScale(),
+                theme.scale(1),
+                meteordevelopment.meteorclient.systems.config.Config.get().customFont.get(),
+                theme.textRenderer().getClass().getSimpleName());
+        }
+
         Map<Double, List<TextOp>> byScale = new TreeMap<>();
         for (TextOp op : texts) byScale.computeIfAbsent(op.scale(), k -> new ArrayList<>()).add(op);
 
         for (Map.Entry<Double, List<TextOp>> entry : byScale.entrySet()) {
             theme.textRenderer().begin(graphics, theme.scale(entry.getKey()));
-            double lineH = theme.textHeight();
+
+            // theme.textHeight() re-applies the GUI scale on top of the scale begin() is
+            // already using, so at higher scales it reports a height far larger than what
+            // gets drawn and pushes every label off its row. Ask for the real one.
+            double lineH = theme.textRenderer().getHeight(false);
+            double emitted = 0;
+            int drawn = 0;
+
+            boolean logThis = diagnosedScales < 3;
+            if (logThis) {
+                diagnosedScales++;
+                TextOp first = entry.getValue().getFirst();
+                meteordevelopment.meteorclient.MeteorClient.LOG.info(
+                    "[EmberPopup] scale={} begun={} lineH={} themeTextHeight={} firstText='{}' x={} y={} drawY={} width={}",
+                    entry.getKey(), theme.scale(entry.getKey()), lineH, theme.textHeight(),
+                    first.text(), first.x(), first.y(), first.y() + (9 - lineH) / 2,
+                    theme.textWidth(first.text()));
+            }
 
             for (TextOp op : entry.getValue()) {
                 String s = op.box() > 0 ? fit(op.text(), op.box(), op.align() == 3) : op.text();
@@ -511,7 +546,14 @@ public class EmberSettingsPopup {
 
                 // Callers pass y as the top of a 9px-tall line; centre the real line height there.
                 double drawY = op.y() + (9 - lineH) / 2;
-                theme.textRenderer().render(s, drawX, drawY, op.color(), false);
+                emitted += theme.textRenderer().render(s, drawX, drawY, op.color(), false);
+                drawn++;
+            }
+
+            if (logThis) {
+                meteordevelopment.meteorclient.MeteorClient.LOG.info(
+                    "[EmberPopup] scale={} drew {} strings, total glyph width {}, alpha of first {}",
+                    entry.getKey(), drawn, emitted, entry.getValue().getFirst().color().a);
             }
 
             theme.textRenderer().end();

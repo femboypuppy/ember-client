@@ -7,6 +7,8 @@ import meteordevelopment.meteorclient.gui.tabs.Tabs;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
+import meteordevelopment.meteorclient.systems.hud.XAnchor;
+import meteordevelopment.meteorclient.systems.hud.YAnchor;
 import meteordevelopment.meteorclient.systems.hud.screens.HudElementScreen;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -121,7 +123,7 @@ public class EmberClickGui extends TabScreen {
             cp.isClient = true;
             cp.icon = new ItemStack(Items.ENDER_EYE);
             List<ClientEntry> entries = new ArrayList<>();
-            String[] wanted = {"ember-top-bar", "spotify"};
+            String[] wanted = {"ember-top-bar", "spotify", "ember-module-list", "ember-notifications"};
             for (String wName : wanted) {
                 HudElement found = null;
                 for (HudElement el : Hud.get()) {
@@ -130,8 +132,17 @@ public class EmberClickGui extends TabScreen {
                 if (found == null) {
                     var info = Hud.get().infos.get(wName);
                     if (info != null) {
-                        int yPos = wName.equals("spotify") ? 30 : 4;
-                        Hud.get().add(info, 4, yPos);
+                        switch (wName) {
+                            case "ember-module-list" -> {
+                                // Meteor's plain list sits in the same corner; the Ember one replaces it.
+                                for (HudElement el : Hud.get()) {
+                                    if (el.info.name.equals("active-modules") && el.isActive()) el.toggle();
+                                }
+                                Hud.get().add(info, -4, 4, XAnchor.Right, YAnchor.Top);
+                            }
+                            case "ember-notifications" -> Hud.get().add(info, -4, -40, XAnchor.Right, YAnchor.Bottom);
+                            default -> Hud.get().add(info, 4, wName.equals("spotify") ? 30 : 4);
+                        }
                         for (HudElement el : Hud.get()) {
                             if (el.info.name.equals(wName)) { found = el; break; }
                         }
@@ -236,6 +247,7 @@ public class EmberClickGui extends TabScreen {
 
         drawSearchBar(r, fade);
         drawConfigButton(r, delta, fade);
+        drawGearButton(r, fade);
         r.end();
 
         for (Panel p : panels) {
@@ -245,6 +257,16 @@ public class EmberClickGui extends TabScreen {
         }
         drawSearchText(graphics);
         drawConfigButtonText(graphics);
+
+        // Temporary A/B marker: text drawn from this screen's own working text pass while a
+        // popup is open. If this shows and the popup's labels do not, the popup's own flush
+        // is at fault rather than its coordinates. Remove once the cause is known.
+        if (popup.isVisible()) {
+            theme.textRenderer().begin(graphics, theme.scale(0.95));
+            theme.textRenderer().render("POPUP TEXT TEST", 20, getWindowHeight() - 150,
+                new Color(255, 90, 90, 255), false);
+            theme.textRenderer().end();
+        }
 
         popup.render(graphics, mouseX, mouseY, delta);
     }
@@ -287,6 +309,47 @@ public class EmberClickGui extends TabScreen {
         Color gc = accentAlpha((int)(210 + 45 * hA));
         r.roundedRect(gx - 7, gy - 5, 14, 10, 2, gc);
         r.roundedRect(gx - 7, gy - 7, 6, 3, 1, gc);
+    }
+
+    private static final double GEAR = 26;
+
+    private double gearX() {
+        return configButtonX() + CFG_W + 8;
+    }
+
+    private double gearY() {
+        return configButtonY() + (CFG_H - GEAR) / 2;
+    }
+
+    /** Small round settings button beside Configs, opening Ember's own settings screen. */
+    private void drawGearButton(GuiRenderer r, float fade) {
+        double bx = gearX(), by = gearY();
+        boolean hover = mx >= bx && mx < bx + GEAR && my >= by && my < by + GEAR;
+        float hA = anim("gearbtn", hoverAnims, hover ? 1f : 0f, 12f, frameDt);
+
+        r.glow(bx, by + 3, GEAR, GEAR, 8, new Color(0, 0, 0, (int)(90 * fade)), false);
+        if (hA > 0.01f) r.glow(bx, by, GEAR, GEAR, 14, accentAlpha((int)(150 * hA * fade)), false);
+
+        Color bg = new Color(
+            (int) Mth.lerp(hA, HEADER_BG.r, Math.min(255, HEADER_BG.r + 16)),
+            (int) Mth.lerp(hA, HEADER_BG.g, Math.min(255, HEADER_BG.g + 14)),
+            (int) Mth.lerp(hA, HEADER_BG.b, Math.min(255, HEADER_BG.b + 20)),
+            (int)(248 * fade));
+        r.quad(bx, by, GEAR, GEAR, GuiRenderer.CIRCLE, bg);
+
+        // Gear glyph: a ring with four teeth that turn a little as it lights up.
+        double cx = bx + GEAR / 2, cy = by + GEAR / 2;
+        Color gc = accentAlpha((int) Math.min(255, (200 + 55 * hA) * fade));
+
+        double tooth = 3.2, reach = 6.6;
+        for (int i = 0; i < 4; i++) {
+            double a = Math.toRadians(45 * hA + i * 90);
+            r.roundedRect(cx + Math.cos(a) * reach - tooth / 2, cy + Math.sin(a) * reach - tooth / 2,
+                tooth, tooth, 1, gc);
+        }
+
+        r.quad(cx - 4.5, cy - 4.5, 9, 9, GuiRenderer.CIRCLE, gc);
+        r.quad(cx - 2, cy - 2, 4, 4, GuiRenderer.CIRCLE, bg);
     }
 
     private void drawConfigButtonText(GuiGraphicsExtractor gfx) {
@@ -370,9 +433,26 @@ public class EmberClickGui extends TabScreen {
         return new Color(c.r, c.g, c.b, (int)(c.a * fade));
     }
 
-    /** Soft accent halo behind a hovered row, drawn over the panel body but under the row. */
-    private void rowGlow(GuiRenderer r, double x, double y, double w, double h, float amount) {
-        r.glow(x, y, w, h, 10, accentAlpha((int)(110 * amount)), false);
+    /** Accent glow around an enabled row, so turning something on lights it up. */
+    private void activeGlow(GuiRenderer r, double x, double y, double w, double h, float amount) {
+        r.glow(x, y, w, h, 14, accentAlpha((int)(125 * amount)), false);
+    }
+
+    /**
+     * Hover highlight for a row. A halo is wrong here: on a row with no pill behind it
+     * the glow's square edges show against the panel, so the row is tinted instead and
+     * an accent edge grows in on the left.
+     */
+    private void rowHover(GuiRenderer r, double x, double y, double w, double h, float amount, boolean active) {
+        double radius = h / 2;
+
+        r.roundedRect(x, y, w, h, radius, accentAlpha((int)(30 * amount)));
+        r.roundedRect(x, y, w, h, radius, new Color(255, 255, 255, (int)(12 * amount)));
+
+        if (!active) {
+            double barH = (h - 11) * amount;
+            if (barH > 1) r.roundedRect(x + 3.5, y + (h - barH) / 2, 2.5, barH, 1.25, accentAlpha((int)(210 * amount)));
+        }
     }
 
     /** Row pill for an enabled module, tinted by the theme. */
@@ -419,10 +499,9 @@ public class EmberClickGui extends TabScreen {
                 float hA = anim(m, hoverAnims, hover ? 1f : 0f, 12f, frameDt);
                 float aA = anim(m, activeAnims, active ? 1f : 0f, 8f, frameDt);
 
-                if (hA > 0.01f) rowGlow(r, x + 4, rowY + 1, PW - 8, MH - 2, hA);
+                if (aA > 0.01f) activeGlow(r, x + 4, rowY + 1, PW - 8, MH - 2, aA);
                 if (aA > 0.01f) r.roundedRect(x + 4, rowY + 1, PW - 8, MH - 2, (MH - 2) / 2, activeRowColor(aA));
-                if (hA > 0.01f) r.roundedRect(x + 4, rowY + 1, PW - 8, MH - 2, (MH - 2) / 2,
-                    new Color(255, 255, 255, (int)(16 * hA)));
+                if (hA > 0.01f) rowHover(r, x + 4, rowY + 1, PW - 8, MH - 2, hA, active);
 
                 int dr = (int) Mth.lerp(aA, DOT_OFF.r, DOT_ON.r);
                 int dg = (int) Mth.lerp(aA, DOT_OFF.g, DOT_ON.g);
@@ -455,10 +534,9 @@ public class EmberClickGui extends TabScreen {
                 float hA = anim("cl_" + entry.name, hoverAnims, hover ? 1f : 0f, 12f, frameDt);
                 float aA = anim("cl_" + entry.name, activeAnims, active ? 1f : 0f, 8f, frameDt);
 
-                if (hA > 0.01f) rowGlow(r, x + 4, rowY + 1, PW - 8, MH - 2, hA);
+                if (aA > 0.01f) activeGlow(r, x + 4, rowY + 1, PW - 8, MH - 2, aA);
                 if (aA > 0.01f) r.roundedRect(x + 4, rowY + 1, PW - 8, MH - 2, (MH - 2) / 2, activeRowColor(aA));
-                if (hA > 0.01f) r.roundedRect(x + 4, rowY + 1, PW - 8, MH - 2, (MH - 2) / 2,
-                    new Color(255, 255, 255, (int)(16 * hA)));
+                if (hA > 0.01f) rowHover(r, x + 4, rowY + 1, PW - 8, MH - 2, hA, active);
 
                 if (entry.element == null) {
                     // Action row (HUD editor) - arrow instead of a toggle dot
@@ -498,10 +576,9 @@ public class EmberClickGui extends TabScreen {
                 boolean sel = i == EmberPalette.selected();
                 float hA = anim("th_" + i, hoverAnims, hover ? 1f : 0f, 12f, frameDt);
 
-                if (hA > 0.01f) rowGlow(r, x + 4, rowY + 1, PW - 8, MH - 2, hA);
+                if (sel) activeGlow(r, x + 4, rowY + 1, PW - 8, MH - 2, 1f);
                 if (sel) r.roundedRect(x + 4, rowY + 1, PW - 8, MH - 2, (MH - 2) / 2, activeRowColor(1f));
-                if (hA > 0.01f) r.roundedRect(x + 4, rowY + 1, PW - 8, MH - 2, (MH - 2) / 2,
-                    new Color(255, 255, 255, (int)(16 * hA)));
+                if (hA > 0.01f) rowHover(r, x + 4, rowY + 1, PW - 8, MH - 2, hA, sel);
 
                 r.quad(x + 11, rowY + (MH - 8) / 2, 8, 8, GuiRenderer.CIRCLE, EmberPalette.swatch(i));
 
@@ -675,6 +752,12 @@ public class EmberClickGui extends TabScreen {
         double bx = configButtonX(), by = configButtonY();
         if (cx >= bx && cx < bx + CFG_W && cy >= by && cy < by + CFG_H) {
             mc.gui.setScreen(new EmberConfigScreen(theme));
+            return true;
+        }
+
+        double gx = gearX(), gy = gearY();
+        if (cx >= gx && cx < gx + GEAR && cy >= gy && cy < gy + GEAR) {
+            mc.gui.setScreen(new EmberClientSettingsScreen(theme));
             return true;
         }
 

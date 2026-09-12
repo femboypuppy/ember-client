@@ -2,15 +2,19 @@ package meteordevelopment.meteorclient.systems.hud.elements;
 
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
+import meteordevelopment.meteorclient.settings.KeybindSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
+import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.misc.MediaInfo;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
+
+import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class SpotifyHud extends HudElement {
     public static final HudElementInfo<SpotifyHud> INFO = new HudElementInfo<>(Hud.GROUP, "spotify", "Shows the song currently playing on your PC.", SpotifyHud::new);
@@ -19,6 +23,7 @@ public class SpotifyHud extends HudElement {
     private static final Color ART_TINT = new Color(255, 255, 255, 255);
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgControls = settings.createGroup("Controls");
 
     private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
         .name("scale")
@@ -68,8 +73,38 @@ public class SpotifyHud extends HudElement {
         .build()
     );
 
+    private final Setting<Keybind> playPauseKey = sgControls.add(new KeybindSetting.Builder()
+        .name("play-pause-key")
+        .description("Play or pause whatever is playing.")
+        .defaultValue(Keybind.none())
+        .action(() -> control("toggle"))
+        .build()
+    );
+
+    private final Setting<Keybind> nextKey = sgControls.add(new KeybindSetting.Builder()
+        .name("next-key")
+        .description("Skip to the next track.")
+        .defaultValue(Keybind.none())
+        .action(() -> control("next"))
+        .build()
+    );
+
+    private final Setting<Keybind> previousKey = sgControls.add(new KeybindSetting.Builder()
+        .name("previous-key")
+        .description("Go back to the previous track.")
+        .defaultValue(Keybind.none())
+        .action(() -> control("prev"))
+        .build()
+    );
+
     public SpotifyHud() {
         super(INFO);
+    }
+
+    /** Keybind settings on HUD elements fire even when the widget is off, and while typing in chat. */
+    private void control(String command) {
+        if (!isActive() || mc.gui.screen() != null) return;
+        MediaInfo.sendCommand(command);
     }
 
     @Override
@@ -96,7 +131,7 @@ public class SpotifyHud extends HudElement {
         // The custom font rasterises a real typeface at scale*18px, so any scale is
         // smooth - no snapping, unlike Minecraft's bitmap font.
         double s = scale.get();
-        double titleScale = 1.05 * s;
+        double titleScale = 0.92 * s;
         double subScale = 0.85 * s;
 
         double titleH = renderer.textHeight(true, titleScale);
@@ -128,10 +163,21 @@ public class SpotifyHud extends HudElement {
 
         setSize(w, h);
 
-        renderer.glow(x, y + 2 * s, w, h, 6 * s, new Color(0, 0, 0, 90));
+        // Built from the same rounded quads as the box itself. The texture-based glow was
+        // not reaching the HUD at all, so the shadow it drew never appeared; stacked quads
+        // fading outwards use the one call that demonstrably renders here.
+        for (int i = 6; i >= 1; i--) {
+            double spread = i * 1.8 * s;
+            renderer.roundedQuad(x - spread, y - spread + 2.5 * s, w + spread * 2, h + spread * 2,
+                radius + spread, new Color(0, 0, 0, 30 - i * 3));
+        }
         if (glow.get()) renderer.glow(x, y, w, h, 10 * s, new Color(accent.r, accent.g, accent.b, 120));
 
         renderer.roundedQuad(x, y, w, h, radius, bg);
+
+        // A lit top edge is what actually sells depth on a dark background; the shadow
+        // alone has nothing darker to fall against.
+        renderer.quad(x + radius, y, w - radius * 2, Math.max(1, 0.9 * s), new Color(255, 255, 255, 30));
 
         double cx = x + pad;
 
@@ -160,7 +206,14 @@ public class SpotifyHud extends HudElement {
 
         if (withArtist) {
             ty += titleH + rowGap;
-            renderer.text(truncate(renderer, artist, contentW, subScale), cx, ty, gray, true, subScale);
+            // No per-glyph shadow: at this size it thickens thin strokes and reads as fuzz.
+            // The box already casts its own shadow, so the artist line stays crisp instead.
+            Color artistColor = new Color(
+                (gray.r * 2 + white.r) / 3,
+                (gray.g * 2 + white.g) / 3,
+                (gray.b * 2 + white.b) / 3,
+                235);
+            renderer.text(truncate(renderer, artist, contentW, subScale), cx, ty, artistColor, false, subScale);
         }
 
         if (withProgress) {
@@ -172,8 +225,8 @@ public class SpotifyHud extends HudElement {
             double elapsedW = renderer.textWidth(elapsed, true, subScale);
             double totalW = renderer.textWidth(total, true, subScale);
 
-            renderer.text(elapsed, cx, ty, gray, true, subScale);
-            renderer.text(total, cx + contentW - totalW, ty, gray, true, subScale);
+            renderer.text(elapsed, cx, ty, gray, false, subScale);
+            renderer.text(total, cx + contentW - totalW, ty, gray, false, subScale);
 
             double barX = cx + elapsedW + 5 * s;
             double barW = contentW - elapsedW - totalW - 10 * s;
