@@ -16,6 +16,8 @@ public class Categories {
     public static final Category Render = new Category("Render", Items.GLASS.getDefaultStack());
     public static final Category World = new Category("World", Items.GRASS_BLOCK.getDefaultStack());
     public static final Category Misc = new Category("Misc", Items.LAVA_BUCKET.getDefaultStack());
+    // Ember: Donut SMP modules. This base takes a plain stack, not the supplier form.
+    public static final Category Donut = new Category("Donut", Items.COOKIE.getDefaultStack());
 
     public static boolean REGISTERING;
 
@@ -29,6 +31,7 @@ public class Categories {
         Modules.registerCategory(Render);
         Modules.registerCategory(World);
         Modules.registerCategory(Misc);
+        Modules.registerCategory(Donut);
 
         // Addons
         AddonManager.ADDONS.forEach(MeteorAddon::onRegisterCategories);

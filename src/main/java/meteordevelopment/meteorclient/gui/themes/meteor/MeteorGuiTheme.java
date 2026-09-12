@@ -387,6 +387,25 @@ public class MeteorGuiTheme extends GuiTheme {
         return hideHUD.get();
     }
 
+    // Ember: every route into the GUI opens Ember's own screens instead of Meteor's.
+    @Override
+    public meteordevelopment.meteorclient.gui.tabs.TabScreen modulesScreen() {
+        return new meteordevelopment.meteorclient.gui.screens.EmberClickGui(this);
+    }
+
+    @Override
+    public meteordevelopment.meteorclient.gui.WidgetScreen moduleScreen(meteordevelopment.meteorclient.systems.modules.Module module) {
+        // Right-click and .settings both land on the same themed popup.
+        meteordevelopment.meteorclient.gui.screens.EmberClickGui gui = new meteordevelopment.meteorclient.gui.screens.EmberClickGui(this);
+        gui.openSettingsFor(module);
+        return gui;
+    }
+
+    @Override
+    public boolean isModulesScreen(net.minecraft.client.gui.screen.Screen screen) {
+        return screen instanceof meteordevelopment.meteorclient.gui.screens.EmberClickGui;
+    }
+
     public class ThreeStateColorSetting {
         private final Setting<SettingColor> normal, hovered, pressed;
 

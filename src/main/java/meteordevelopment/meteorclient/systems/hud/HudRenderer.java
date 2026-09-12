@@ -122,6 +122,57 @@ public class HudRenderer {
         Renderer2D.COLOR.quad(x, y, width, height, color);
     }
 
+    /** Ember: rounded rectangle built from plain quads, with the corners cut in slices. */
+    public void roundedQuad(double x, double y, double width, double height, double radius, Color color) {
+        if (radius <= 0) {
+            quad(x, y, width, height, color);
+            return;
+        }
+
+        radius = Math.min(radius, Math.min(width, height) / 2);
+
+        quad(x, y + radius, width, height - radius * 2, color);
+        quad(x + radius, y, width - radius * 2, radius, color);
+        quad(x + radius, y + height - radius, width - radius * 2, radius, color);
+
+        int steps = Math.max(4, (int) Math.ceil(radius * 2));
+        for (int i = 0; i < steps; i++) {
+            double sliceTop = i * radius / steps;
+            double sliceBottom = (i + 1) * radius / steps;
+            double dy = radius - sliceTop;
+            double inset = radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
+            double sliceHeight = sliceBottom - sliceTop;
+            double sliceWidth = radius - inset;
+            if (sliceWidth <= 0) continue;
+
+            quad(x + inset, y + sliceTop, sliceWidth, sliceHeight, color);
+            quad(x + width - radius, y + sliceTop, sliceWidth, sliceHeight, color);
+            quad(x + inset, y + height - sliceBottom, sliceWidth, sliceHeight, color);
+            quad(x + width - radius, y + height - sliceBottom, sliceWidth, sliceHeight, color);
+        }
+    }
+
+    /**
+     * Ember: soft glow from stacked rounded quads. Deliberately not the GUI's texture-based
+     * glow - drawing that mid-HUD-frame renders nothing and corrupts the next text draw.
+     */
+    public void softGlow(double x, double y, double width, double height, double size, Color color) {
+        if (width <= 0 || height <= 0 || size <= 0 || color.a <= 0) return;
+
+        int layers = 6;
+
+        for (int i = layers; i >= 1; i--) {
+            double spread = size * ((double) i / layers);
+
+            int alpha = (int) (color.a * 0.18 * (1.0 - (double) (i - 1) / layers));
+            if (alpha <= 0) continue;
+
+            double w = width + spread * 2, h = height + spread * 2;
+            roundedQuad(x - spread, y - spread, w, h, Math.min(w, h) / 2,
+                new Color(color.r, color.g, color.b, alpha));
+        }
+    }
+
     public void quad(double x, double y, double width, double height, Color cTopLeft, Color cTopRight, Color cBottomRight, Color cBottomLeft) {
         Renderer2D.COLOR.quad(x, y, width, height, cTopLeft, cTopRight, cBottomRight, cBottomLeft);
     }

@@ -118,6 +118,10 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         settings.registerColorSettings(null);
 
         register(MeteorTextHud.INFO);
+        register(meteordevelopment.meteorclient.systems.hud.elements.EmberTopBarHud.INFO);
+        register(meteordevelopment.meteorclient.systems.hud.elements.SpotifyHud.INFO);
+        register(meteordevelopment.meteorclient.systems.hud.elements.EmberModuleListHud.INFO);
+        register(meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud.INFO);
         register(ItemHud.INFO);
         register(InventoryHud.INFO);
         register(CompassHud.INFO);

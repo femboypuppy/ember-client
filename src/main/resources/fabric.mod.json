@@ -1,13 +1,11 @@
 {
   "schemaVersion": 1,
-  "name": "Meteor Client",
+  "name": "Ember Client",
   "id": "meteor-client",
   "version": "${version}",
-  "description": "Based utility mod.",
+  "description": "Modern utility mod.",
   "authors": [
-    "MineGame159",
-    "squidoodly",
-    "seasnail"
+    "catboy"
   ],
   "contact": {
     "homepage": "https://meteorclient.com",

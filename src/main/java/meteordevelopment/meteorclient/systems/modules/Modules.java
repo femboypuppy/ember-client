@@ -78,6 +78,7 @@ public class Modules extends System<Modules> {
         initRender();
         initWorld();
         initMisc();
+        initDonut();
     }
 
     @Override
@@ -389,6 +390,33 @@ public class Modules extends System<Modules> {
 
         // Register color settings for the module
         module.settings.registerColorSettings(module);
+    }
+
+    private void initDonut() {
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AdvancedStashFinder());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AHSell());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AnchorMacro());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AutoHome());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AutoInvTotem());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AutoPearlChain());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AutoSell());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AutoSpawnerSell());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.ChunkFinder());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.CoordLogger());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.CrystalMacro());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.InvisESP());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.KeyPearl());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.PlayerDetection());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.RTPer());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.ShieldBreaker());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.SpawnerNotifier());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.StaffDetector());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.StashFinder());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.StorageStealer());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.SusChunkFinder());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.TPAMacro());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.TunnelBaseFinder());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.VillagerESP());
     }
 
     private void initCombat() {
