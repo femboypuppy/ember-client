@@ -208,7 +208,7 @@ public class EmberSettingsPopup {
 
     // --- Render ---
 
-    public void render(GuiGraphicsExtractor graphics, double mouseX, double mouseY, float delta) {
+    public void render(GuiRenderer r, double mouseX, double mouseY, float delta) {
         float dt = clock.tick();
         if (target == null) return;
 
@@ -245,10 +245,6 @@ public class EmberSettingsPopup {
         hits.clear();
         texts.clear();
 
-        GuiRenderer r = new GuiRenderer();
-        r.theme = theme;
-        r.begin(graphics);
-
         // Dim everything behind; its own batch so it doesn't darken the glow.
         r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
         r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (130 * fade)));
@@ -267,7 +263,15 @@ public class EmberSettingsPopup {
         text("Right-click a setting to reset it   ·   Esc to close", x + w / 2, bodyBottom + (FOOTER_H - 9) / 2,
             alpha(TEXT_FAINT, fade), SMALL_SCALE, 2, 0);
 
-        r.end();
+    }
+
+    /**
+     * Labels are flushed from the ClickGUI's own text phase. Doing it here, straight after
+     * this popup ran a second GuiRenderer begin/end cycle, emitted glyphs correctly but they
+     * never reached the screen at higher GUI scales.
+     */
+    public void renderText(GuiGraphicsExtractor graphics) {
+        if (target == null) return;
         flushText(graphics);
     }
 
