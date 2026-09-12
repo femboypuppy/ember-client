@@ -212,6 +212,11 @@ public class EmberSettingsPopup {
 
         syncPalette();
 
+        // Every hit test in here reads the mx/my fields, so the incoming cursor has to land
+        // in them. The port dropped these two lines, leaving mx/my stuck at 0 - which is why
+        // sliders, value boxes and hover all did nothing.
+        mx = mouseX;
+        my = mouseY;
 
         float step = dt / 0.18f;
         openAnim = closing ? Math.max(0f, openAnim - step) : Math.min(1f, openAnim + step);
