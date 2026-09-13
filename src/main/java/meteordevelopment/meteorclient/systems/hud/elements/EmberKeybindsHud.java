@@ -120,7 +120,7 @@ public class EmberKeybindsHud extends HudElement {
             renderer.softGlow(x, y, w, h, radius, 8 * s, new Color(accent.r, accent.g, accent.b, 120));
         }
 
-        renderer.dropShadow(x, y, w, h, radius, 12 * s);
+        renderer.dropShadow(x, y, w, h, radius, 20 * s);
         renderer.roundedQuad(x, y, w, h, radius, bg);
 
         double cy = y + pad;

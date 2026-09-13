@@ -48,13 +48,16 @@ public final class EmberUI {
     }
 
     /**
-     * Deep dark shadow cast below a panel, giving depth without an accent outline. Three
-     * passes: a wide soft halo, a mid body, and a tight dark core right under the edge.
+     * Soft dark shadow around a panel, giving depth without an accent outline. Three passes:
+     * a wide halo, a mid body, and a tighter core at the edge.
+     *
+     * Centred rather than cast downwards - panels move anywhere on screen, so an offset
+     * shadow implies a light source that is never consistent.
      */
     public static void shadow(GuiRenderer r, double x, double y, double w, double h, float fade) {
-        r.glow(x, y + 12, w, h, 34, new Color(0, 0, 0, (int) (185 * fade)), false);
-        r.glow(x, y + 6, w, h, 18, new Color(0, 0, 0, (int) (160 * fade)), false);
-        r.glow(x, y + 2, w, h, 8, new Color(0, 0, 0, (int) (130 * fade)), false);
+        r.glow(x, y, w, h, 52, new Color(0, 0, 0, (int) (105 * fade)), false);
+        r.glow(x, y, w, h, 28, new Color(0, 0, 0, (int) (85 * fade)), false);
+        r.glow(x, y, w, h, 13, new Color(0, 0, 0, (int) (70 * fade)), false);
     }
 
     /** Subtle lift under the cursor. Flat fill, no edge bar - the image has no such marker. */

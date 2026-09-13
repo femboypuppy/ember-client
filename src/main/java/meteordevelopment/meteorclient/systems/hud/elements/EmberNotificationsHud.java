@@ -175,7 +175,7 @@ public class EmberNotificationsHud extends HudElement {
         double radius = 7 * s;
 
         if (glow.get()) renderer.softGlow(tx, ty, w, h, radius, 8 * s, withAlpha(color, (int) (150 * a)));
-        renderer.dropShadow(tx, ty, w, h, radius, 12 * s, a);
+        renderer.dropShadow(tx, ty, w, h, radius, 20 * s, a);
         renderer.roundedQuad(tx, ty, w, h, radius, new Color(panel.r, panel.g, panel.b, (int) (225 * a)));
         renderer.roundedQuad(tx + 4 * s, ty + 6 * s, 3 * s, h - 12 * s, 1.5 * s, withAlpha(color, (int) (255 * a)));
 

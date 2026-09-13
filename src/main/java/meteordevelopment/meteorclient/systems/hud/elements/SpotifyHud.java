@@ -208,7 +208,7 @@ public class SpotifyHud extends HudElement {
             renderer.softGlow(x, y, w, h, radius, 10 * s, new Color(accent.r, accent.g, accent.b, 150));
         }
 
-        renderer.dropShadow(x, y, w, h, radius, 13 * s);
+        renderer.dropShadow(x, y, w, h, radius, 22 * s);
         renderer.roundedQuad(x, y, w, h, radius, bg);
 
         // Album art

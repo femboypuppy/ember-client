@@ -177,9 +177,11 @@ public class HudRenderer {
     }
 
     /**
-     * Ember: a deep drop shadow under a panel. Heavier and wider than softGlow and pushed
-     * downwards, so a widget reads as lifted off the world instead of merely outlined - which
-     * matters over bright terrain, where a thin shadow disappears entirely.
+     * Ember: a soft shadow around a panel, so a widget reads as lifted off the world instead
+     * of merely outlined - which matters over bright terrain, where a thin shadow disappears.
+     *
+     * Centred on the panel rather than offset downwards: an offset shadow implies a light
+     * source, which looks wrong on widgets that sit in any corner of the screen.
      */
     public void dropShadow(double x, double y, double width, double height, double radius, double size) {
         dropShadow(x, y, width, height, radius, size, 1f);
@@ -189,19 +191,18 @@ public class HudRenderer {
     public void dropShadow(double x, double y, double width, double height, double radius, double size, float opacity) {
         if (width <= 0 || height <= 0 || size <= 0 || opacity <= 0.01f) return;
 
-        int layers = 9;
-        double drop = size * 0.34;
+        int layers = 10;
 
         for (int i = layers; i >= 1; i--) {
             double t = (double) i / layers;
             double spread = size * t;
 
-            // Near-transparent at the outer edge, stacking into a solid core underneath.
-            int alpha = (int) ((52 * (1.0 - t) + 7) * opacity);
+            // Near-transparent at the outer edge, stacking into a denser core underneath.
+            int alpha = (int) ((30 * (1.0 - t) + 4) * opacity);
             if (alpha <= 0) continue;
 
             double w = width + spread * 2, h = height + spread * 2;
-            roundedQuad(x - spread, y - spread + drop, w, h,
+            roundedQuad(x - spread, y - spread, w, h,
                 Math.min(Math.min(w, h) / 2, radius + spread), new Color(0, 0, 0, alpha));
         }
     }

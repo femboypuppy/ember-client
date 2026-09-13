@@ -64,7 +64,7 @@ public final class EmberStrip {
         Color dim = new Color(110, 110, 122, 255);
         Color accent = EmberPalette.accent();
 
-        r.dropShadow(x, y, w, h, radius, 13 * s);
+        r.dropShadow(x, y, w, h, radius, 22 * s);
         r.roundedQuad(x, y, w, h, radius, bg);
 
         double iconSize = 11 * s;
