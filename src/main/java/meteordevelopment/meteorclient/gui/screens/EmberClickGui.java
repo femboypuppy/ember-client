@@ -104,7 +104,7 @@ public class EmberClickGui extends TabScreen {
             List<ClientEntry> entries = new ArrayList<>();
 
             String[] wanted = {"ember-status-bar", "ember-bubbles", "ember-keybinds", "ember-armor",
-                "ember-module-list", "ember-notifications", "spotify"};
+                "ember-target", "ember-module-list", "ember-notifications", "spotify"};
 
             for (String wName : wanted) {
                 HudElement found = null;
@@ -121,6 +121,7 @@ public class EmberClickGui extends TabScreen {
                             case "ember-keybinds" -> Hud.get().add(info, 8, 112, XAnchor.Left, YAnchor.Top);
                             case "ember-armor" -> Hud.get().add(info, 8, -48, XAnchor.Left, YAnchor.Bottom);
                             case "ember-bubbles" -> Hud.get().add(info, 8, -8, XAnchor.Left, YAnchor.Bottom);
+                            case "ember-target" -> Hud.get().add(info, 0, -52, XAnchor.Center, YAnchor.Bottom);
                             default -> Hud.get().add(info, 8, 56);
                         }
                         for (HudElement el : Hud.get()) {
@@ -180,8 +181,28 @@ public class EmberClickGui extends TabScreen {
         super.mouseMoved(mouseX, mouseY);
     }
 
+    /**
+     * Temporary instrumentation for the menu's own drawing cost, averaged so one slow frame
+     * does not dominate. Printed while the menu is open; remove once the cost is settled.
+     */
+    private long perfNanos;
+    private int perfFrames;
+
     @Override
     protected void onRenderBefore(DrawContext graphics, float delta) {
+        long perfStart = System.nanoTime();
+        renderAll(graphics, delta);
+
+        perfNanos += System.nanoTime() - perfStart;
+        if (++perfFrames >= 60) {
+            System.out.printf("[EmberPerf] ClickGUI draw: %.2f ms/frame over %d frames (%d panels)%n",
+                perfNanos / 1_000_000.0 / perfFrames, perfFrames, panels.size());
+            perfNanos = 0;
+            perfFrames = 0;
+        }
+    }
+
+    private void renderAll(DrawContext graphics, float delta) {
         frameDt = clock.tick();
 
         boolean popupUp = popup.isVisible();
@@ -207,16 +228,15 @@ public class EmberClickGui extends TabScreen {
 
         r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (BG_OVERLAY.a * fade)));
 
-        // Shadows are a glow pass, which does not respect submission order against plain
-        // quads, so they are flushed once here - before any panel body is drawn. One flush
-        // for the whole screen, not one per panel, which is what made this screen expensive.
-        r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
+        // No scissor needed to layer these under the panels: the renderer keeps glow in its
+        // own batch and draws it before plain quads within a flush. Forcing a flush here just
+        // to order them cost two full endRender passes - four batches and two text passes
+        // each - every frame.
         for (Panel p : panels) {
             EmberUI.shadow(r, p.x, p.y, PW, HH + p.bodyH * p.openAnim, fade);
         }
         EmberUI.shadow(r, configButtonX(), configButtonY(), CFG_W, CFG_H, fade);
         EmberUI.shadow(r, gearX(), gearY(), GEAR, GEAR, fade);
-        r.scissorEnd();
 
         for (Panel p : panels) {
             if (p.isClient) drawClientPanel(r, graphics, p, fade);
@@ -229,10 +249,7 @@ public class EmberClickGui extends TabScreen {
 
         r.end();
 
-        for (Panel p : panels) {
-            if (p.isClient) drawClientPanelText(p);
-            else drawPanelText(p);
-        }
+        drawAllPanelText();
         drawSearchText();
         drawConfigButtonText();
 
@@ -366,27 +383,54 @@ public class EmberClickGui extends TabScreen {
 
     // --- Text ---
 
-    private void drawPanelText(Panel p) {
-        double x = p.x, y = p.y;
-
+    /**
+     * All panel labels in two batches rather than two per panel. Each begin/end pair binds
+     * the font and emits a draw call, so doing this per panel meant roughly two dozen flushes
+     * a frame - the single biggest cost in this screen.
+     */
+    private void drawAllPanelText() {
         theme.textRenderer().begin(theme.scale(0.92));
-        theme.textRenderer().render(p.name, x + 32, y + (HH - theme.textHeight()) / 2, EmberUI.TEXT, false);
+        double headerH = theme.textHeight();
+
+        for (Panel p : panels) {
+            theme.textRenderer().render(p.isClient ? "Client" : p.name, p.x + 32,
+                p.y + (HH - headerH) / 2, EmberUI.TEXT, false);
+        }
         theme.textRenderer().end();
 
-        if (p.openAnim < 0.02f) return;
-
-        double visBody = p.bodyH * p.openAnim;
         theme.textRenderer().begin(theme.scale(0.82));
-        double rowY = y + HH - p.scroll;
-        double clipT = y + HH, clipB = y + HH + visBody;
+        double rowTextH = theme.textHeight();
 
-        for (Module m : filtered(p)) {
-            if (rowY >= clipT - 0.5 && rowY + MH <= clipB + 0.5) {
-                float aA = activeAnims.getOrDefault((Object) m, 0f);
-                theme.textRenderer().render(m.title, x + 14,
-                    rowY + (MH - theme.textHeight()) / 2, blendText(aA), false);
+        for (Panel p : panels) {
+            if (p.openAnim < 0.02f) continue;
+
+            double visBody = p.bodyH * p.openAnim;
+            double rowY = p.y + HH - p.scroll;
+            double clipT = p.y + HH, clipB = p.y + HH + visBody;
+
+            if (p.isClient) {
+                if (p.clientEntries == null) continue;
+
+                for (ClientEntry entry : p.clientEntries) {
+                    if (rowY >= clipT - 0.5 && rowY + MH <= clipB + 0.5) {
+                        Color tc = entry.element == null
+                            ? EmberUI.TEXT
+                            : blendText(activeAnims.getOrDefault((Object) ("cl_" + entry.name), 0f));
+                        theme.textRenderer().render(entry.name, p.x + 14,
+                            rowY + (MH - rowTextH) / 2, tc, false);
+                    }
+                    rowY += MH;
+                }
+            } else {
+                for (Module m : filtered(p)) {
+                    if (rowY >= clipT - 0.5 && rowY + MH <= clipB + 0.5) {
+                        theme.textRenderer().render(m.title, p.x + 14,
+                            rowY + (MH - rowTextH) / 2,
+                            blendText(activeAnims.getOrDefault((Object) m, 0f)), false);
+                    }
+                    rowY += MH;
+                }
             }
-            rowY += MH;
         }
         theme.textRenderer().end();
     }
@@ -398,33 +442,6 @@ public class EmberClickGui extends TabScreen {
             (int) (EmberUI.TEXT_DIM.g + (EmberUI.TEXT.g - EmberUI.TEXT_DIM.g) * amount),
             (int) (EmberUI.TEXT_DIM.b + (EmberUI.TEXT.b - EmberUI.TEXT_DIM.b) * amount),
             255);
-    }
-
-    private void drawClientPanelText(Panel p) {
-        double x = p.x, y = p.y;
-
-        theme.textRenderer().begin(theme.scale(0.92));
-        theme.textRenderer().render("Client", x + 32, y + (HH - theme.textHeight()) / 2, EmberUI.TEXT, false);
-        theme.textRenderer().end();
-
-        if (p.openAnim < 0.02f || p.clientEntries == null) return;
-
-        double visBody = p.bodyH * p.openAnim;
-        theme.textRenderer().begin(theme.scale(0.82));
-        double rowY = y + HH - p.scroll;
-        double clipT = y + HH, clipB = y + HH + visBody;
-
-        for (ClientEntry entry : p.clientEntries) {
-            if (rowY >= clipT - 0.5 && rowY + MH <= clipB + 0.5) {
-                Color tc = entry.element == null
-                    ? EmberUI.TEXT
-                    : blendText(activeAnims.getOrDefault((Object) ("cl_" + entry.name), 0f));
-                theme.textRenderer().render(entry.name, x + 14,
-                    rowY + (MH - theme.textHeight()) / 2, tc, false);
-            }
-            rowY += MH;
-        }
-        theme.textRenderer().end();
     }
 
     // --- Search ---

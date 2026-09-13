@@ -221,6 +221,20 @@ public class HudRenderer {
         Renderer2D.TEXTURE.render(mc.getTextureManager().getTexture(id).getGlTextureView(), mc.getTextureManager().getTexture(id).getSampler());
     }
 
+    /**
+     * Ember: part of a texture, given normalised UVs - the whole-texture {@link #texture} is
+     * no use for a sprite sheet like a player skin, where the face is one 8x8 patch of 64x64.
+     * Call it inside {@link #post} like any other texture work in the HUD.
+     */
+    public void textureRegion(Identifier id, double x, double y, double width, double height,
+                              double u1, double v1, double u2, double v2, Color color) {
+        var texture = mc.getTextureManager().getTexture(id);
+
+        Renderer2D.TEXTURE.begin();
+        Renderer2D.TEXTURE.texQuad(x, y, width, height, 0, u1, v1, u2, v2, color);
+        Renderer2D.TEXTURE.render(texture.getGlTextureView(), texture.getSampler());
+    }
+
     public double text(String text, double x, double y, Color color, boolean shadow, double scale) {
         if (scale == -1) scale = hud.getTextScale();
 

@@ -12,6 +12,7 @@ import meteordevelopment.meteorclient.utils.render.EmberIcons;
 import meteordevelopment.meteorclient.utils.render.EmberStrip;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
+import net.minecraft.util.Identifier;
 
 import java.lang.management.ManagementFactory;
 import java.time.LocalTime;
@@ -30,6 +31,9 @@ public class EmberStatusBarHud extends HudElement {
     public static final HudElementInfo<EmberStatusBarHud> INFO = new HudElementInfo<>(Hud.GROUP, "ember-status-bar", "Ember V2 status bar: client, server, clock, ping, FPS, CPU, RAM and user.", EmberStatusBarHud::new);
 
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
+
+    /** Skins must be tinted pure white or they render off-colour. */
+    private static final Color SKIN_TINT = new Color(255, 255, 255, 255);
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -194,8 +198,22 @@ public class EmberStatusBarHud extends HudElement {
         if (avatar) drawBadge(renderer, x + w - 11 * s - badge, y + (h - badge) / 2, badge, accent);
     }
 
-    /** A round accent chip carrying the first letter of your name. */
+    /** Your actual skin face, falling back to a lettered chip before the skin has loaded. */
     private void drawBadge(HudRenderer renderer, double bx, double by, double size, Color accent) {
+        Identifier skin = skin();
+
+        if (skin != null) {
+            renderer.roundedQuad(bx, by, size, size, size * 0.3, new Color(0, 0, 0, 120));
+
+            // The face is an 8x8 patch at (8,8) of a 64x64 skin, the hat layer at (40,8).
+            final double fx = bx, fy = by, fs = size;
+            renderer.post(() -> {
+                renderer.textureRegion(skin, fx, fy, fs, fs, 0.125, 0.125, 0.25, 0.25, SKIN_TINT);
+                renderer.textureRegion(skin, fx, fy, fs, fs, 0.625, 0.125, 0.75, 0.25, SKIN_TINT);
+            });
+            return;
+        }
+
         renderer.roundedQuad(bx, by, size, size, size / 2, accent);
 
         String name = mc.getSession().getUsername();
@@ -207,6 +225,18 @@ public class EmberStatusBarHud extends HudElement {
         double lh = renderer.textHeight(true, letterScale);
 
         renderer.text(initial, bx + (size - lw) / 2, by + (size - lh) / 2, EmberStrip.background(), true, letterScale);
+    }
+
+    /** The local player's skin, or null while offline or before it has downloaded. */
+    private Identifier skin() {
+        if (mc.player != null) return mc.player.getSkin().body().texturePath();
+
+        if (mc.getNetworkHandler() != null) {
+            var entry = mc.getNetworkHandler().getPlayerListEntry(mc.getSession().getUuidOrNull());
+            if (entry != null) return entry.getSkinTextures().body().texturePath();
+        }
+
+        return null;
     }
 
     private int ping() {
