@@ -12,10 +12,10 @@ import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
  * flat surfaces this style is built from, so depth comes from a shadow underneath instead.
  */
 public final class EmberUI {
-    /** Panel body. Near black rather than a tinted dark, so the accent has to do the work. */
-    public static final Color BG = new Color(13, 13, 16, 243);
+    /** Panel body. Matches the HUD strips so the menu and the widgets read as one client. */
+    public static final Color BG = new Color(8, 8, 11, 244);
     /** Header strip and controls that sit on top of the body. */
-    public static final Color RAISED = new Color(22, 22, 27, 255);
+    public static final Color RAISED = new Color(20, 20, 25, 255);
     /** Input wells and the off state of a switch. */
     public static final Color WELL = new Color(31, 31, 38, 255);
     public static final Color DIVIDER = new Color(38, 38, 46, 255);

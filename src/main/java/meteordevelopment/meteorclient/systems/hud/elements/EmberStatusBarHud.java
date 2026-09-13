@@ -36,7 +36,7 @@ public class EmberStatusBarHud extends HudElement {
     private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
         .name("scale")
         .description("Size of the bar.")
-        .defaultValue(1.0)
+        .defaultValue(1.35)
         .min(0.5)
         .max(3.0)
         .sliderRange(0.5, 3.0)
@@ -82,6 +82,13 @@ public class EmberStatusBarHud extends HudElement {
         .name("cpu")
         .description("Show system processor load.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> showGpu = sgGeneral.add(new BoolSetting.Builder()
+        .name("gpu")
+        .description("Show graphics card load. Needs nvidia-smi, so NVIDIA cards only - the segment hides itself where it cannot be read.")
+        .defaultValue(false)
         .build()
     );
 
@@ -152,6 +159,11 @@ public class EmberStatusBarHud extends HudElement {
         if (showCpu.get()) {
             double cpu = cpu();
             if (cpu >= 0) segments.add(new EmberStrip.Segment(EmberIcons.Glyph.CPU, Math.round(cpu) + "% CPU"));
+        }
+
+        if (showGpu.get()) {
+            int gpu = meteordevelopment.meteorclient.utils.misc.GpuMonitor.usage();
+            if (gpu >= 0) segments.add(new EmberStrip.Segment(EmberIcons.Glyph.GPU, gpu + "% GPU"));
         }
 
         if (showRam.get()) {

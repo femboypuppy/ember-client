@@ -103,7 +103,7 @@ public class EmberClickGui extends TabScreen {
             cp.icon = new ItemStack(Items.ENDER_EYE);
             List<ClientEntry> entries = new ArrayList<>();
 
-            String[] wanted = {"ember-status-bar", "ember-bubbles", "ember-keybinds",
+            String[] wanted = {"ember-status-bar", "ember-bubbles", "ember-keybinds", "ember-armor",
                 "ember-module-list", "ember-notifications", "spotify"};
 
             for (String wName : wanted) {
@@ -115,18 +115,13 @@ public class EmberClickGui extends TabScreen {
                     var info = Hud.get().infos.get(wName);
                     if (info != null) {
                         switch (wName) {
-                            case "ember-module-list" -> {
-                                // Meteor's plain list sits in the same corner; the Ember one replaces it.
-                                for (HudElement el : Hud.get()) {
-                                    if (el.info.name.equals("active-modules") && el.isActive()) el.toggle();
-                                }
-                                Hud.get().add(info, -4, 4, XAnchor.Right, YAnchor.Top);
-                            }
-                            case "ember-notifications" -> Hud.get().add(info, -4, -40, XAnchor.Right, YAnchor.Bottom);
-                            case "ember-status-bar" -> Hud.get().add(info, 4, 4, XAnchor.Left, YAnchor.Top);
-                            case "ember-keybinds" -> Hud.get().add(info, 4, 64, XAnchor.Left, YAnchor.Top);
-                            case "ember-bubbles" -> Hud.get().add(info, 4, -4, XAnchor.Left, YAnchor.Bottom);
-                            default -> Hud.get().add(info, 4, 40);
+                            case "ember-module-list" -> Hud.get().add(info, -8, 8, XAnchor.Right, YAnchor.Top);
+                            case "ember-notifications" -> Hud.get().add(info, -8, -8, XAnchor.Right, YAnchor.Bottom);
+                            case "ember-status-bar" -> Hud.get().add(info, 8, 8, XAnchor.Left, YAnchor.Top);
+                            case "ember-keybinds" -> Hud.get().add(info, 8, 112, XAnchor.Left, YAnchor.Top);
+                            case "ember-armor" -> Hud.get().add(info, 8, -48, XAnchor.Left, YAnchor.Bottom);
+                            case "ember-bubbles" -> Hud.get().add(info, 8, -8, XAnchor.Left, YAnchor.Bottom);
+                            default -> Hud.get().add(info, 8, 56);
                         }
                         for (HudElement el : Hud.get()) {
                             if (el.info.name.equals(wName)) { found = el; break; }
@@ -134,6 +129,19 @@ public class EmberClickGui extends TabScreen {
                     }
                 }
                 if (found != null) entries.add(new ClientEntry(found.info.title, found));
+            }
+
+            // Meteor's plain list sits in the same corner as Ember's. This used to run only
+            // when the Ember list was first created, so a config that already had both kept
+            // drawing them on top of each other - hence the doubled, garbled module names.
+            boolean emberList = false;
+            for (HudElement el : Hud.get()) {
+                if (el.info.name.equals("ember-module-list") && el.isActive()) emberList = true;
+            }
+            if (emberList) {
+                for (HudElement el : Hud.get()) {
+                    if (el.info.name.equals("active-modules") && el.isActive()) el.toggle();
+                }
             }
 
             entries.add(new ClientEntry("Edit HUD Positions",

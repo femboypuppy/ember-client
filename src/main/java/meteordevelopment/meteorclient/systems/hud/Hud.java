@@ -124,6 +124,7 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberBubblesHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberStatusBarHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberKeybindsHud.INFO);
+        register(meteordevelopment.meteorclient.systems.hud.elements.EmberArmorHud.INFO);
         register(ItemHud.INFO);
         register(InventoryHud.INFO);
         register(CompassHud.INFO);
@@ -193,25 +194,21 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         resetToDefaultElements = true;
     }
 
+    /**
+     * Ember's own layout. Meteor's stacked text readouts are deliberately not added: the
+     * status bar already carries the same figures, and having both put two sets of numbers in
+     * the same corner on top of each other.
+     */
     private void resetToDefaultElementsImpl() {
         elements.clear();
 
-        int h = (int) Math.ceil(HudRenderer.INSTANCE.textHeight(true));
-
-        // Top Left
-        add(MeteorTextHud.WATERMARK, 4, 4, XAnchor.Left, YAnchor.Top);
-        add(MeteorTextHud.FPS, 4, 4 + h, XAnchor.Left, YAnchor.Top);
-        add(MeteorTextHud.TPS, 4, 4 + h * 2, XAnchor.Left, YAnchor.Top);
-        add(MeteorTextHud.PING, 4, 4 + h * 3, XAnchor.Left, YAnchor.Top);
-        add(MeteorTextHud.SPEED, 4, 4 + h * 4, XAnchor.Left, YAnchor.Top);
-
-        // Top Right
-        add(ActiveModulesHud.INFO, -4, 4, XAnchor.Right, YAnchor.Top);
-
-        // Bottom Right
-        add(MeteorTextHud.POSITION, -4, -4, XAnchor.Right, YAnchor.Bottom);
-        add(MeteorTextHud.OPPOSITE_POSITION, -4, -4 - h, XAnchor.Right, YAnchor.Bottom);
-        add(MeteorTextHud.ROTATION, -4, -4 - h * 2, XAnchor.Right, YAnchor.Bottom);
+        add(meteordevelopment.meteorclient.systems.hud.elements.EmberStatusBarHud.INFO, 8, 8, XAnchor.Left, YAnchor.Top);
+        add(meteordevelopment.meteorclient.systems.hud.elements.SpotifyHud.INFO, 8, 56, XAnchor.Left, YAnchor.Top);
+        add(meteordevelopment.meteorclient.systems.hud.elements.EmberKeybindsHud.INFO, 8, 112, XAnchor.Left, YAnchor.Top);
+        add(meteordevelopment.meteorclient.systems.hud.elements.EmberArmorHud.INFO, 8, -48, XAnchor.Left, YAnchor.Bottom);
+        add(meteordevelopment.meteorclient.systems.hud.elements.EmberBubblesHud.INFO, 8, -8, XAnchor.Left, YAnchor.Bottom);
+        add(meteordevelopment.meteorclient.systems.hud.elements.EmberModuleListHud.INFO, -8, 8, XAnchor.Right, YAnchor.Top);
+        add(meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud.INFO, -8, -8, XAnchor.Right, YAnchor.Bottom);
     }
 
     @EventHandler

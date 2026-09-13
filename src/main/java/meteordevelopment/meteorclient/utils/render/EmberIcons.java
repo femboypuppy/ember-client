@@ -27,6 +27,8 @@ public final class EmberIcons {
         FPS,
         /** A processor die with pins. */
         CPU,
+        /** A graphics card. */
+        GPU,
         /** A memory stick. */
         RAM,
         /** Head and shoulders. */
@@ -54,6 +56,7 @@ public final class EmberIcons {
             case PING -> ping(r, x, y, size, color);
             case FPS -> fps(r, x, y, size, color);
             case CPU -> cpu(r, x, y, size, color, bg);
+            case GPU -> gpu(r, x, y, size, color, bg);
             case RAM -> ram(r, x, y, size, color, bg);
             case USER -> user(r, x, y, size, color);
             case GLOBE -> globe(r, x, y, size, color, bg);
@@ -119,6 +122,15 @@ public final class EmberIcons {
             r.quad(x, y + o - s * 0.02, s * 0.16, s * 0.10, c);
             r.quad(x + s * 0.84, y + o - s * 0.02, s * 0.16, s * 0.10, c);
         }
+    }
+
+    private static void gpu(HudRenderer r, double x, double y, double s, Color c, Color bg) {
+        // A wide board with two fans punched out of it.
+        r.roundedQuad(x, y + s * 0.18, s, s * 0.62, s * 0.12, c);
+        circle(r, x + s * 0.10, y + s * 0.30, s * 0.34, bg);
+        circle(r, x + s * 0.54, y + s * 0.30, s * 0.34, bg);
+        r.quad(x + s * 0.16, y + s * 0.80, s * 0.12, s * 0.16, c);
+        r.quad(x + s * 0.68, y + s * 0.80, s * 0.12, s * 0.16, c);
     }
 
     private static void ram(HudRenderer r, double x, double y, double s, Color c, Color bg) {
