@@ -46,8 +46,43 @@ public class DiscordPresence extends Module {
         Sequential
     }
 
+    /** Meteor's own application, used while no Ember application id is set. */
+    private static final long FALLBACK_APP_ID = 835240968533049424L;
+
+    private final SettingGroup sgApp = settings.createGroup("Discord App");
     private final SettingGroup sgLine1 = settings.createGroup("Line 1");
     private final SettingGroup sgLine2 = settings.createGroup("Line 2");
+
+    // Discord App
+
+    private final Setting<String> appId = sgApp.add(new StringSetting.Builder()
+        .name("application-id")
+        .description("Your Discord application id, from discord.com/developers. Leave empty to fall back to Meteor's app.")
+        .defaultValue("1548430667786878986")
+        .onChanged(id -> restartIpc())
+        .build()
+    );
+
+    private final Setting<String> largeImageKey = sgApp.add(new StringSetting.Builder()
+        .name("large-image-key")
+        .description("Asset key of the big image, uploaded to your application under Rich Presence > Art Assets.")
+        .defaultValue("ember_client")
+        .build()
+    );
+
+    private final Setting<String> smallImageKey = sgApp.add(new StringSetting.Builder()
+        .name("small-image-key")
+        .description("Asset key of the small corner image. Leave empty for no small image.")
+        .defaultValue("ember_icon")
+        .build()
+    );
+
+    private final Setting<String> smallImageText = sgApp.add(new StringSetting.Builder()
+        .name("small-image-text")
+        .description("Tooltip shown when hovering the small image.")
+        .defaultValue("Ember Client")
+        .build()
+    );
 
     // Line 1
 
@@ -81,7 +116,7 @@ public class DiscordPresence extends Module {
     private final Setting<List<String>> line2Strings = sgLine2.add(new StringListSetting.Builder()
         .name("line-2-messages")
         .description("Messages used for the second line.")
-        .defaultValue("Meteor on Crack!", "{round(server.tps, 1)} TPS", "Playing on {server.difficulty} difficulty.", "{server.player_count} Players online")
+        .defaultValue("Ember Client", "{round(server.tps, 1)} TPS", "Playing on {server.difficulty} difficulty.", "{server.player_count} Players online")
         .onChanged(strings -> recompileLine2())
         .renderer(StarscriptTextBoxRenderer.class)
         .build()
@@ -104,7 +139,6 @@ public class DiscordPresence extends Module {
     );
 
     private static final RichPresence rpc = new RichPresence();
-    private SmallImage currentSmallImage;
     private int ticks;
     private boolean forceUpdate, lastWasInMainMenu;
 
@@ -122,7 +156,7 @@ public class DiscordPresence extends Module {
     }
 
     public DiscordPresence() {
-        super(Categories.Misc, "discord-presence", "Displays Meteor as your presence on Discord.");
+        super(Categories.Misc, "discord-presence", "Shows Ember Client as your presence on Discord.");
 
         runInMainMenu = true;
     }
@@ -146,15 +180,11 @@ public class DiscordPresence extends Module {
 
     @Override
     public void onActivate() {
-        DiscordIPC.start(835240968533049424L, null);
+        DiscordIPC.start(applicationId(), null);
 
         rpc.setStart(System.currentTimeMillis() / 1000L);
 
-        String largeText = "%s %s".formatted(MeteorClient.NAME, MeteorClient.VERSION);
-        if (!MeteorClient.BUILD_NUMBER.isEmpty()) largeText += " Build: " + MeteorClient.BUILD_NUMBER;
-        rpc.setLargeImage("meteor_client", largeText);
-
-        currentSmallImage = SmallImage.Snail;
+        applyImages();
 
         recompileLine1();
         recompileLine2();
@@ -196,10 +226,9 @@ public class DiscordPresence extends Module {
     private void onTick(TickEvent.Post event) {
         boolean update = false;
 
-        // Image
+        // Refresh periodically so the elapsed time and images stay live.
         if (ticks >= 200 || forceUpdate) {
-            currentSmallImage = currentSmallImage.next();
-            currentSmallImage.apply();
+            applyImages();
             update = true;
 
             ticks = 0;
@@ -253,7 +282,7 @@ public class DiscordPresence extends Module {
                 else if (mc.currentScreen instanceof MultiplayerScreen) rpc.setState("Selecting server");
                 else if (mc.currentScreen instanceof AddServerScreen) rpc.setState("Adding server");
                 else if (mc.currentScreen instanceof ConnectScreen || mc.currentScreen instanceof DirectConnectScreen) rpc.setState("Connecting to server");
-                else if (mc.currentScreen instanceof WidgetScreen) rpc.setState("Browsing Meteor's GUI");
+                else if (mc.currentScreen instanceof WidgetScreen) rpc.setState("Browsing Ember's GUI");
                 else if (mc.currentScreen instanceof OptionsScreen || mc.currentScreen instanceof SkinOptionsScreen || mc.currentScreen instanceof SoundOptionsScreen || mc.currentScreen instanceof VideoOptionsScreen || mc.currentScreen instanceof ControlsOptionsScreen || mc.currentScreen instanceof LanguageOptionsScreen || mc.currentScreen instanceof ChatOptionsScreen || mc.currentScreen instanceof PackScreen || mc.currentScreen instanceof AccessibilityOptionsScreen) rpc.setState("Changing options");
                 else if (mc.currentScreen instanceof CreditsScreen) rpc.setState("Reading credits");
                 else if (mc.currentScreen instanceof RealmsScreen) rpc.setState("Browsing Realms");
@@ -295,24 +324,39 @@ public class DiscordPresence extends Module {
         return help;
     }
 
-    private enum SmallImage {
-        MineGame("minegame", "MineGame159"),
-        Snail("seasnail", "seasnail8169");
+    /** Falls back to Meteor's application if the id is blank or not a number. */
+    private long applicationId() {
+        String id = appId.get().trim();
+        if (id.isEmpty()) return FALLBACK_APP_ID;
 
-        private final String key, text;
-
-        SmallImage(String key, String text) {
-            this.key = key;
-            this.text = text;
+        try {
+            return Long.parseLong(id);
+        } catch (NumberFormatException e) {
+            warning("Discord application id '%s' is not a number, using the default.", id);
+            return FALLBACK_APP_ID;
         }
+    }
 
-        void apply() {
-            rpc.setSmallImage(key, text);
-        }
+    private void applyImages() {
+        String largeText = "%s %s".formatted(MeteorClient.NAME, MeteorClient.VERSION);
+        if (!MeteorClient.BUILD_NUMBER.isEmpty()) largeText += " Build: " + MeteorClient.BUILD_NUMBER;
 
-        SmallImage next() {
-            if (this == MineGame) return Snail;
-            return MineGame;
-        }
+        String large = largeImageKey.get().trim();
+        if (!large.isEmpty()) rpc.setLargeImage(large, largeText);
+
+        String small = smallImageKey.get().trim();
+        if (!small.isEmpty()) rpc.setSmallImage(small, smallImageText.get());
+    }
+
+    /** Reconnects so a changed application id takes effect without toggling the module. */
+    private void restartIpc() {
+        if (!isActive()) return;
+
+        DiscordIPC.stop();
+        DiscordIPC.start(applicationId(), null);
+
+        rpc.setStart(System.currentTimeMillis() / 1000L);
+        applyImages();
+        forceUpdate = true;
     }
 }
