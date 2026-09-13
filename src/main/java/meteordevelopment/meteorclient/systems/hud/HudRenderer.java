@@ -43,6 +43,9 @@ public class HudRenderer {
 
     private static final double SCALE_TO_HEIGHT = 1.0 / 18.0;
 
+    /** Largest glyph atlas that still packs the full character set into one 2048px texture. */
+    private static final int MAX_ATLAS_HEIGHT = 80;
+
     private final Hud hud = Hud.get();
     private final List<Runnable> postTasks = new ArrayList<>();
 
@@ -173,6 +176,36 @@ public class HudRenderer {
         }
     }
 
+    /**
+     * Ember: a deep drop shadow under a panel. Heavier and wider than softGlow and pushed
+     * downwards, so a widget reads as lifted off the world instead of merely outlined - which
+     * matters over bright terrain, where a thin shadow disappears entirely.
+     */
+    public void dropShadow(double x, double y, double width, double height, double radius, double size) {
+        dropShadow(x, y, width, height, radius, size, 1f);
+    }
+
+    /** As above, with {@code opacity} so a shadow can fade in step with the panel casting it. */
+    public void dropShadow(double x, double y, double width, double height, double radius, double size, float opacity) {
+        if (width <= 0 || height <= 0 || size <= 0 || opacity <= 0.01f) return;
+
+        int layers = 9;
+        double drop = size * 0.34;
+
+        for (int i = layers; i >= 1; i--) {
+            double t = (double) i / layers;
+            double spread = size * t;
+
+            // Near-transparent at the outer edge, stacking into a solid core underneath.
+            int alpha = (int) ((52 * (1.0 - t) + 7) * opacity);
+            if (alpha <= 0) continue;
+
+            double w = width + spread * 2, h = height + spread * 2;
+            roundedQuad(x - spread, y - spread + drop, w, h,
+                Math.min(Math.min(w, h) / 2, radius + spread), new Color(0, 0, 0, alpha));
+        }
+    }
+
     public void quad(double x, double y, double width, double height, Color cTopLeft, Color cTopRight, Color cBottomRight, Color cBottomLeft) {
         Renderer2D.COLOR.quad(x, y, width, height, cTopLeft, cTopRight, cBottomRight, cBottomLeft);
     }
@@ -200,19 +233,23 @@ public class HudRenderer {
         Font font = fontHolder.font;
         MeshBuilder mesh = fontHolder.getMesh();
 
+        double rs = renderScale(scale);
         double width;
 
         if (shadow) {
             int preShadowA = CustomTextRenderer.SHADOW_COLOR.a;
             CustomTextRenderer.SHADOW_COLOR.a = (int) (color.a / 255.0 * preShadowA);
 
-            width = font.render(mesh, text, x + 1, y + 1, CustomTextRenderer.SHADOW_COLOR, scale);
-            font.render(mesh, text, x, y, color, scale);
+            // Offset with the text, or the shadow vanishes under large glyphs.
+            double off = Math.max(1, renderedHeight(scale) / 18);
+
+            width = font.render(mesh, text, x + off, y + off, CustomTextRenderer.SHADOW_COLOR, rs);
+            font.render(mesh, text, x, y, color, rs);
 
             CustomTextRenderer.SHADOW_COLOR.a = preShadowA;
         }
         else {
-            width = font.render(mesh, text, x, y, color, scale);
+            width = font.render(mesh, text, x, y, color, rs);
         }
 
         return width;
@@ -225,8 +262,8 @@ public class HudRenderer {
         if (text.isEmpty()) return 0;
 
         if (hud.hasCustomFont()) {
-            double width = getFont(scale).getWidth(text, text.length());
-            return (width + (shadow ? 1 : 0)) * (scale == -1 ? hud.getTextScale() : scale) + (shadow ? 1 : 0);
+            double s = scale == -1 ? hud.getTextScale() : scale;
+            return getFont(s).getWidth(text, text.length()) * renderScale(s) + (shadow ? 1 : 0);
         }
 
         VanillaTextRenderer.INSTANCE.scale = (scale == -1 ? hud.getTextScale() : scale) * 2;
@@ -244,8 +281,8 @@ public class HudRenderer {
 
     public double textHeight(boolean shadow, double scale) {
         if (hud.hasCustomFont()) {
-            double height = getFont(scale).getHeight() + 1;
-            return (height + (shadow ? 1 : 0)) * (scale == -1 ? hud.getTextScale() : scale);
+            double s = scale == -1 ? hud.getTextScale() : scale;
+            return (getFont(s).getHeight() + 1 + (shadow ? 1 : 0)) * renderScale(s);
         }
 
         VanillaTextRenderer.INSTANCE.scale = (scale == -1 ? hud.getTextScale() : scale) * 2;
@@ -306,10 +343,37 @@ public class HudRenderer {
         drawContext.addEntity(state, scale, translation, rotation, null, x1, y1, x2, y2);
     }
 
+    /** Nominal size the layout maths is based on. */
+    private static int nominalHeight(double scale) {
+        return Math.max(1, (int) Math.round(scale / SCALE_TO_HEIGHT));
+    }
+
+    /** The pixel height glyphs actually end up at once the draw scale is applied. */
+    private static double renderedHeight(double scale) {
+        return nominalHeight(scale) * scale;
+    }
+
+    /**
+     * Size the glyph atlas is rasterised at. This follows the rendered height rather than the
+     * nominal one: the atlas used to be baked at nominal size and then multiplied by scale
+     * again at draw time, so any scale above 1 was a straight bitmap upscale and went soft.
+     *
+     * Capped because the ~720 packed characters stop fitting one 2048px texture a little past
+     * 90px; past the cap the atlas is reused and scaled, which is softer but still complete.
+     */
+    private static int atlasHeight(double scale) {
+        return Math.max(1, Math.min(MAX_ATLAS_HEIGHT, (int) Math.round(renderedHeight(scale))));
+    }
+
+    /** Draw-time factor that lands the cached atlas on its intended pixel height. */
+    private static double renderScale(double scale) {
+        return renderedHeight(scale) / atlasHeight(scale);
+    }
+
     private FontHolder getFontHolder(double scale, boolean render) {
         // Calculate font height
         if (scale == -1) scale = hud.getTextScale();
-        int height = (int) Math.round(scale / SCALE_TO_HEIGHT);
+        int height = atlasHeight(scale);
 
         // Check fonts in use
         FontHolder fontHolder = fontsInUse.get(height);

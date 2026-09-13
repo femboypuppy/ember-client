@@ -110,6 +110,7 @@ public class EmberArmorHud extends HudElement {
         setSize(w, h);
 
         if (background.get()) {
+            renderer.dropShadow(x, y, w, h, 8 * s, 12 * s);
             renderer.roundedQuad(x, y, w, h, 8 * s, EmberStrip.background());
         }
 

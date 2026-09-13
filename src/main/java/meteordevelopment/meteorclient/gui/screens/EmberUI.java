@@ -47,10 +47,14 @@ public final class EmberUI {
         return new Color(c.r, c.g, c.b, Math.max(0, Math.min(255, a)));
     }
 
-    /** Soft dark shadow cast below a panel, giving depth without an accent outline. */
+    /**
+     * Deep dark shadow cast below a panel, giving depth without an accent outline. Three
+     * passes: a wide soft halo, a mid body, and a tight dark core right under the edge.
+     */
     public static void shadow(GuiRenderer r, double x, double y, double w, double h, float fade) {
-        r.glow(x, y + 6, w, h, 18, new Color(0, 0, 0, (int) (120 * fade)), false);
-        r.glow(x, y + 2, w, h, 8, new Color(0, 0, 0, (int) (90 * fade)), false);
+        r.glow(x, y + 12, w, h, 34, new Color(0, 0, 0, (int) (185 * fade)), false);
+        r.glow(x, y + 6, w, h, 18, new Color(0, 0, 0, (int) (160 * fade)), false);
+        r.glow(x, y + 2, w, h, 8, new Color(0, 0, 0, (int) (130 * fade)), false);
     }
 
     /** Subtle lift under the cursor. Flat fill, no edge bar - the image has no such marker. */
