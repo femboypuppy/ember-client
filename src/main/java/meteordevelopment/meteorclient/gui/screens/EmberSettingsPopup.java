@@ -64,7 +64,9 @@ public class EmberSettingsPopup {
         }
     }
 
-    private record TextOp(String text, double x, double y, Color color, double scale, int align, double box) {
+    /** {@code overlay} marks text belonging to the dropdown, which is never culled behind it. */
+    private record TextOp(String text, double x, double y, Color color, double scale, int align, double box,
+                          boolean overlay) {
     }
 
     private final GuiTheme theme;
@@ -95,22 +97,29 @@ public class EmberSettingsPopup {
     private Keybind capturing;
     private Setting<?> capturingSetting;
 
+    /** The enum row whose list is open, and where that list is anchored. */
+    private Row dropdownRow;
+    private double dropdownAnchorX, dropdownAnchorY;
+    /** {x, y, w, h} of the open list, or null - used to cull text drawn behind it. */
+    private double[] dropdownRect;
+
 
     public EmberSettingsPopup(GuiTheme theme) {
         this.theme = theme;
     }
 
+    /** Flat near-black, matching the ClickGUI. Only the accent tracks the chosen colour. */
     private static void syncPalette() {
-        PANEL_BG = new Color(EmberPalette.panel().r, EmberPalette.panel().g, EmberPalette.panel().b, 250);
-        HEADER_BG = EmberPalette.header();
-        DIVIDER = EmberPalette.divider();
-        CONTROL_BG = EmberPalette.control();
-        CONTROL_HOVER = EmberPalette.controlHover();
-        TRACK = EmberPalette.track();
-        TOGGLE_OFF = EmberPalette.toggleOff();
-        TEXT = EmberPalette.textBright();
-        TEXT_DIM = EmberPalette.textDim();
-        TEXT_FAINT = EmberPalette.textFaint();
+        PANEL_BG = EmberUI.BG;
+        HEADER_BG = EmberUI.RAISED;
+        DIVIDER = EmberUI.DIVIDER;
+        CONTROL_BG = EmberUI.WELL;
+        CONTROL_HOVER = new Color(44, 44, 53, 255);
+        TRACK = new Color(44, 44, 53, 255);
+        TOGGLE_OFF = EmberUI.WELL;
+        TEXT = EmberUI.TEXT;
+        TEXT_DIM = EmberUI.TEXT_DIM;
+        TEXT_FAINT = EmberUI.TEXT_FAINT;
     }
 
     public void open(Target target) {
@@ -127,6 +136,7 @@ public class EmberSettingsPopup {
         stopEditing(true);
         capturing = null;
         dragRow = null;
+        dropdownRow = null;
         closing = true;
     }
 
@@ -251,13 +261,14 @@ public class EmberSettingsPopup {
         r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (130 * fade)));
         r.scissorEnd();
 
-        r.glow(x, y + 8, w, h, 24, new Color(0, 0, 0, (int) (130 * fade)), false);
-        r.glow(x, y, w, h, 34, accentAlpha((int) (160 * fade)), false);
+        // Depth from a shadow, not an accent outline - the flat style has no glowing edges.
+        EmberUI.shadow(r, x, y, w, h, fade);
         r.roundedRect(x, y, w, h, RADIUS, alpha(PANEL_BG, fade));
 
         drawHeader(r, x, y, w, fade, dt);
         drawRows(r, rows, x, w, bodyTop, bodyBottom, fade, dt);
         drawScrollbar(r, x, w, bodyTop, bodyBottom, contentH, fade);
+        drawDropdown(r, fade, dt);
 
         // Footer
         r.quad(x + PAD, bodyBottom, w - PAD * 2, 1, alpha(DIVIDER, fade));
@@ -289,7 +300,7 @@ public class EmberSettingsPopup {
         boolean closeHover = over(cx, cy, cs, cs);
         float ca = anim("close", closeHover, dt);
         if (ca > 0.01f) r.roundedRect(cx, cy, cs, cs, cs / 2, new Color(DANGER.r, DANGER.g, DANGER.b, (int) (70 * ca * fade)));
-        text("x", cx + cs / 2, cy + 7, alpha(closeHover ? TEXT : TEXT_DIM, fade), LABEL_SCALE, 2, 0);
+        EmberUI.cross(r, cx + cs / 2, cy + cs / 2, 9, alpha(closeHover ? TEXT : TEXT_DIM, fade));
         hits.add(new Hit(cx, cy, cs, cs, null, "close"));
 
         // Active toggle
@@ -375,10 +386,7 @@ public class EmberSettingsPopup {
     }
 
     private void drawToggle(GuiRenderer r, Object key, boolean on, double x, double y, double w, double h, float fade, float dt) {
-        float a = anim(key + "tgl", on, dt * 1.4f);
-        r.roundedRect(x, y, w, h, h / 2, alpha(lerp(TOGGLE_OFF, accent(), a), fade));
-        double knob = h - 6;
-        r.quad(x + 3 + (w - knob - 6) * a, y + 3, knob, knob, GuiRenderer.CIRCLE, alpha(TEXT, fade));
+        EmberUI.toggle(r, x, y, w, h, anim(key + "tgl", on, dt * 1.4f), fade);
     }
 
     private void drawSlider(GuiRenderer r, Row row, double ctrlX, double cy, float fade, float dt) {
@@ -412,25 +420,69 @@ public class EmberSettingsPopup {
         hits.add(new Hit(boxX, cy - boxH / 2, boxW, boxH, row, "box"));
     }
 
+    /** The closed control: current value with a chevron, which opens the list below it. */
     private void drawEnum(GuiRenderer r, Row row, double ctrlX, double cy, float fade, float dt) {
-        double bh = 28, by = cy - bh / 2, arrow = 30;
-
-        boolean leftHover = over(ctrlX, by, arrow, bh);
-        boolean rightHover = over(ctrlX + CTRL_W - arrow, by, arrow, bh);
-        float ha = anim(row + "enm", over(ctrlX, by, CTRL_W, bh), dt);
+        double bh = 28, by = cy - bh / 2;
+        boolean open = dropdownRow == row;
+        float ha = anim(row + "enm", over(ctrlX, by, CTRL_W, bh) || open, dt);
 
         r.roundedRect(ctrlX, by, CTRL_W, bh, 8, alpha(lerp(CONTROL_BG, CONTROL_HOVER, ha), fade));
 
-        Color left = alpha(leftHover ? accent() : TEXT_DIM, fade);
-        Color right = alpha(rightHover ? accent() : TEXT_DIM, fade);
-        double ax = ctrlX + arrow / 2, bx = ctrlX + CTRL_W - arrow / 2;
-        r.triangle(ax + 3, cy - 5, ax + 3, cy + 5, ax - 3, cy, left);
-        r.triangle(bx - 3, cy - 5, bx - 3, cy + 5, bx + 3, cy, right);
+        EmberUI.chevron(r, ctrlX + CTRL_W - 16, cy, 8,
+            open ? EmberUI.Direction.UP : EmberUI.Direction.DOWN,
+            alpha(open ? accent() : TEXT_DIM, fade));
 
-        text(prettyEnum(row.setting().get()), ctrlX + CTRL_W / 2, cy - 4.5, alpha(TEXT, fade), LABEL_SCALE - 0.06, 2, CTRL_W - arrow * 2 - 8);
+        text(prettyEnum(row.setting().get()), ctrlX + 12, cy - 4.5, alpha(TEXT, fade), LABEL_SCALE - 0.06, 0, CTRL_W - 38);
 
-        hits.add(new Hit(ctrlX, by, arrow + (CTRL_W - arrow * 2) / 2, bh, row, "enumPrev"));
-        hits.add(new Hit(ctrlX + arrow + (CTRL_W - arrow * 2) / 2, by, arrow + (CTRL_W - arrow * 2) / 2, bh, row, "enumNext"));
+        hits.add(new Hit(ctrlX, by, CTRL_W, bh, row, "enumOpen"));
+        if (open) dropdownAnchorX = ctrlX;
+        if (open) dropdownAnchorY = by + bh + 4;
+    }
+
+    /**
+     * The open list, drawn last so it covers the rows underneath. Its labels are marked as
+     * overlay text: all text is flushed in one late pass, so without that mark the rows it
+     * covers would print straight through the panel.
+     */
+    private void drawDropdown(GuiRenderer r, float fade, float dt) {
+        dropdownRect = null;
+        if (dropdownRow == null) return;
+
+        Object current = dropdownRow.setting().get();
+        Object[] values = current.getClass().getEnumConstants();
+        if (values == null || values.length == 0) {
+            dropdownRow = null;
+            return;
+        }
+
+        double rh = 26;
+        double w = CTRL_W;
+        double h = values.length * rh + 8;
+        double x = dropdownAnchorX;
+        double y = dropdownAnchorY;
+
+        // Flip above the control rather than run off the bottom of the screen.
+        if (y + h > getWindowHeight() - 10) y = Math.max(10, getWindowHeight() - 10 - h);
+
+        dropdownRect = new double[]{x, y, w, h};
+
+        EmberUI.shadow(r, x, y, w, h, fade);
+        r.roundedRect(x, y, w, h, 10, alpha(EmberUI.RAISED, fade));
+
+        double ry = y + 4;
+        for (int i = 0; i < values.length; i++) {
+            boolean selected = values[i] == current;
+            float a = anim(dropdownRow + "dd" + i, over(x + 4, ry, w - 8, rh), dt);
+
+            EmberUI.hoverFill(r, x + 4, ry, w - 8, rh, a);
+            if (selected) EmberUI.check(r, x + 11, ry + (rh - 11) / 2, 11, alpha(accent(), fade));
+
+            textOverlay(prettyEnum(values[i]), x + 30, ry + (rh - 9) / 2,
+                alpha(selected ? TEXT : TEXT_DIM, fade), LABEL_SCALE - 0.06, 0, w - 42);
+
+            hits.add(new Hit(x + 4, ry, w - 8, rh, dropdownRow, "enumPick" + i));
+            ry += rh;
+        }
     }
 
     private void drawString(GuiRenderer r, Row row, double ctrlX, double cy, float fade, float dt) {
@@ -506,7 +558,13 @@ public class EmberSettingsPopup {
     /** align: 0 left, 1 right-anchored, 2 centred on x, 3 right-anchored keeping the end visible. */
     private void text(String s, double x, double y, Color color, double scale, int align, double maxWidth) {
         if (s == null || s.isEmpty()) return;
-        texts.add(new TextOp(s, x, y, color, scale, align, maxWidth));
+        texts.add(new TextOp(s, x, y, color, scale, align, maxWidth, false));
+    }
+
+    /** Text belonging to the open dropdown, exempt from the cull that hides rows behind it. */
+    private void textOverlay(String s, double x, double y, Color color, double scale, int align, double maxWidth) {
+        if (s == null || s.isEmpty()) return;
+        texts.add(new TextOp(s, x, y, color, scale, align, maxWidth, true));
     }
 
     private void flushText(DrawContext graphics) {
@@ -535,12 +593,25 @@ public class EmberSettingsPopup {
 
                 // Callers pass y as the top of a 9px-tall line; centre the real line height there.
                 double drawY = op.y() + (9 - lineH) / 2;
+
+                if (!op.overlay() && behindDropdown(drawX, drawY, tw, lineH)) continue;
+
                 theme.textRenderer().render(s, drawX, drawY, op.color(), false);
             }
 
 
             theme.textRenderer().end();
         }
+    }
+
+    /**
+     * True when a label would land under the open dropdown. Text is flushed in one pass after
+     * every shape, so anything the list covers has to be dropped rather than drawn over.
+     */
+    private boolean behindDropdown(double x, double y, double w, double h) {
+        if (dropdownRect == null) return false;
+        double dx = dropdownRect[0], dy = dropdownRect[1], dw = dropdownRect[2], dh = dropdownRect[3];
+        return x < dx + dw && x + w > dx && y < dy + dh && y + h > dy;
     }
 
     private String fit(String s, double maxWidth, boolean keepEnd) {
@@ -664,6 +735,12 @@ public class EmberSettingsPopup {
         if (capturing != null && (hit == null || !"keybind".equals(hit.area()))) capturing = null;
 
         if (hit == null) {
+            // A click anywhere else dismisses the list first, leaving the popup open.
+            if (dropdownRow != null) {
+                dropdownRow = null;
+                return true;
+            }
+
             // Clicking outside the panel closes it, like a normal popup.
             double w = Math.min(MAX_W, getWindowWidth() - 40);
             double x = (getWindowWidth() - w) / 2;
@@ -672,6 +749,23 @@ public class EmberSettingsPopup {
         }
 
         Row row = hit.row();
+
+        if (hit.area().startsWith("enumPick")) {
+            int index = Integer.parseInt(hit.area().substring("enumPick".length()));
+            Object[] values = row.setting().get().getClass().getEnumConstants();
+
+            if (values != null && index < values.length) {
+                @SuppressWarnings("unchecked")
+                Setting<Object> setting = (Setting<Object>) row.setting();
+                setting.set(values[index]);
+            }
+
+            dropdownRow = null;
+            return true;
+        }
+
+        // Any other click closes an open list before it does its own job.
+        if (!"enumOpen".equals(hit.area())) dropdownRow = null;
 
         switch (hit.area()) {
             case "close" -> close();
@@ -708,9 +802,13 @@ public class EmberSettingsPopup {
                     editBuffer = sliderText(row);
                 }
             }
-            case "enumPrev", "enumNext" -> {
-                if (button == 1) reset(row);
-                else cycleEnum(row, hit.area().equals("enumNext") ? 1 : -1);
+            case "enumOpen" -> {
+                if (button == 1) {
+                    reset(row);
+                    dropdownRow = null;
+                } else {
+                    dropdownRow = dropdownRow == row ? null : row;
+                }
             }
             case "string" -> {
                 if (button == 1) {
@@ -758,6 +856,8 @@ public class EmberSettingsPopup {
 
     public boolean mouseScrolled(double amount) {
         if (target == null) return false;
+        // Its anchor belongs to a row that is about to move, so dismiss rather than drift.
+        dropdownRow = null;
         scroll = MathHelper.clamp(scroll - amount * ROW_H * 0.8, 0, maxScroll);
         return true;
     }

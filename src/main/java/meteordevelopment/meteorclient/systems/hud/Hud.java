@@ -18,7 +18,6 @@ import meteordevelopment.meteorclient.systems.hud.screens.HudEditorScreen;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.misc.NbtUtils;
-import meteordevelopment.meteorclient.utils.render.EmberTheme;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.nbt.NbtCompound;
@@ -51,18 +50,6 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         .onChanged(aBoolean -> {
             for (HudElement element : elements) element.onFontChanged();
         })
-        .build()
-    );
-
-    /**
-     * Saved here rather than on a module so the layout and the widget on/off states it
-     * drives live in the same config file and cannot disagree after a restart.
-     */
-    public final Setting<EmberTheme.Style> layout = sgGeneral.add(new EnumSetting.Builder<EmberTheme.Style>()
-        .name("ember-layout")
-        .description("Which Ember layout is on screen.")
-        .defaultValue(EmberTheme.Style.Ember)
-        .onChanged(EmberTheme::select)
         .build()
     );
 
@@ -131,7 +118,6 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         settings.registerColorSettings(null);
 
         register(MeteorTextHud.INFO);
-        register(meteordevelopment.meteorclient.systems.hud.elements.EmberTopBarHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.SpotifyHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberModuleListHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud.INFO);
@@ -331,10 +317,6 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
                 elements.add(element);
             }
         }
-
-        // The layout setting is restored above, before these elements exist, so its toggling
-        // had nothing to act on. Re-apply it now that they are loaded.
-        EmberTheme.adopt(layout.get());
 
         return this;
     }

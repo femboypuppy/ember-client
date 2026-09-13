@@ -16,12 +16,10 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
+import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
-import net.minecraft.client.gui.Click;
-import net.minecraft.util.math.MathHelper;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 
@@ -32,32 +30,28 @@ import static meteordevelopment.meteorclient.utils.Utils.getWindowHeight;
 import static meteordevelopment.meteorclient.utils.Utils.getWindowWidth;
 import static org.lwjgl.glfw.GLFW.*;
 
+/**
+ * Ember's module menu. Flat near-black panels, a switch on every row, and depth from soft
+ * shadows rather than glowing outlines - the style defined in {@link EmberUI}.
+ */
 public class EmberClickGui extends TabScreen {
+    private static final Color BG_OVERLAY = new Color(0, 0, 0, 110);
 
-    private static final Color BG_OVERLAY = new Color(0, 0, 0, 90);
-    private static final Color DOT_ON = new Color(93, 217, 127, 255);
+    private static final double PW = 224;
+    private static final double HH = 36;
+    private static final double MH = 30;
+    private static final double GAP = 16;
 
-    // Refreshed from EmberPalette every frame, so switching themes recolours everything.
-    private static Color ACCENT, PANEL_BG, HEADER_BG, DIVIDER, ROW_ACTIVE, HEADER_TEXT,
-        TEXT_WHITE, TEXT_INACTIVE, TEXT_FAINT, SEARCH_BG, DOT_OFF;
-
-    static {
-        syncPalette();
-    }
-
-    private static final double PW = 240;
-    private static final double HH = 34;
-    private static final double MH = 31;
-    private static final double PR = 9;
-    private static final double GAP = 18;
-
-    /** Width of the "settings" handle at the right of a row that opens the popup. */
-    private static final double HANDLE_W = 40;
+    /** Switch geometry, measured in from the right edge of a row. */
+    private static final double SW_W = 26, SW_H = 14, SW_RIGHT = 14;
+    /** The chevron that opens a row's settings sits just left of the switch. */
+    private static final double CHEV_RIGHT = 52;
 
     private final List<Panel> panels = new ArrayList<>();
     private Panel dragging = null;
     private double dragOX, dragOY;
     private double mx, my;
+    private double rawMx, rawMy;
     private String search = "";
     private boolean searchFocused = false;
     private float globalFade = 0f;
@@ -77,23 +71,9 @@ public class EmberClickGui extends TabScreen {
         buildPanels();
     }
 
-    private static void syncPalette() {
-        ACCENT = EmberPalette.accent();
-        PANEL_BG = EmberPalette.panel();
-        HEADER_BG = EmberPalette.header();
-        DIVIDER = EmberPalette.divider();
-        ROW_ACTIVE = EmberPalette.rowActive();
-        HEADER_TEXT = EmberPalette.textBright();
-        TEXT_WHITE = EmberPalette.textBright();
-        TEXT_INACTIVE = EmberPalette.textDim();
-        TEXT_FAINT = EmberPalette.textFaint();
-        SEARCH_BG = EmberPalette.search();
-        DOT_OFF = EmberPalette.dotOff();
-    }
-
     private void buildPanels() {
         panels.clear();
-        double sx = 10, sy = 36;
+        double sx = 12, sy = 46;
 
         for (Category cat : Modules.loopCategories()) {
             List<Module> mods = Modules.get().getGroup(cat);
@@ -111,20 +91,21 @@ public class EmberClickGui extends TabScreen {
             } else {
                 p.x = sx; p.y = sy;
                 sx += PW + GAP;
-                if (sx + PW > getWindowWidth() - 10) { sx = 10; sy += 340; }
+                if (sx + PW > getWindowWidth() - 12) { sx = 12; sy += 330; }
             }
             panels.add(p);
         }
 
-        // Client panel - only top bar + spotify
         {
             Panel cp = new Panel();
             cp.name = "Client";
             cp.isClient = true;
             cp.icon = new ItemStack(Items.ENDER_EYE);
             List<ClientEntry> entries = new ArrayList<>();
-            String[] wanted = {"ember-top-bar", "spotify", "ember-module-list", "ember-notifications",
-                "ember-status-bar", "ember-bubbles", "ember-keybinds"};
+
+            String[] wanted = {"ember-status-bar", "ember-bubbles", "ember-keybinds",
+                "ember-module-list", "ember-notifications", "spotify"};
+
             for (String wName : wanted) {
                 HudElement found = null;
                 for (HudElement el : Hud.get()) {
@@ -142,25 +123,18 @@ public class EmberClickGui extends TabScreen {
                                 Hud.get().add(info, -4, 4, XAnchor.Right, YAnchor.Top);
                             }
                             case "ember-notifications" -> Hud.get().add(info, -4, -40, XAnchor.Right, YAnchor.Bottom);
-                            // Ember V2 placements, from the reference layout.
                             case "ember-status-bar" -> Hud.get().add(info, 4, 4, XAnchor.Left, YAnchor.Top);
                             case "ember-keybinds" -> Hud.get().add(info, 4, 64, XAnchor.Left, YAnchor.Top);
                             case "ember-bubbles" -> Hud.get().add(info, 4, -4, XAnchor.Left, YAnchor.Bottom);
-                            default -> Hud.get().add(info, 4, wName.equals("spotify") ? 30 : 4);
+                            default -> Hud.get().add(info, 4, 40);
                         }
                         for (HudElement el : Hud.get()) {
                             if (el.info.name.equals(wName)) { found = el; break; }
                         }
                     }
                 }
-                if (found != null) {
-                    entries.add(new ClientEntry(found.info.title, found));
-                }
+                if (found != null) entries.add(new ClientEntry(found.info.title, found));
             }
-
-            // Widgets are created active; enforce the chosen layout so the two sets never
-            // stack on top of each other.
-            meteordevelopment.meteorclient.utils.render.EmberTheme.applyCurrent();
 
             entries.add(new ClientEntry("Edit HUD Positions",
                 () -> mc.setScreen(new meteordevelopment.meteorclient.systems.hud.screens.HudEditorScreen(theme))));
@@ -172,26 +146,8 @@ public class EmberClickGui extends TabScreen {
                 cp.x = s[0]; cp.y = s[1]; cp.collapsed = s[2] > 0;
             } else {
                 cp.x = sx; cp.y = sy;
-                sx += PW + GAP;
-                if (sx + PW > getWindowWidth() - 10) { sx = 10; sy += 340; }
             }
             panels.add(cp);
-        }
-
-        // Theme panel
-        {
-            Panel tp = new Panel();
-            tp.name = "Theme";
-            tp.isTheme = true;
-            tp.icon = new ItemStack(Items.PAINTING);
-
-            double[] s = saved.get("Theme");
-            if (s != null) {
-                tp.x = s[0]; tp.y = s[1]; tp.collapsed = s[2] > 0;
-            } else {
-                tp.x = sx; tp.y = sy;
-            }
-            panels.add(tp);
         }
     }
 
@@ -200,195 +156,12 @@ public class EmberClickGui extends TabScreen {
         clear();
     }
 
-    /** Real-time easing; a higher speed settles faster (speed 12 is about a fifth of a second). */
     private float anim(Object key, Map<Object, Float> map, float target, float speed, float dt) {
         float cur = map.getOrDefault(key, target == 1f ? 0f : target);
         cur = EmberAnim.approach(cur, target, dt, 0.8 / speed);
         map.put(key, cur);
         return cur;
     }
-
-    @Override
-    protected void onRenderBefore(DrawContext graphics, float delta) {
-        syncPalette();
-        frameDt = clock.tick();
-
-        // Panels ignore the mouse while the popup is up, so nothing behind it lights up.
-        boolean popupUp = popup.isVisible();
-        mx = popupUp ? -10000 : rawMx;
-        my = popupUp ? -10000 : rawMy;
-
-        globalFade = Math.min(1f, globalFade + frameDt / 0.25f);
-        float fade = easeOut(globalFade);
-
-        if (dragging != null) {
-            dragging.x = rawMx - dragOX;
-            dragging.y = rawMy - dragOY;
-        }
-
-        for (Panel p : panels) {
-            float openTarget = p.collapsed ? 0f : 1f;
-            p.openAnim = EmberAnim.approach(p.openAnim, openTarget, frameDt, 0.07);
-            p.bodyH = computeBodyH(p);
-        }
-
-        GuiRenderer r = new GuiRenderer();
-        r.theme = theme;
-        r.begin(graphics);
-
-        // Dim background
-        // Own batch so it is flushed before the glow pass instead of darkening it.
-        r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
-        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int)(BG_OVERLAY.a * fade)));
-        r.scissorEnd();
-
-        // Every panel's halo is flushed before any panel body, so one panel's glow can never
-        // tint the edge of the panel next to it.
-        r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
-        for (Panel p : panels) drawPanelHalo(r, p, fade);
-        r.scissorEnd();
-
-        for (Panel p : panels) {
-            if (p.isTheme) drawThemePanel(r, graphics, p, delta, fade);
-            else if (p.isClient) drawClientPanel(r, graphics, p, delta, fade);
-            else drawPanel(r, graphics, p, delta, fade);
-        }
-
-        drawSearchBar(r, fade);
-        drawConfigButton(r, delta, fade);
-        drawGearButton(r, fade);
-
-        r.end();
-
-        for (Panel p : panels) {
-            if (p.isTheme) drawThemePanelText(graphics, p);
-            else if (p.isClient) drawClientPanelText(graphics, p);
-            else drawPanelText(graphics, p);
-        }
-        drawSearchText(graphics);
-        drawConfigButtonText(graphics);
-        // Its own pass, after the background text: the popup is modal, so its panel and
-        // labels must sit above text that is drawn later in the frame.
-        if (popup.isVisible()) {
-            GuiRenderer pr = new GuiRenderer();
-            pr.theme = theme;
-            pr.begin(graphics);
-            // The real cursor, not the off-screen value used to keep panels from reacting -
-            // the popup needs it for hover and for dragging sliders.
-            popup.render(pr, rawMx, rawMy, delta);
-            pr.end();
-        }
-        popup.renderText(graphics);
-
-    }
-
-    private double computeBodyH(Panel p) {
-        if (p.collapsed && p.openAnim <= 0.01f) return 0;
-        if (p.isTheme) return EmberPalette.NAMES.length * MH;
-        if (p.isClient) return p.clientEntries == null ? 0 : Math.min(p.clientEntries.size() * MH, bodyLimit(p));
-        return Math.min(filtered(p).size() * MH, bodyLimit(p));
-    }
-
-    private static final double CFG_W = 128;
-    private static final double CFG_H = 32;
-
-    private double configButtonX() {
-        return (getWindowWidth() - CFG_W) / 2;
-    }
-
-    private double configButtonY() {
-        return getWindowHeight() - CFG_H - 26;
-    }
-
-    private void drawConfigButton(GuiRenderer r, float delta, float fade) {
-        double bx = configButtonX(), by = configButtonY();
-        boolean hover = mx >= bx && mx < bx + CFG_W && my >= by && my < by + CFG_H;
-        float hA = anim("cfgbtn", hoverAnims, hover ? 1f : 0f, 12f, frameDt);
-
-        r.glow(bx, by + 3, CFG_W, CFG_H, 8, new Color(0, 0, 0, (int)(90 * fade)), false);
-        if (hA > 0.01f) r.glow(bx, by, CFG_W, CFG_H, 16, accentAlpha((int)(150 * hA * fade)), false);
-
-        Color bg = new Color(
-            (int) MathHelper.lerp(hA, HEADER_BG.r, Math.min(255, HEADER_BG.r + 16)),
-            (int) MathHelper.lerp(hA, HEADER_BG.g, Math.min(255, HEADER_BG.g + 14)),
-            (int) MathHelper.lerp(hA, HEADER_BG.b, Math.min(255, HEADER_BG.b + 20)),
-            (int)(248 * fade));
-        r.roundedRect(bx, by, CFG_W, CFG_H, CFG_H / 2, bg);
-
-        // Small folder glyph
-        double gx = bx + 18, gy = by + CFG_H / 2;
-        Color gc = accentAlpha((int)(210 + 45 * hA));
-        r.roundedRect(gx - 7, gy - 5, 14, 10, 2, gc);
-        r.roundedRect(gx - 7, gy - 7, 6, 3, 1, gc);
-    }
-
-    private static final double GEAR = 26;
-
-    private double gearX() {
-        return configButtonX() + CFG_W + 8;
-    }
-
-    private double gearY() {
-        return configButtonY() + (CFG_H - GEAR) / 2;
-    }
-
-    /** Small round settings button beside Configs, opening Ember's own settings screen. */
-    private void drawGearButton(GuiRenderer r, float fade) {
-        double bx = gearX(), by = gearY();
-        boolean hover = mx >= bx && mx < bx + GEAR && my >= by && my < by + GEAR;
-        float hA = anim("gearbtn", hoverAnims, hover ? 1f : 0f, 12f, frameDt);
-
-        r.glow(bx, by + 3, GEAR, GEAR, 8, new Color(0, 0, 0, (int)(90 * fade)), false);
-        if (hA > 0.01f) r.glow(bx, by, GEAR, GEAR, 14, accentAlpha((int)(150 * hA * fade)), false);
-
-        Color bg = new Color(
-            (int) MathHelper.lerp(hA, HEADER_BG.r, Math.min(255, HEADER_BG.r + 16)),
-            (int) MathHelper.lerp(hA, HEADER_BG.g, Math.min(255, HEADER_BG.g + 14)),
-            (int) MathHelper.lerp(hA, HEADER_BG.b, Math.min(255, HEADER_BG.b + 20)),
-            (int)(248 * fade));
-        r.quad(bx, by, GEAR, GEAR, GuiRenderer.CIRCLE, bg);
-
-        // Gear glyph: a ring with four teeth that turn a little as it lights up.
-        double cx = bx + GEAR / 2, cy = by + GEAR / 2;
-        Color gc = accentAlpha((int) Math.min(255, (200 + 55 * hA) * fade));
-
-        double tooth = 3.2, reach = 6.6;
-        for (int i = 0; i < 4; i++) {
-            double a = Math.toRadians(45 * hA + i * 90);
-            r.roundedRect(cx + Math.cos(a) * reach - tooth / 2, cy + Math.sin(a) * reach - tooth / 2,
-                tooth, tooth, 1, gc);
-        }
-
-        r.quad(cx - 4.5, cy - 4.5, 9, 9, GuiRenderer.CIRCLE, gc);
-        r.quad(cx - 2, cy - 2, 4, 4, GuiRenderer.CIRCLE, bg);
-    }
-
-    private void drawConfigButtonText(DrawContext gfx) {
-        double bx = configButtonX(), by = configButtonY();
-
-        theme.textRenderer().begin(theme.scale(0.95));
-        String label = "Configs";
-        double tw = theme.textWidth(label);
-        theme.textRenderer().render(label, bx + 30 + ((CFG_W - 30) - tw) / 2 - 6,
-            by + (CFG_H - theme.textHeight()) / 2, TEXT_WHITE, false);
-        theme.textRenderer().end();
-    }
-
-    private float easeOut(float t) {
-        return 1f - (1f - t) * (1f - t) * (1f - t);
-    }
-
-    /** Shared so other Ember screens follow the selected theme. */
-    public static Color accent() {
-        return EmberPalette.accent();
-    }
-
-    /** Tabs grow to fill the screen height, stopping above the Configs button. */
-    private double bodyLimit(Panel p) {
-        return Math.max(MH * 5, getWindowHeight() - p.y - HH - CFG_H - 60);
-    }
-
-    private double rawMx, rawMy;
 
     /** This branch hands onRenderBefore no mouse position, so track the cursor here. */
     @Override
@@ -398,111 +171,144 @@ public class EmberClickGui extends TabScreen {
         rawMy = mouseY * s;
         super.mouseMoved(mouseX, mouseY);
     }
-    private Color accentAlpha(int a) {
-        return new Color(ACCENT.r, ACCENT.g, ACCENT.b, Math.min(255, Math.max(0, a)));
-    }
 
-    /** Soft accent halo plus a soft drop shadow, both drawn under every panel body. */
-    private void drawPanelHalo(GuiRenderer r, Panel p, float fade) {
-        double totalH = HH + p.bodyH * p.openAnim;
-        r.glow(p.x, p.y + 5, PW, totalH, 14, new Color(0, 0, 0, (int)(110 * fade)), false);
-        r.glow(p.x, p.y, PW, totalH, 26, accentAlpha((int)(150 * fade * 0.75f)), false);
-    }
+    @Override
+    protected void onRenderBefore(DrawContext graphics, float delta) {
+        frameDt = clock.tick();
 
-    private void drawPanelFrame(GuiRenderer r, DrawContext gfx, Panel p, double bodyH, float fade) {
-        double x = p.x, y = p.y;
-        double totalH = HH + bodyH * p.openAnim;
+        boolean popupUp = popup.isVisible();
+        mx = popupUp ? -10000 : rawMx;
+        my = popupUp ? -10000 : rawMy;
 
-        // Body
-        if (p.openAnim > 0.01f && bodyH > 0) {
-            r.roundedRect(x, y, PW, totalH, PR, withAlpha(PANEL_BG, fade));
+        globalFade = Math.min(1f, globalFade + frameDt / 0.22f);
+        float fade = easeOut(globalFade);
+
+        if (dragging != null) {
+            dragging.x = rawMx - dragOX;
+            dragging.y = rawMy - dragOY;
         }
 
-        // Header stays dark; only a hover lift, never an accent fill
+        for (Panel p : panels) {
+            p.openAnim = EmberAnim.approach(p.openAnim, p.collapsed ? 0f : 1f, frameDt, 0.07);
+            p.bodyH = computeBodyH(p);
+        }
+
+        GuiRenderer r = new GuiRenderer();
+        r.theme = theme;
+        r.begin(graphics);
+
+        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (BG_OVERLAY.a * fade)));
+
+        // Shadows are a glow pass, which does not respect submission order against plain
+        // quads, so they are flushed once here - before any panel body is drawn. One flush
+        // for the whole screen, not one per panel, which is what made this screen expensive.
+        r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
+        for (Panel p : panels) {
+            EmberUI.shadow(r, p.x, p.y, PW, HH + p.bodyH * p.openAnim, fade);
+        }
+        EmberUI.shadow(r, configButtonX(), configButtonY(), CFG_W, CFG_H, fade);
+        EmberUI.shadow(r, gearX(), gearY(), GEAR, GEAR, fade);
+        r.scissorEnd();
+
+        for (Panel p : panels) {
+            if (p.isClient) drawClientPanel(r, graphics, p, fade);
+            else drawPanel(r, graphics, p, fade);
+        }
+
+        drawSearchBar(r, fade);
+        drawConfigButton(r, fade);
+        drawGearButton(r, fade);
+
+        r.end();
+
+        for (Panel p : panels) {
+            if (p.isClient) drawClientPanelText(p);
+            else drawPanelText(p);
+        }
+        drawSearchText();
+        drawConfigButtonText();
+
+        // Its own pass, after the background text: the popup is modal, so its panel and
+        // labels must sit above text that is drawn later in the frame.
+        if (popup.isVisible()) {
+            GuiRenderer pr = new GuiRenderer();
+            pr.theme = theme;
+            pr.begin(graphics);
+            popup.render(pr, rawMx, rawMy, delta);
+            pr.end();
+        }
+        popup.renderText(graphics);
+    }
+
+    private double computeBodyH(Panel p) {
+        if (p.collapsed && p.openAnim <= 0.01f) return 0;
+        if (p.isClient) return p.clientEntries == null ? 0 : Math.min(p.clientEntries.size() * MH, bodyLimit(p));
+        return Math.min(filtered(p).size() * MH, bodyLimit(p));
+    }
+
+    private float easeOut(float t) {
+        return 1f - (1f - t) * (1f - t) * (1f - t);
+    }
+
+    /** Shared so other Ember screens follow the selected accent. */
+    public static Color accent() {
+        return EmberUI.accent();
+    }
+
+    private double bodyLimit(Panel p) {
+        return Math.max(MH * 5, getWindowHeight() - p.y - HH - CFG_H - 60);
+    }
+
+    // --- Panel chrome ---
+
+    private void drawPanelFrame(GuiRenderer r, DrawContext gfx, Panel p, float fade) {
+        double x = p.x, y = p.y;
+        double totalH = HH + p.bodyH * p.openAnim;
+
+        r.roundedRect(x, y, PW, totalH, EmberUI.RADIUS, EmberUI.alpha(EmberUI.BG, fade));
+
         boolean hHover = mx >= x && mx < x + PW && my >= y && my < y + HH;
         float hAmt = anim("hdr_" + p.name, hoverAnims, hHover ? 1f : 0f, 10f, frameDt);
+
+        // Header sits slightly above the body, brightening a touch under the cursor.
         Color hc = new Color(
-            (int) MathHelper.lerp(hAmt, HEADER_BG.r, Math.min(255, HEADER_BG.r + 14)),
-            (int) MathHelper.lerp(hAmt, HEADER_BG.g, Math.min(255, HEADER_BG.g + 12)),
-            (int) MathHelper.lerp(hAmt, HEADER_BG.b, Math.min(255, HEADER_BG.b + 18)),
-            (int)(HEADER_BG.a * fade));
+            EmberUI.RAISED.r + (int) (10 * hAmt),
+            EmberUI.RAISED.g + (int) (10 * hAmt),
+            EmberUI.RAISED.b + (int) (12 * hAmt),
+            (int) (255 * fade));
 
         if (p.openAnim < 0.05f) {
-            r.roundedRect(x, y, PW, HH, PR, hc);
+            r.roundedRect(x, y, PW, HH, EmberUI.RADIUS, hc);
         } else {
-            r.roundedRect(x, y, PW, HH + PR, PR, hc);
-            r.quad(x, y + HH, PW, PR, hc);
-            r.quad(x, y + HH, PW, 1, withAlpha(DIVIDER, fade));
+            r.roundedRect(x, y, PW, HH + EmberUI.RADIUS, EmberUI.RADIUS, hc);
+            r.quad(x, y + HH - EmberUI.RADIUS, PW, EmberUI.RADIUS, hc);
+            r.quad(x, y + HH, PW, 1, EmberUI.alpha(EmberUI.DIVIDER, fade));
         }
 
-        // Chevron
-        double arX = x + PW - 15, arY = y + HH / 2;
-        float rot = p.openAnim;
-        r.triangle(arX - 3.5, arY - 2 + rot * 4, arX + 3.5, arY - 2 + rot * 4,
-            arX, arY + 3 - rot * 6, new Color(TEXT_INACTIVE.r, TEXT_INACTIVE.g, TEXT_INACTIVE.b, (int)(220 * fade)));
+        EmberUI.chevron(r, x + PW - 17, y + HH / 2, 8,
+            p.openAnim > 0.5f ? EmberUI.Direction.UP : EmberUI.Direction.DOWN,
+            EmberUI.alpha(EmberUI.TEXT_DIM, fade));
 
-        // Icon
-        int ix = (int)(x + 9);
-        int iy = (int)(y + (HH - 16) / 2);
+        int ix = (int) (x + 11);
+        int iy = (int) (y + (HH - 16) / 2);
         final ItemStack icon = p.icon;
-        if (icon != null) {
-            r.post(() -> RenderUtils.drawItem(gfx, icon, ix, iy, 0.85f, false, null, false));
+        if (icon != null) r.post(() -> RenderUtils.drawItem(gfx, icon, ix, iy, 0.8f, false, null, false));
+    }
+
+    /** One row: hover lift, an optional settings chevron, and the switch on the right. */
+    private void drawRowChrome(GuiRenderer r, double x, double rowY, float hA, float aA, boolean hasSettings, float fade) {
+        EmberUI.hoverFill(r, x + 5, rowY + 1, PW - 10, MH - 2, hA);
+
+        if (hasSettings && hA > 0.01f) {
+            EmberUI.chevron(r, x + PW - CHEV_RIGHT, rowY + MH / 2, 7, EmberUI.Direction.RIGHT,
+                EmberUI.alpha(EmberUI.TEXT_FAINT, (int) (200 * hA * fade)));
         }
+
+        EmberUI.toggle(r, x + PW - SW_RIGHT - SW_W, rowY + (MH - SW_H) / 2, SW_W, SW_H, aA, fade);
     }
 
-    private static Color withAlpha(Color c, float fade) {
-        return new Color(c.r, c.g, c.b, (int)(c.a * fade));
-    }
-
-    /** Accent glow around an enabled row, so turning something on lights it up. */
-    private void activeGlow(GuiRenderer r, double x, double y, double w, double h, float amount) {
-        r.glow(x, y, w, h, 14, accentAlpha((int)(125 * amount)), false);
-    }
-
-    /**
-     * Hover highlight for a row. A halo is wrong here: on a row with no pill behind it
-     * the glow's square edges show against the panel, so the row is tinted instead and
-     * an accent edge grows in on the left.
-     */
-    private void rowHover(GuiRenderer r, double x, double y, double w, double h, float amount, boolean active) {
-        double radius = h / 2;
-
-        r.roundedRect(x, y, w, h, radius, accentAlpha((int)(30 * amount)));
-        r.roundedRect(x, y, w, h, radius, new Color(255, 255, 255, (int)(12 * amount)));
-
-        if (!active) {
-            double barH = (h - 11) * amount;
-            if (barH > 1) r.roundedRect(x + 3.5, y + (h - barH) / 2, 2.5, barH, 1.25, accentAlpha((int)(210 * amount)));
-        }
-    }
-
-    /** Row pill for an enabled module, tinted by the theme. */
-    private Color activeRowColor(float amount) {
-        int tr = (int) MathHelper.lerp(0.12f, ROW_ACTIVE.r, ACCENT.r);
-        int tg = (int) MathHelper.lerp(0.12f, ROW_ACTIVE.g, ACCENT.g);
-        int tb = (int) MathHelper.lerp(0.12f, ROW_ACTIVE.b, ACCENT.b);
-        return new Color(
-            (int) MathHelper.lerp(amount, PANEL_BG.r, tr),
-            (int) MathHelper.lerp(amount, PANEL_BG.g, tg),
-            (int) MathHelper.lerp(amount, PANEL_BG.b, tb),
-            (int)(235 * amount));
-    }
-
-    /** Vertical three-dot handle marking a row whose settings open in the popup. */
-    private void drawSettingsHandle(GuiRenderer r, double cx, double cy, float hover, boolean hot) {
-        Color c = hot ? accentAlpha(230) : new Color(TEXT_INACTIVE.r, TEXT_INACTIVE.g, TEXT_INACTIVE.b, (int)(110 + 110 * hover));
-        for (int i = -1; i <= 1; i++) {
-            r.quad(cx - 1.5, cy + i * 5 - 1.5, 3, 3, GuiRenderer.CIRCLE, c);
-        }
-    }
-
-    private boolean overHandle(double x, double rowY) {
-        return mx >= x + PW - HANDLE_W && mx < x + PW && my >= rowY && my < rowY + MH;
-    }
-
-    private void drawPanel(GuiRenderer r, DrawContext gfx, Panel p, float delta, float fade) {
-        List<Module> mods = filtered(p);
-        drawPanelFrame(r, gfx, p, p.bodyH, fade);
+    private void drawPanel(GuiRenderer r, DrawContext gfx, Panel p, float fade) {
+        drawPanelFrame(r, gfx, p, fade);
         if (p.openAnim < 0.02f) return;
 
         double x = p.x, y = p.y;
@@ -510,35 +316,20 @@ public class EmberClickGui extends TabScreen {
         double rowY = y + HH - p.scroll;
         double clipT = y + HH, clipB = y + HH + visBody;
 
-        // Rows get their own batch so hover glows draw over the panel body but under the rows.
-        r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
-
-        for (Module m : mods) {
+        for (Module m : filtered(p)) {
             if (rowY >= clipT - 0.5 && rowY + MH <= clipB + 0.5) {
                 boolean hover = mx >= x && mx < x + PW && my >= rowY && my < rowY + MH && my < clipB;
-                boolean active = m.isActive();
                 float hA = anim(m, hoverAnims, hover ? 1f : 0f, 12f, frameDt);
-                float aA = anim(m, activeAnims, active ? 1f : 0f, 8f, frameDt);
+                float aA = anim(m, activeAnims, m.isActive() ? 1f : 0f, 9f, frameDt);
 
-                if (aA > 0.01f) activeGlow(r, x + 4, rowY + 1, PW - 8, MH - 2, aA);
-                if (aA > 0.01f) r.roundedRect(x + 4, rowY + 1, PW - 8, MH - 2, (MH - 2) / 2, activeRowColor(aA));
-                if (hA > 0.01f) rowHover(r, x + 4, rowY + 1, PW - 8, MH - 2, hA, active);
-
-                int dr = (int) MathHelper.lerp(aA, DOT_OFF.r, DOT_ON.r);
-                int dg = (int) MathHelper.lerp(aA, DOT_OFF.g, DOT_ON.g);
-                int db = (int) MathHelper.lerp(aA, DOT_OFF.b, DOT_ON.b);
-                r.quad(x + PW - 17, rowY + (MH - 5) / 2, 5, 5, GuiRenderer.CIRCLE, new Color(dr, dg, db, 255));
-
-                if (hasSettings(m.settings)) drawSettingsHandle(r, x + PW - 31, rowY + MH / 2, hA, overHandle(x, rowY));
+                drawRowChrome(r, x, rowY, hA, aA, hasSettings(m.settings), fade);
             }
             rowY += MH;
         }
-
-        r.scissorEnd();
     }
 
-    private void drawClientPanel(GuiRenderer r, DrawContext gfx, Panel p, float delta, float fade) {
-        drawPanelFrame(r, gfx, p, p.bodyH, fade);
+    private void drawClientPanel(GuiRenderer r, DrawContext gfx, Panel p, float fade) {
+        drawPanelFrame(r, gfx, p, fade);
         if (p.openAnim < 0.02f || p.clientEntries == null) return;
 
         double x = p.x, y = p.y;
@@ -546,129 +337,80 @@ public class EmberClickGui extends TabScreen {
         double rowY = y + HH - p.scroll;
         double clipT = y + HH, clipB = y + HH + visBody;
 
-        r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
-
         for (ClientEntry entry : p.clientEntries) {
             if (rowY >= clipT - 0.5 && rowY + MH <= clipB + 0.5) {
                 boolean hover = mx >= x && mx < x + PW && my >= rowY && my < rowY + MH && my < clipB;
-                boolean active = entry.element != null && entry.element.isActive();
                 float hA = anim("cl_" + entry.name, hoverAnims, hover ? 1f : 0f, 12f, frameDt);
-                float aA = anim("cl_" + entry.name, activeAnims, active ? 1f : 0f, 8f, frameDt);
-
-                if (aA > 0.01f) activeGlow(r, x + 4, rowY + 1, PW - 8, MH - 2, aA);
-                if (aA > 0.01f) r.roundedRect(x + 4, rowY + 1, PW - 8, MH - 2, (MH - 2) / 2, activeRowColor(aA));
-                if (hA > 0.01f) rowHover(r, x + 4, rowY + 1, PW - 8, MH - 2, hA, active);
 
                 if (entry.element == null) {
-                    // Action row (HUD editor) - arrow instead of a toggle dot
-                    double ax = x + PW - 18, ay = rowY + MH / 2;
-                    r.triangle(ax - 2, ay - 3, ax - 2, ay + 3, ax + 3, ay,
-                        new Color(TEXT_INACTIVE.r, TEXT_INACTIVE.g, TEXT_INACTIVE.b, (int)(160 + 60 * hA)));
+                    // Action row: no switch, just a chevron saying it opens something.
+                    EmberUI.hoverFill(r, x + 5, rowY + 1, PW - 10, MH - 2, hA);
+                    EmberUI.chevron(r, x + PW - 18, rowY + MH / 2, 8, EmberUI.Direction.RIGHT,
+                        EmberUI.alpha(EmberUI.TEXT_DIM, (int) ((150 + 90 * hA) * fade)));
                 } else {
-                    int dr = (int) MathHelper.lerp(aA, DOT_OFF.r, DOT_ON.r);
-                    int dg = (int) MathHelper.lerp(aA, DOT_OFF.g, DOT_ON.g);
-                    int db = (int) MathHelper.lerp(aA, DOT_OFF.b, DOT_ON.b);
-                    r.quad(x + PW - 17, rowY + (MH - 5) / 2, 5, 5, GuiRenderer.CIRCLE, new Color(dr, dg, db, 255));
-
-                    if (hasSettings(entry.element.settings)) {
-                        drawSettingsHandle(r, x + PW - 31, rowY + MH / 2, hA, overHandle(x, rowY));
-                    }
+                    float aA = anim("cl_" + entry.name, activeAnims, entry.element.isActive() ? 1f : 0f, 9f, frameDt);
+                    drawRowChrome(r, x, rowY, hA, aA, hasSettings(entry.element.settings), fade);
                 }
             }
             rowY += MH;
         }
-
-        r.scissorEnd();
-    }
-
-    private void drawThemePanel(GuiRenderer r, DrawContext gfx, Panel p, float delta, float fade) {
-        drawPanelFrame(r, gfx, p, p.bodyH, fade);
-        if (p.openAnim < 0.02f) return;
-
-        double x = p.x, y = p.y;
-        double visBody = p.bodyH * p.openAnim;
-        double rowY = y + HH, clipB = y + HH + visBody;
-
-        r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
-
-        for (int i = 0; i < EmberPalette.NAMES.length; i++) {
-            if (rowY + MH <= clipB + 0.5) {
-                boolean hover = mx >= x && mx < x + PW && my >= rowY && my < rowY + MH;
-                boolean sel = i == EmberPalette.selected();
-                float hA = anim("th_" + i, hoverAnims, hover ? 1f : 0f, 12f, frameDt);
-
-                if (sel) activeGlow(r, x + 4, rowY + 1, PW - 8, MH - 2, 1f);
-                if (sel) r.roundedRect(x + 4, rowY + 1, PW - 8, MH - 2, (MH - 2) / 2, activeRowColor(1f));
-                if (hA > 0.01f) rowHover(r, x + 4, rowY + 1, PW - 8, MH - 2, hA, sel);
-
-                r.quad(x + 11, rowY + (MH - 8) / 2, 8, 8, GuiRenderer.CIRCLE, EmberPalette.swatch(i));
-
-                if (sel) {
-                    r.quad(x + PW - 17, rowY + (MH - 5) / 2, 5, 5, GuiRenderer.CIRCLE, TEXT_WHITE);
-                }
-            }
-            rowY += MH;
-        }
-
-        r.scissorEnd();
     }
 
     // --- Text ---
 
-    private void drawPanelText(DrawContext gfx, Panel p) {
+    private void drawPanelText(Panel p) {
         double x = p.x, y = p.y;
-        List<Module> mods = filtered(p);
 
-        theme.textRenderer().begin(theme.scale(0.9));
-        theme.textRenderer().render(p.name, x + 26, y + (HH - theme.textHeight()) / 2, HEADER_TEXT, false);
+        theme.textRenderer().begin(theme.scale(0.92));
+        theme.textRenderer().render(p.name, x + 32, y + (HH - theme.textHeight()) / 2, EmberUI.TEXT, false);
         theme.textRenderer().end();
 
         if (p.openAnim < 0.02f) return;
 
         double visBody = p.bodyH * p.openAnim;
-        theme.textRenderer().begin(theme.scale(0.8));
+        theme.textRenderer().begin(theme.scale(0.82));
         double rowY = y + HH - p.scroll;
         double clipT = y + HH, clipB = y + HH + visBody;
 
-        for (Module m : mods) {
+        for (Module m : filtered(p)) {
             if (rowY >= clipT - 0.5 && rowY + MH <= clipB + 0.5) {
                 float aA = activeAnims.getOrDefault((Object) m, 0f);
-                int cr = (int) MathHelper.lerp(aA, TEXT_INACTIVE.r, ACCENT.r);
-                int cg = (int) MathHelper.lerp(aA, TEXT_INACTIVE.g, ACCENT.g);
-                int cb = (int) MathHelper.lerp(aA, TEXT_INACTIVE.b, ACCENT.b);
                 theme.textRenderer().render(m.title, x + 14,
-                    rowY + (MH - theme.textHeight()) / 2, new Color(cr, cg, cb, 255), false);
+                    rowY + (MH - theme.textHeight()) / 2, blendText(aA), false);
             }
             rowY += MH;
         }
         theme.textRenderer().end();
     }
 
-    private void drawClientPanelText(DrawContext gfx, Panel p) {
+    /** Dim when off, full white when on - the switch carries the colour, not the label. */
+    private Color blendText(float amount) {
+        return new Color(
+            (int) (EmberUI.TEXT_DIM.r + (EmberUI.TEXT.r - EmberUI.TEXT_DIM.r) * amount),
+            (int) (EmberUI.TEXT_DIM.g + (EmberUI.TEXT.g - EmberUI.TEXT_DIM.g) * amount),
+            (int) (EmberUI.TEXT_DIM.b + (EmberUI.TEXT.b - EmberUI.TEXT_DIM.b) * amount),
+            255);
+    }
+
+    private void drawClientPanelText(Panel p) {
         double x = p.x, y = p.y;
-        theme.textRenderer().begin(theme.scale(0.9));
-        theme.textRenderer().render("Client", x + 26, y + (HH - theme.textHeight()) / 2, HEADER_TEXT, false);
+
+        theme.textRenderer().begin(theme.scale(0.92));
+        theme.textRenderer().render("Client", x + 32, y + (HH - theme.textHeight()) / 2, EmberUI.TEXT, false);
         theme.textRenderer().end();
 
         if (p.openAnim < 0.02f || p.clientEntries == null) return;
 
         double visBody = p.bodyH * p.openAnim;
-        theme.textRenderer().begin(theme.scale(0.8));
+        theme.textRenderer().begin(theme.scale(0.82));
         double rowY = y + HH - p.scroll;
         double clipT = y + HH, clipB = y + HH + visBody;
 
         for (ClientEntry entry : p.clientEntries) {
             if (rowY >= clipT - 0.5 && rowY + MH <= clipB + 0.5) {
-                Color tc;
-                if (entry.element == null) {
-                    tc = TEXT_WHITE;
-                } else {
-                    float aA = activeAnims.getOrDefault((Object)("cl_" + entry.name), 0f);
-                    tc = new Color(
-                        (int) MathHelper.lerp(aA, TEXT_INACTIVE.r, ACCENT.r),
-                        (int) MathHelper.lerp(aA, TEXT_INACTIVE.g, ACCENT.g),
-                        (int) MathHelper.lerp(aA, TEXT_INACTIVE.b, ACCENT.b), 255);
-                }
+                Color tc = entry.element == null
+                    ? EmberUI.TEXT
+                    : blendText(activeAnims.getOrDefault((Object) ("cl_" + entry.name), 0f));
                 theme.textRenderer().render(entry.name, x + 14,
                     rowY + (MH - theme.textHeight()) / 2, tc, false);
             }
@@ -677,47 +419,93 @@ public class EmberClickGui extends TabScreen {
         theme.textRenderer().end();
     }
 
-    private void drawThemePanelText(DrawContext gfx, Panel p) {
-        double x = p.x, y = p.y;
-        theme.textRenderer().begin(theme.scale(0.9));
-        theme.textRenderer().render("Themes", x + 26, y + (HH - theme.textHeight()) / 2, HEADER_TEXT, false);
-        theme.textRenderer().end();
+    // --- Search ---
 
-        if (p.openAnim < 0.02f) return;
+    private static final double SEARCH_W = 240, SEARCH_H = 28;
 
-        double visBody = p.bodyH * p.openAnim;
-        theme.textRenderer().begin(theme.scale(0.8));
-        double rowY = y + HH, clipB = y + HH + visBody;
-        for (int i = 0; i < EmberPalette.NAMES.length; i++) {
-            if (rowY + MH <= clipB + 0.5) {
-                Color tc = i == EmberPalette.selected() ? TEXT_WHITE : TEXT_INACTIVE;
-                theme.textRenderer().render(EmberPalette.NAMES[i], x + 30,
-                    rowY + (MH - theme.textHeight()) / 2, tc, false);
-            }
-            rowY += MH;
-        }
-        theme.textRenderer().end();
-    }
+    private double searchX() { return (getWindowWidth() - SEARCH_W) / 2; }
+
+    private double searchY() { return 10; }
 
     private void drawSearchBar(GuiRenderer r, float fade) {
-        double w = 220, h = 26;
-        double x = (getWindowWidth() - w) / 2, y = 8;
-        if (searchFocused) r.glow(x, y, w, h, 10, accentAlpha((int)(120 * fade)), false);
-        r.roundedRect(x, y, w, h, h / 2, new Color(SEARCH_BG.r, SEARCH_BG.g, SEARCH_BG.b, (int)(SEARCH_BG.a * fade)));
+        double x = searchX(), y = searchY();
+        r.roundedRect(x, y, SEARCH_W, SEARCH_H, SEARCH_H / 2, EmberUI.alpha(EmberUI.RAISED, fade));
+
+        if (searchFocused) {
+            r.roundedRect(x, y, SEARCH_W, SEARCH_H, SEARCH_H / 2, EmberUI.accent((int) (28 * fade)));
+        }
+
+        // Magnifier: a ring with a short handle.
+        double cx = x + 16, cy = y + SEARCH_H / 2;
+        Color ic = EmberUI.alpha(searchFocused ? EmberUI.accent() : EmberUI.TEXT_FAINT, fade);
+        r.quad(cx - 4.5, cy - 4.5, 9, 9, GuiRenderer.CIRCLE, ic);
+        r.quad(cx - 3, cy - 3, 6, 6, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.RAISED, fade));
+        EmberUI.bar(r, cx + 3, cy + 3, cx + 6.5, cy + 6.5, 2, ic);
     }
 
-    private void drawSearchText(DrawContext gfx) {
-        double w = 220, h = 26;
-        double x = (getWindowWidth() - w) / 2, y = 8;
-        theme.textRenderer().begin(theme.scale(0.78));
-        if (search.isEmpty() && !searchFocused) {
-            theme.textRenderer().render("Search...", x + 14,
-                y + (h - theme.textHeight()) / 2, TEXT_FAINT, false);
-        } else {
-            theme.textRenderer().render(search + (searchFocused ? "|" : ""), x + 14,
-                y + (h - theme.textHeight()) / 2, TEXT_WHITE, false);
-        }
+    private void drawSearchText() {
+        double x = searchX(), y = searchY();
+        theme.textRenderer().begin(theme.scale(0.8));
+        boolean empty = search.isEmpty();
+        theme.textRenderer().render(empty && !searchFocused ? "Search modules" : search + (searchFocused ? "|" : ""),
+            x + 28, y + (SEARCH_H - theme.textHeight()) / 2,
+            empty && !searchFocused ? EmberUI.TEXT_FAINT : EmberUI.TEXT, false);
         theme.textRenderer().end();
+    }
+
+    // --- Bottom buttons ---
+
+    private static final double CFG_W = 124, CFG_H = 32, GEAR = 32;
+
+    private double configButtonX() { return (getWindowWidth() - CFG_W - 8 - GEAR) / 2; }
+
+    private double configButtonY() { return getWindowHeight() - CFG_H - 24; }
+
+    private double gearX() { return configButtonX() + CFG_W + 8; }
+
+    private double gearY() { return configButtonY(); }
+
+    private void drawConfigButton(GuiRenderer r, float fade) {
+        double bx = configButtonX(), by = configButtonY();
+        boolean hover = mx >= bx && mx < bx + CFG_W && my >= by && my < by + CFG_H;
+        float hA = anim("cfgbtn", hoverAnims, hover ? 1f : 0f, 12f, frameDt);
+
+        r.roundedRect(bx, by, CFG_W, CFG_H, CFG_H / 2, EmberUI.alpha(EmberUI.RAISED, fade));
+        if (hA > 0.01f) r.roundedRect(bx, by, CFG_W, CFG_H, CFG_H / 2, EmberUI.accent((int) (34 * hA * fade)));
+
+        // Folder glyph.
+        double gx = bx + 20, gy = by + CFG_H / 2;
+        Color gc = EmberUI.accent((int) ((215 + 40 * hA) * fade));
+        r.roundedRect(gx - 7, gy - 5, 14, 10, 2.5, gc);
+        r.roundedRect(gx - 7, gy - 7.5, 6, 4, 1.5, gc);
+    }
+
+    private void drawConfigButtonText() {
+        double bx = configButtonX(), by = configButtonY();
+        theme.textRenderer().begin(theme.scale(0.85));
+        theme.textRenderer().render("Configs", bx + 34, by + (CFG_H - theme.textHeight()) / 2, EmberUI.TEXT, false);
+        theme.textRenderer().end();
+    }
+
+    private void drawGearButton(GuiRenderer r, float fade) {
+        double bx = gearX(), by = gearY();
+        boolean hover = mx >= bx && mx < bx + GEAR && my >= by && my < by + GEAR;
+        float hA = anim("gearbtn", hoverAnims, hover ? 1f : 0f, 12f, frameDt);
+
+        r.quad(bx, by, GEAR, GEAR, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.RAISED, fade));
+        if (hA > 0.01f) r.quad(bx, by, GEAR, GEAR, GuiRenderer.CIRCLE, EmberUI.accent((int) (34 * hA * fade)));
+
+        double cx = bx + GEAR / 2, cy = by + GEAR / 2;
+        Color gc = EmberUI.accent((int) Math.min(255, (215 + 40 * hA) * fade));
+
+        // Teeth turn a little as the button lights up.
+        for (int i = 0; i < 6; i++) {
+            double a = Math.toRadians(30 * hA + i * 60);
+            r.roundedRect(cx + Math.cos(a) * 7.4 - 1.7, cy + Math.sin(a) * 7.4 - 1.7, 3.4, 3.4, 1.2, gc);
+        }
+
+        r.quad(cx - 5.5, cy - 5.5, 11, 11, GuiRenderer.CIRCLE, gc);
+        r.quad(cx - 2.4, cy - 2.4, 4.8, 4.8, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.RAISED, fade));
     }
 
     // --- Helpers ---
@@ -727,7 +515,9 @@ public class EmberClickGui extends TabScreen {
         if (search.isEmpty()) return p.modules;
         String q = search.toLowerCase();
         List<Module> out = new ArrayList<>();
-        for (Module m : p.modules) if (m.title.toLowerCase().contains(q) || m.name.toLowerCase().contains(q)) out.add(m);
+        for (Module m : p.modules) {
+            if (m.title.toLowerCase().contains(q) || m.name.toLowerCase().contains(q)) out.add(m);
+        }
         return out;
     }
 
@@ -755,6 +545,11 @@ public class EmberClickGui extends TabScreen {
         ));
     }
 
+    /** True when the cursor is over the chevron that opens a row's settings. */
+    private boolean onChevron(double cx, double panelX) {
+        return cx >= panelX + PW - CHEV_RIGHT - 9 && cx < panelX + PW - CHEV_RIGHT + 9;
+    }
+
     // --- Input ---
 
     @Override
@@ -765,10 +560,11 @@ public class EmberClickGui extends TabScreen {
 
         if (popup.isVisible()) return popup.mouseClicked(cx, cy, btn);
 
-        double sw = 220, sh = 26;
-        double sx = (getWindowWidth() - sw) / 2, sy = 8;
-        if (cx >= sx && cx < sx + sw && cy >= sy && cy < sy + sh) { searchFocused = true; return true; }
-        else searchFocused = false;
+        if (cx >= searchX() && cx < searchX() + SEARCH_W && cy >= searchY() && cy < searchY() + SEARCH_H) {
+            searchFocused = true;
+            return true;
+        }
+        searchFocused = false;
 
         double bx = configButtonX(), by = configButtonY();
         if (cx >= bx && cx < bx + CFG_W && cy >= by && cy < by + CFG_H) {
@@ -776,8 +572,7 @@ public class EmberClickGui extends TabScreen {
             return true;
         }
 
-        double gx = gearX(), gy = gearY();
-        if (cx >= gx && cx < gx + GEAR && cy >= gy && cy < gy + GEAR) {
+        if (cx >= gearX() && cx < gearX() + GEAR && cy >= gearY() && cy < gearY() + GEAR) {
             mc.setScreen(new EmberClientSettingsScreen(theme));
             return true;
         }
@@ -793,20 +588,9 @@ public class EmberClickGui extends TabScreen {
             }
 
             if (p.openAnim < 0.1f) continue;
-            double visBody = p.bodyH * p.openAnim;
-            double totalH = HH + visBody;
+            double totalH = HH + p.bodyH * p.openAnim;
             if (cx < p.x || cx >= p.x + PW || cy < p.y || cy >= p.y + totalH) continue;
 
-            if (p.isTheme) {
-                double rowY = p.y + HH;
-                for (int ti = 0; ti < EmberPalette.NAMES.length; ti++) {
-                    if (cy >= rowY && cy < rowY + MH) { EmberPalette.select(ti); return true; }
-                    rowY += MH;
-                }
-                continue;
-            }
-
-            boolean onHandle = cx >= p.x + PW - HANDLE_W;
             double rowY = p.y + HH - p.scroll;
 
             if (p.isClient && p.clientEntries != null) {
@@ -814,7 +598,7 @@ public class EmberClickGui extends TabScreen {
                     if (cy >= rowY && cy < rowY + MH) {
                         if (entry.element == null) {
                             if (btn == 0 && entry.action != null) entry.action.run();
-                        } else if (btn == 1 || (onHandle && hasSettings(entry.element.settings))) {
+                        } else if (btn == 1 || (onChevron(cx, p.x) && hasSettings(entry.element.settings))) {
                             openHudSettings(entry.element);
                         } else if (btn == 0) {
                             entry.element.toggle();
@@ -828,8 +612,7 @@ public class EmberClickGui extends TabScreen {
 
             for (Module m : filtered(p)) {
                 if (cy >= rowY && cy < rowY + MH) {
-                    // Right-click always opens settings, even for modules that only have a bind.
-                    if (btn == 1 || (onHandle && hasSettings(m.settings))) openModuleSettings(m);
+                    if (btn == 1 || (onChevron(cx, p.x) && hasSettings(m.settings))) openModuleSettings(m);
                     else if (btn == 0) m.toggle();
                     return true;
                 }
@@ -856,19 +639,20 @@ public class EmberClickGui extends TabScreen {
 
         double s = mc.getWindow().getScaleFactor();
         double sx = mouseX * s, sy = mouseY * s;
+
         for (int i = panels.size() - 1; i >= 0; i--) {
             Panel p = panels.get(i);
             double totalH = HH + p.bodyH * p.openAnim;
             if (sx >= p.x && sx < p.x + PW && sy >= p.y && sy < p.y + totalH) {
-                p.scroll -= (int)(v * MH);
+                p.scroll -= (int) (v * MH);
                 p.scroll = Math.max(0, p.scroll);
 
                 double maxBody;
                 if (p.isClient && p.clientEntries != null) maxBody = p.clientEntries.size() * MH;
-                else if (!p.isTheme && p.modules != null) maxBody = filtered(p).size() * MH;
+                else if (p.modules != null) maxBody = filtered(p).size() * MH;
                 else maxBody = 0;
 
-                p.scroll = Math.min(p.scroll, (int)Math.max(0, maxBody - bodyLimit(p)));
+                p.scroll = Math.min(p.scroll, (int) Math.max(0, maxBody - bodyLimit(p)));
                 return true;
             }
         }
@@ -877,13 +661,13 @@ public class EmberClickGui extends TabScreen {
 
     @Override
     public boolean keyPressed(KeyInput input) {
-        // Esc closes the popup first instead of the whole GUI.
         if (popup.isVisible()) return popup.keyPressed(input);
 
         if (searchFocused) {
             if (input.key() == GLFW_KEY_ESCAPE) { searchFocused = false; search = ""; return true; }
             if (input.key() == GLFW_KEY_BACKSPACE && !search.isEmpty()) {
-                search = search.substring(0, search.length() - 1); return true;
+                search = search.substring(0, search.length() - 1);
+                return true;
             }
             return true;
         }
@@ -908,12 +692,14 @@ public class EmberClickGui extends TabScreen {
         super.close();
     }
 
-    @Override public void reload() {}
+    @Override
+    public void reload() {
+    }
 
     private static class Panel {
         Category category; String name; List<Module> modules; ItemStack icon;
         double x, y, bodyH; boolean collapsed; float openAnim = 1f; int scroll;
-        boolean isClient, isTheme; List<ClientEntry> clientEntries;
+        boolean isClient; List<ClientEntry> clientEntries;
     }
 
     private static class ClientEntry {
