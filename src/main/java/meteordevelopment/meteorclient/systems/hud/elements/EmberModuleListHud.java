@@ -81,9 +81,11 @@ public class EmberModuleListHud extends HudElement {
         double radius = 5 * s;
 
         Color accent = EmberPalette.accent();
-        Color panel = EmberPalette.panel();
-        Color bright = EmberPalette.textBright();
-        Color dim = EmberPalette.textDim();
+        // Near black, shared with every other Ember panel. The palette's own panel colour is
+        // accent-tinted, which left this list reading purple while the rest went black.
+        Color panel = meteordevelopment.meteorclient.utils.render.EmberStrip.background();
+        Color bright = new Color(255, 255, 255, 255);
+        Color dim = new Color(150, 150, 162, 255);
 
         Set<Module> active = new HashSet<>();
         for (Module module : Modules.get().getActive()) {
@@ -112,7 +114,8 @@ public class EmberModuleListHud extends HudElement {
                 String label = "Module List";
                 double w = renderer.textWidth(label, true, textScale) + pad * 2;
                 setSize(w, rowH);
-                renderer.roundedQuad(x, y, w, rowH, radius, new Color(panel.r, panel.g, panel.b, 200));
+                renderer.dropShadow(x, y, w, rowH, radius, 15 * s);
+                renderer.roundedQuad(x, y, w, rowH, radius, panel);
                 renderer.text(label, x + pad, y + (rowH - textH) / 2, bright, true, textScale);
             } else {
                 setSize(0, 0);
@@ -147,7 +150,7 @@ public class EmberModuleListHud extends HudElement {
 
             if (glow.get()) renderer.softGlow(rx, cy, rw, rowH, radius, 6 * s, new Color(accent.r, accent.g, accent.b, (int) (140 * a)));
             renderer.dropShadow(rx, cy, rw, rowH, radius, 15 * s, a);
-            renderer.roundedQuad(rx, cy, rw, rowH, radius, new Color(panel.r, panel.g, panel.b, (int) (215 * a)));
+            renderer.roundedQuad(rx, cy, rw, rowH, radius, new Color(panel.r, panel.g, panel.b, (int) (panel.a * a)));
 
             double barX = fromRight ? rx + rw - bar - 3 * s : rx + 3 * s;
             renderer.roundedQuad(barX, cy + 4 * s, bar, rowH - 8 * s, bar / 2, new Color(accent.r, accent.g, accent.b, (int) (255 * a)));

@@ -170,13 +170,16 @@ public class EmberNotificationsHud extends HudElement {
                            double titleScale, double subScale, double titleH, double s, Color panel, double progress) {
         if (a <= 0.01f) return;
 
-        Color bright = EmberPalette.textBright();
-        Color dim = EmberPalette.textDim();
+        Color bright = new Color(255, 255, 255, 255);
+        Color dim = new Color(150, 150, 162, 255);
         double radius = 7 * s;
+
+        // Near black, matching every other Ember panel rather than the accent-tinted palette.
+        Color bg = meteordevelopment.meteorclient.utils.render.EmberStrip.background();
 
         if (glow.get()) renderer.softGlow(tx, ty, w, h, radius, 8 * s, withAlpha(color, (int) (150 * a)));
         renderer.dropShadow(tx, ty, w, h, radius, 20 * s, a);
-        renderer.roundedQuad(tx, ty, w, h, radius, new Color(panel.r, panel.g, panel.b, (int) (225 * a)));
+        renderer.roundedQuad(tx, ty, w, h, radius, new Color(bg.r, bg.g, bg.b, (int) (bg.a * a)));
         renderer.roundedQuad(tx + 4 * s, ty + 6 * s, 3 * s, h - 12 * s, 1.5 * s, withAlpha(color, (int) (255 * a)));
 
         double textX = tx + pad + 5 * s;

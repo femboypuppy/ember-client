@@ -187,6 +187,8 @@ public class EmberClickGui extends TabScreen {
      */
     private long perfNanos;
     private int perfFrames;
+    /** Per-stage totals: shadows, shapes, the batch flush, text. */
+    private final long[] perfStage = new long[4];
 
     @Override
     protected void onRenderBefore(DrawContext graphics, float delta) {
@@ -195,10 +197,15 @@ public class EmberClickGui extends TabScreen {
 
         perfNanos += System.nanoTime() - perfStart;
         if (++perfFrames >= 60) {
-            System.out.printf("[EmberPerf] ClickGUI draw: %.2f ms/frame over %d frames (%d panels)%n",
-                perfNanos / 1_000_000.0 / perfFrames, perfFrames, panels.size());
+            double f = 1_000_000.0 * perfFrames;
+            System.out.printf(
+                "[EmberPerf] ClickGUI %.2f ms/frame (%d panels) | shadow %.2f  shapes %.2f  flush %.2f  text %.2f%n",
+                perfNanos / f, panels.size(),
+                perfStage[0] / f, perfStage[1] / f, perfStage[2] / f, perfStage[3] / f);
+
             perfNanos = 0;
             perfFrames = 0;
+            java.util.Arrays.fill(perfStage, 0);
         }
     }
 
@@ -232,11 +239,15 @@ public class EmberClickGui extends TabScreen {
         // own batch and draws it before plain quads within a flush. Forcing a flush here just
         // to order them cost two full endRender passes - four batches and two text passes
         // each - every frame.
+        long t0 = System.nanoTime();
+
         for (Panel p : panels) {
             EmberUI.shadow(r, p.x, p.y, PW, HH + p.bodyH * p.openAnim, fade);
         }
         EmberUI.shadow(r, configButtonX(), configButtonY(), CFG_W, CFG_H, fade);
         EmberUI.shadow(r, gearX(), gearY(), GEAR, GEAR, fade);
+
+        long t1 = System.nanoTime();
 
         for (Panel p : panels) {
             if (p.isClient) drawClientPanel(r, graphics, p, fade);
@@ -247,11 +258,22 @@ public class EmberClickGui extends TabScreen {
         drawConfigButton(r, fade);
         drawGearButton(r, fade);
 
+        long t2 = System.nanoTime();
+
         r.end();
+
+        long t3 = System.nanoTime();
 
         drawAllPanelText();
         drawSearchText();
         drawConfigButtonText();
+
+        long t4 = System.nanoTime();
+
+        perfStage[0] += t1 - t0;
+        perfStage[1] += t2 - t1;
+        perfStage[2] += t3 - t2;
+        perfStage[3] += t4 - t3;
 
         // Its own pass, after the background text: the popup is modal, so its panel and
         // labels must sit above text that is drawn later in the frame.
