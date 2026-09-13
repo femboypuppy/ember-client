@@ -200,7 +200,11 @@ public class SpotifyHud extends HudElement {
 
         double w = pad + art + gap + contentW + pad;
         double h = pad * 2 + art;
-        double radius = h / 2;
+
+        // A squircle rather than a capsule. Held to a fraction of the height as well as a
+        // flat cap so the corners keep their shape while the island grows, instead of
+        // rounding off into a pill the moment it is short.
+        double radius = Math.min(11 * s, h * 0.32);
 
         setSize(w, h);
 
