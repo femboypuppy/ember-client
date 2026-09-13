@@ -136,7 +136,8 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberModuleListHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberBubblesHud.INFO);
-        register(meteordevelopment.meteorclient.systems.hud.elements.EmberClockHud.INFO);
+        register(meteordevelopment.meteorclient.systems.hud.elements.EmberStatusBarHud.INFO);
+        register(meteordevelopment.meteorclient.systems.hud.elements.EmberKeybindsHud.INFO);
         register(ItemHud.INFO);
         register(InventoryHud.INFO);
         register(CompassHud.INFO);

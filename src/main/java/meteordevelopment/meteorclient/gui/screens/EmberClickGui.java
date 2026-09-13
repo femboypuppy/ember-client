@@ -124,7 +124,7 @@ public class EmberClickGui extends TabScreen {
             cp.icon = new ItemStack(Items.ENDER_EYE);
             List<ClientEntry> entries = new ArrayList<>();
             String[] wanted = {"ember-top-bar", "spotify", "ember-module-list", "ember-notifications",
-                "ember-bubbles", "ember-clock"};
+                "ember-status-bar", "ember-bubbles", "ember-keybinds"};
             for (String wName : wanted) {
                 HudElement found = null;
                 for (HudElement el : Hud.get()) {
@@ -143,8 +143,9 @@ public class EmberClickGui extends TabScreen {
                             }
                             case "ember-notifications" -> Hud.get().add(info, -4, -40, XAnchor.Right, YAnchor.Bottom);
                             // Ember V2 placements, from the reference layout.
+                            case "ember-status-bar" -> Hud.get().add(info, 4, 4, XAnchor.Left, YAnchor.Top);
+                            case "ember-keybinds" -> Hud.get().add(info, 4, 64, XAnchor.Left, YAnchor.Top);
                             case "ember-bubbles" -> Hud.get().add(info, 4, -4, XAnchor.Left, YAnchor.Bottom);
-                            case "ember-clock" -> Hud.get().add(info, 0, 4, XAnchor.Center, YAnchor.Top);
                             default -> Hud.get().add(info, 4, wName.equals("spotify") ? 30 : 4);
                         }
                         for (HudElement el : Hud.get()) {

@@ -176,8 +176,9 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = widgetRow(r, dt, x, y, w, "Music widget", "spotify");
         y = widgetRow(r, dt, x, y, w, "Module list", "ember-module-list");
         y = widgetRow(r, dt, x, y, w, "Notifications", "ember-notifications");
-        y = widgetRow(r, dt, x, y, w, "Info bubbles (V2)", "ember-bubbles");
-        y = widgetRow(r, dt, x, y, w, "Clock strip (V2)", "ember-clock");
+        y = widgetRow(r, dt, x, y, w, "Status bar (V2)", "ember-status-bar");
+        y = widgetRow(r, dt, x, y, w, "Info pill (V2)", "ember-bubbles");
+        y = widgetRow(r, dt, x, y, w, "Keybinds (V2)", "ember-keybinds");
         y += 10;
 
         // Action row

@@ -15,8 +15,8 @@ public final class EmberTheme {
         /** The original layout: one top bar strip, module list, notifications, music. */
         Ember("Ember", new String[]{"ember-top-bar"}),
 
-        /** Scattered panels: info bubbles bottom left, clock and signal top centre. */
-        EmberV2("Ember V2", new String[]{"ember-bubbles", "ember-clock"});
+        /** Wide status bar along the top, info pill bottom left, keybind panel on the left. */
+        EmberV2("Ember V2", new String[]{"ember-status-bar", "ember-bubbles", "ember-keybinds"});
 
         public final String displayName;
         /** Widgets belonging only to this style. */
