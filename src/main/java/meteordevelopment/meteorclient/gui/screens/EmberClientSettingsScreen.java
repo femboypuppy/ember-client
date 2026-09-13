@@ -180,7 +180,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = widgetRow(r, dt, x, y, w, "Music widget", "spotify");
         y += 10;
 
-        // Action row
+        // Action rows
         float ha = anim("hudedit", hovered(x, y, w, ROW_H) ? 1f : 0f, dt);
         r.roundedRect(x, y, w, ROW_H, 7, new Color(
             (int) MathHelper.lerp(ha * 0.35f, ROW_BG.r, accent().r),
@@ -188,6 +188,18 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             (int) MathHelper.lerp(ha * 0.35f, ROW_BG.b, accent().b), 235));
         hits.add(new Hit(x, y, w, ROW_H, () -> mc.setScreen(new HudEditorScreen(theme))));
         texts.add(new Label("Edit HUD positions", x + 12, y + (ROW_H - 0) / 2, TEXT_WHITE, 0.92));
+
+        y += ROW_H + 8;
+
+        // Wipes every widget back to Ember's layout, which is the only way to clear leftovers
+        // from a config saved before it - saved elements always win over new defaults.
+        float hr = anim("hudreset", hovered(x, y, w, ROW_H) ? 1f : 0f, dt);
+        r.roundedRect(x, y, w, ROW_H, 7, new Color(
+            (int) MathHelper.lerp(hr * 0.35f, ROW_BG.r, 222),
+            (int) MathHelper.lerp(hr * 0.35f, ROW_BG.g, 86),
+            (int) MathHelper.lerp(hr * 0.35f, ROW_BG.b, 86), 235));
+        hits.add(new Hit(x, y, w, ROW_H, () -> Hud.get().resetToDefaultElements()));
+        texts.add(new Label("Reset HUD to Ember defaults", x + 12, y + (ROW_H - 0) / 2, TEXT_WHITE, 0.92));
     }
 
     private double themeRow(GuiRenderer r, float dt, double x, double y, double w) {

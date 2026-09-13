@@ -144,7 +144,7 @@ public class HudEditorScreen extends WidgetScreen implements Snapper.Container {
             else if (click.button() == GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
                 HudElement hovered = getHovered((int) mouseX, (int) mouseY);
 
-                if (hovered != null) mc.setScreen(new HudElementScreen(theme, hovered));
+                if (hovered != null) mc.setScreen(new meteordevelopment.meteorclient.gui.screens.EmberHudElementScreen(theme, hovered));
                 else mc.setScreen(new AddHudElementScreen(theme, lastMouseX, lastMouseY));
             }
         }
@@ -366,7 +366,7 @@ public class HudEditorScreen extends WidgetScreen implements Snapper.Container {
 
     public static boolean isOpen() {
         Screen s = mc.currentScreen;
-        return s instanceof HudEditorScreen || s instanceof AddHudElementScreen || s instanceof HudElementPresetsScreen || s instanceof HudElementScreen || s instanceof HudTab.HudScreen;
+        return s instanceof HudEditorScreen || s instanceof AddHudElementScreen || s instanceof HudElementPresetsScreen || s instanceof HudElementScreen || s instanceof meteordevelopment.meteorclient.gui.screens.EmberHudElementScreen || s instanceof HudTab.HudScreen;
     }
 
     private class SelectionBox implements Snapper.Element {

@@ -31,6 +31,9 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public class Hud extends System<Hud> implements Iterable<HudElement> {
     public static final HudGroup GROUP = new HudGroup("Meteor");
 
+    /** Bumped when the default layout changes in a way that must replace older saved ones. */
+    private static final int LAYOUT_VERSION = 2;
+
     public boolean active;
     public Settings settings = new Settings();
 
@@ -280,7 +283,7 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
     public NbtCompound toTag() {
         NbtCompound tag = new NbtCompound();
 
-        tag.putInt("__version__", 1);
+        tag.putInt("__version__", LAYOUT_VERSION);
 
         tag.putBoolean("active", active);
         tag.put("settings", settings.toTag());
@@ -291,7 +294,15 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
 
     @Override
     public Hud fromTag(NbtCompound tag) {
-        if (!tag.contains("__version__")) {
+        int version = tag.getInt("__version__").orElse(0);
+
+        // Configs written before the Ember layout carry Meteor's stacked text readouts and its
+        // own module list. Those draw a second copy of everything Ember already shows, in the
+        // same corners, and no new default can take effect while they are saved - so such a
+        // config is rebuilt once instead of being loaded back on top of the new layout.
+        if (version < LAYOUT_VERSION) {
+            tag.getBoolean("active").ifPresent(active1 -> active = active1);
+            settings.fromTag(tag.getCompoundOrEmpty("settings"));
             resetToDefaultElements();
             return this;
         }
