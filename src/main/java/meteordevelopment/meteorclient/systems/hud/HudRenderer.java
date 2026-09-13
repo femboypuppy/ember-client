@@ -359,11 +359,23 @@ public class HudRenderer {
      * nominal one: the atlas used to be baked at nominal size and then multiplied by scale
      * again at draw time, so any scale above 1 was a straight bitmap upscale and went soft.
      *
+     * Snapped up onto a coarse ladder, because every distinct height builds its own atlas -
+     * a 4MB direct buffer plus a 4MB texture. Keying them off an exact pixel height let a
+     * slider drag mint one per step and exhaust native memory. The ladder bounds the number
+     * that can ever exist, and is finer for small text where a step costs proportionally more.
+     *
+     * Snapping up rather than to nearest also means the atlas is never smaller than the text
+     * drawn from it, so glyphs are always minified - which stays sharp - and never magnified.
+     *
      * Capped because the ~720 packed characters stop fitting one 2048px texture a little past
      * 90px; past the cap the atlas is reused and scaled, which is softer but still complete.
      */
     private static int atlasHeight(double scale) {
-        return Math.max(1, Math.min(MAX_ATLAS_HEIGHT, (int) Math.round(renderedHeight(scale))));
+        double wanted = renderedHeight(scale);
+        int step = wanted < 24 ? 4 : 8;
+        int snapped = (int) (Math.ceil(wanted / step) * step);
+
+        return Math.max(step, Math.min(MAX_ATLAS_HEIGHT, snapped));
     }
 
     /** Draw-time factor that lands the cached atlas on its intended pixel height. */
