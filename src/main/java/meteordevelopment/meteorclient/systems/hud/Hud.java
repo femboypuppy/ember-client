@@ -31,10 +31,19 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public class Hud extends System<Hud> implements Iterable<HudElement> {
     public static final HudGroup GROUP = new HudGroup("Meteor");
 
-    /** Bumped when the default layout changes in a way that must replace older saved ones. */
-    private static final int LAYOUT_VERSION = 2;
+    /**
+     * Bumped when the default layout changes in a way that must replace older saved ones.
+     * Version 3 exists because 2 rebuilt the layout but kept the master switch off, so the
+     * rebuilt widgets only ever showed up inside the HUD editor.
+     */
+    private static final int LAYOUT_VERSION = 3;
 
-    public boolean active;
+    /**
+     * The master switch for the whole HUD. Upstream leaves this off until something turns it
+     * on, which for Ember means a fresh install renders nothing in game while still drawing
+     * in the HUD editor - the editor paints elements on its own path and ignores this flag.
+     */
+    public boolean active = true;
     public Settings settings = new Settings();
 
     public final Map<String, HudElementInfo<?>> infos = new TreeMap<>();
@@ -301,7 +310,10 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         // same corners, and no new default can take effect while they are saved - so such a
         // config is rebuilt once instead of being loaded back on top of the new layout.
         if (version < LAYOUT_VERSION) {
-            tag.getBoolean("active").ifPresent(active1 -> active = active1);
+            // Deliberately not carrying the old flag over: rebuilding the layout while the
+            // master switch stays off leaves the new widgets invisible everywhere except the
+            // editor, which is indistinguishable from the migration having failed.
+            active = true;
             settings.fromTag(tag.getCompoundOrEmpty("settings"));
             resetToDefaultElements();
             return this;

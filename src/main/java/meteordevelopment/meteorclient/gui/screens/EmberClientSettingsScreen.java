@@ -165,6 +165,11 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = themeRow(r, dt, x, y, w);
         y += 8;
 
+        // The master switch for the HUD. Without this the only ways to reach it are Meteor's
+        // own HUD tab, the .toggle command or a keybind, none of which live in Ember's UI.
+        y = toggleRow(r, dt, x, y, w, "HUD enabled", Hud.get().active,
+            () -> Hud.get().active = !Hud.get().active);
+
         boolean custom = Config.get().customFont.get();
         y = toggleRow(r, dt, x, y, w, "Custom font", custom,
             () -> Config.get().customFont.set(!Config.get().customFont.get()));
