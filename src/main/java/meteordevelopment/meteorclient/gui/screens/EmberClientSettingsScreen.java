@@ -162,6 +162,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         double y = py + HEADER_H + 16;
 
         y += 18; // section label
+        y = styleRow(r, dt, x, y, w);
         y = themeRow(r, dt, x, y, w);
         y += 8;
 
@@ -175,6 +176,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = widgetRow(r, dt, x, y, w, "Music widget", "spotify");
         y = widgetRow(r, dt, x, y, w, "Module list", "ember-module-list");
         y = widgetRow(r, dt, x, y, w, "Notifications", "ember-notifications");
+        y = widgetRow(r, dt, x, y, w, "Info bubbles (V2)", "ember-bubbles");
+        y = widgetRow(r, dt, x, y, w, "Clock strip (V2)", "ember-clock");
         y += 10;
 
         // Action row
@@ -185,6 +188,38 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             (int) MathHelper.lerp(ha * 0.35f, ROW_BG.b, accent().b), 235));
         hits.add(new Hit(x, y, w, ROW_H, () -> mc.setScreen(new HudEditorScreen(theme))));
         texts.add(new Label("Edit HUD positions", x + 12, y + (ROW_H - 0) / 2, TEXT_WHITE, 0.92));
+    }
+
+    /** Layout choice: which set of widgets is on screen. Colours stay on the row below. */
+    private double styleRow(GuiRenderer r, float dt, double x, double y, double w) {
+        r.roundedRect(x, y, w, ROW_H, 7, ROW_BG);
+
+        meteordevelopment.meteorclient.utils.render.EmberTheme.Style[] styles =
+            meteordevelopment.meteorclient.utils.render.EmberTheme.Style.values();
+
+        double bw = 78, gap = 6;
+        double total = styles.length * bw + (styles.length - 1) * gap;
+        double sx = x + w - 12 - total;
+
+        for (int i = 0; i < styles.length; i++) {
+            var style = styles[i];
+            double bx = sx + i * (bw + gap);
+            boolean sel = meteordevelopment.meteorclient.utils.render.EmberTheme.current() == style;
+            float a = anim("style" + i, sel || hovered(bx, y + 5, bw, ROW_H - 10) ? 1f : 0f, dt);
+
+            Color fill = sel ? accentAlpha(225) : new Color(
+                (int) MathHelper.lerp(a * 0.4f, ROW_BG.r, accent().r),
+                (int) MathHelper.lerp(a * 0.4f, ROW_BG.g, accent().g),
+                (int) MathHelper.lerp(a * 0.4f, ROW_BG.b, accent().b), 235);
+
+            r.roundedRect(bx, y + 5, bw, ROW_H - 10, 6, fill);
+            hits.add(new Hit(bx, y + 5, bw, ROW_H - 10,
+                () -> meteordevelopment.meteorclient.utils.render.EmberTheme.select(style)));
+            texts.add(new Label(style.displayName, bx + 9, y + ROW_H / 2, sel ? ON_ACCENT : TEXT_WHITE, 0.84));
+        }
+
+        texts.add(new Label("Layout", x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));
+        return y + ROW_H + 8;
     }
 
     private double themeRow(GuiRenderer r, float dt, double x, double y, double w) {

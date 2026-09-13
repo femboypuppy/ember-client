@@ -123,7 +123,8 @@ public class EmberClickGui extends TabScreen {
             cp.isClient = true;
             cp.icon = new ItemStack(Items.ENDER_EYE);
             List<ClientEntry> entries = new ArrayList<>();
-            String[] wanted = {"ember-top-bar", "spotify", "ember-module-list", "ember-notifications"};
+            String[] wanted = {"ember-top-bar", "spotify", "ember-module-list", "ember-notifications",
+                "ember-bubbles", "ember-clock"};
             for (String wName : wanted) {
                 HudElement found = null;
                 for (HudElement el : Hud.get()) {
@@ -141,6 +142,9 @@ public class EmberClickGui extends TabScreen {
                                 Hud.get().add(info, -4, 4, XAnchor.Right, YAnchor.Top);
                             }
                             case "ember-notifications" -> Hud.get().add(info, -4, -40, XAnchor.Right, YAnchor.Bottom);
+                            // Ember V2 placements, from the reference layout.
+                            case "ember-bubbles" -> Hud.get().add(info, 4, -4, XAnchor.Left, YAnchor.Bottom);
+                            case "ember-clock" -> Hud.get().add(info, 0, 4, XAnchor.Center, YAnchor.Top);
                             default -> Hud.get().add(info, 4, wName.equals("spotify") ? 30 : 4);
                         }
                         for (HudElement el : Hud.get()) {
@@ -152,6 +156,10 @@ public class EmberClickGui extends TabScreen {
                     entries.add(new ClientEntry(found.info.title, found));
                 }
             }
+
+            // Widgets are created active; enforce the chosen layout so the two sets never
+            // stack on top of each other.
+            meteordevelopment.meteorclient.utils.render.EmberTheme.applyCurrent();
 
             entries.add(new ClientEntry("Edit HUD Positions",
                 () -> mc.setScreen(new meteordevelopment.meteorclient.systems.hud.screens.HudEditorScreen(theme))));
