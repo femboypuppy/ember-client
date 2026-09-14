@@ -86,7 +86,11 @@ public final class EmberUI {
         double pad = 2.5;
         double d = h - pad * 2;
         double travel = w - d - pad * 2;
-        double kx = x + pad + travel * amount;
+
+        // A little spring at the end of the travel. Clamped, so the overshoot never carries
+        // the knob past the edge of its own track.
+        double eased = Math.max(0, Math.min(1, meteordevelopment.meteorclient.utils.render.EmberAnim.backOut(amount)));
+        double kx = x + pad + travel * eased;
 
         r.quad(kx, y + pad, d, d, GuiRenderer.CIRCLE, new Color(255, 255, 255, (int) (250 * fade)));
     }

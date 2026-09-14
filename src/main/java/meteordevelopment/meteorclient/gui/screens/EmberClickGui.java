@@ -55,6 +55,8 @@ public class EmberClickGui extends TabScreen {
     private String search = "";
     private boolean searchFocused = false;
     private float globalFade = 0f;
+    /** Seconds since the menu opened, used to stagger the panel entrance. */
+    private float openElapsed = 0f;
     private final EmberAnim.Clock clock = new EmberAnim.Clock();
     private float frameDt;
 
@@ -224,9 +226,21 @@ public class EmberClickGui extends TabScreen {
             dragging.y = rawMy - dragOY;
         }
 
-        for (Panel p : panels) {
+        openElapsed += frameDt;
+
+        for (int i = 0; i < panels.size(); i++) {
+            Panel p = panels.get(i);
+
             p.openAnim = EmberAnim.approach(p.openAnim, p.collapsed ? 0f : 1f, frameDt, 0.07);
             p.bodyH = computeBodyH(p);
+
+            // Each panel waits a little longer than the one before it, so the menu arrives as
+            // a sequence rather than everything appearing at once.
+            float introTarget = openElapsed > i * 0.04 ? 1f : 0f;
+            p.introAnim = EmberAnim.approach(p.introAnim, introTarget, frameDt, 0.085);
+            p.renderY = p.y + (1 - EmberAnim.easeOut(p.introAnim)) * 18;
+
+            p.scroll = EmberAnim.approach(p.scroll, p.scrollTarget, frameDt, 0.055);
         }
 
         GuiRenderer r = new GuiRenderer();
@@ -242,7 +256,7 @@ public class EmberClickGui extends TabScreen {
         long t0 = System.nanoTime();
 
         for (Panel p : panels) {
-            EmberUI.shadow(r, p.x, p.y, PW, HH + p.bodyH * p.openAnim, fade);
+            EmberUI.shadow(r, p.x, p.renderY, PW, HH + p.bodyH * p.openAnim, fade * p.introAnim);
         }
         EmberUI.shadow(r, configButtonX(), configButtonY(), CFG_W, CFG_H, fade);
         EmberUI.shadow(r, gearX(), gearY(), GEAR, GEAR, fade);
@@ -250,8 +264,10 @@ public class EmberClickGui extends TabScreen {
         long t1 = System.nanoTime();
 
         for (Panel p : panels) {
-            if (p.isClient) drawClientPanel(r, graphics, p, fade);
-            else drawPanel(r, graphics, p, fade);
+            // Each panel carries its own fade so it can arrive on its own schedule.
+            float pf = fade * p.introAnim;
+            if (p.isClient) drawClientPanel(r, graphics, p, pf);
+            else drawPanel(r, graphics, p, pf);
         }
 
         drawSearchBar(r, fade);
@@ -309,7 +325,7 @@ public class EmberClickGui extends TabScreen {
     // --- Panel chrome ---
 
     private void drawPanelFrame(GuiRenderer r, DrawContext gfx, Panel p, float fade) {
-        double x = p.x, y = p.y;
+        double x = p.x, y = p.renderY;
         double totalH = HH + p.bodyH * p.openAnim;
 
         r.roundedRect(x, y, PW, totalH, EmberUI.RADIUS, EmberUI.alpha(EmberUI.BG, fade));
@@ -358,7 +374,7 @@ public class EmberClickGui extends TabScreen {
         drawPanelFrame(r, gfx, p, fade);
         if (p.openAnim < 0.02f) return;
 
-        double x = p.x, y = p.y;
+        double x = p.x, y = p.renderY;
         double visBody = p.bodyH * p.openAnim;
         double rowY = y + HH - p.scroll;
         double clipT = y + HH, clipB = y + HH + visBody;
@@ -379,7 +395,7 @@ public class EmberClickGui extends TabScreen {
         drawPanelFrame(r, gfx, p, fade);
         if (p.openAnim < 0.02f || p.clientEntries == null) return;
 
-        double x = p.x, y = p.y;
+        double x = p.x, y = p.renderY;
         double visBody = p.bodyH * p.openAnim;
         double rowY = y + HH - p.scroll;
         double clipT = y + HH, clipB = y + HH + visBody;
@@ -418,7 +434,7 @@ public class EmberClickGui extends TabScreen {
 
         for (Panel p : panels) {
             theme.textRenderer().render(p.isClient ? "Client" : p.name, p.x + 32,
-                p.y + (HH - headerH) / 2, EmberUI.TEXT, false);
+                p.renderY + (HH - headerH) / 2, EmberUI.TEXT, false);
         }
         theme.textRenderer().end();
 
@@ -429,8 +445,8 @@ public class EmberClickGui extends TabScreen {
             if (p.openAnim < 0.02f) continue;
 
             double visBody = p.bodyH * p.openAnim;
-            double rowY = p.y + HH - p.scroll;
-            double clipT = p.y + HH, clipB = p.y + HH + visBody;
+            double rowY = p.renderY + HH - p.scroll;
+            double clipT = p.renderY + HH, clipB = p.renderY + HH + visBody;
 
             if (p.isClient) {
                 if (p.clientEntries == null) continue;
@@ -440,7 +456,9 @@ public class EmberClickGui extends TabScreen {
                         Color tc = entry.element == null
                             ? EmberUI.TEXT
                             : blendText(activeAnims.getOrDefault((Object) ("cl_" + entry.name), 0f));
-                        theme.textRenderer().render(entry.name, p.x + 14,
+                        // Labels lean into the cursor, which reads as the row responding.
+                        double nudge = hoverAnims.getOrDefault((Object) ("cl_" + entry.name), 0f) * 3;
+                        theme.textRenderer().render(entry.name, p.x + 14 + nudge,
                             rowY + (MH - rowTextH) / 2, tc, false);
                     }
                     rowY += MH;
@@ -448,7 +466,8 @@ public class EmberClickGui extends TabScreen {
             } else {
                 for (Module m : filtered(p)) {
                     if (rowY >= clipT - 0.5 && rowY + MH <= clipB + 0.5) {
-                        theme.textRenderer().render(m.title, p.x + 14,
+                        double nudge = hoverAnims.getOrDefault((Object) m, 0f) * 3;
+                        theme.textRenderer().render(m.title, p.x + 14 + nudge,
                             rowY + (MH - rowTextH) / 2,
                             blendText(activeAnims.getOrDefault((Object) m, 0f)), false);
                     }
@@ -630,18 +649,20 @@ public class EmberClickGui extends TabScreen {
         for (int i = panels.size() - 1; i >= 0; i--) {
             Panel p = panels.get(i);
 
-            if (cx >= p.x && cx < p.x + PW && cy >= p.y && cy < p.y + HH) {
+            // Hit tests use renderY, the position actually on screen, so clicks land on what
+            // you can see even while the entrance animation is still settling.
+            if (cx >= p.x && cx < p.x + PW && cy >= p.renderY && cy < p.renderY + HH) {
                 if (btn == 1) { p.collapsed = !p.collapsed; return true; }
-                dragging = p; dragOX = cx - p.x; dragOY = cy - p.y;
+                dragging = p; dragOX = cx - p.x; dragOY = cy - p.renderY;
                 panels.remove(i); panels.add(p);
                 return true;
             }
 
             if (p.openAnim < 0.1f) continue;
             double totalH = HH + p.bodyH * p.openAnim;
-            if (cx < p.x || cx >= p.x + PW || cy < p.y || cy >= p.y + totalH) continue;
+            if (cx < p.x || cx >= p.x + PW || cy < p.renderY || cy >= p.renderY + totalH) continue;
 
-            double rowY = p.y + HH - p.scroll;
+            double rowY = p.renderY + HH - p.scroll;
 
             if (p.isClient && p.clientEntries != null) {
                 for (ClientEntry entry : p.clientEntries) {
@@ -693,16 +714,17 @@ public class EmberClickGui extends TabScreen {
         for (int i = panels.size() - 1; i >= 0; i--) {
             Panel p = panels.get(i);
             double totalH = HH + p.bodyH * p.openAnim;
-            if (sx >= p.x && sx < p.x + PW && sy >= p.y && sy < p.y + totalH) {
-                p.scroll -= (int) (v * MH);
-                p.scroll = Math.max(0, p.scroll);
+            if (sx >= p.x && sx < p.x + PW && sy >= p.renderY && sy < p.renderY + totalH) {
+                // Only the target moves here; the drawn offset eases toward it each frame,
+                // so a wheel notch glides instead of snapping a whole row.
+                p.scrollTarget -= v * MH;
 
                 double maxBody;
                 if (p.isClient && p.clientEntries != null) maxBody = p.clientEntries.size() * MH;
                 else if (p.modules != null) maxBody = filtered(p).size() * MH;
                 else maxBody = 0;
 
-                p.scroll = Math.min(p.scroll, (int) Math.max(0, maxBody - bodyLimit(p)));
+                p.scrollTarget = Math.max(0, Math.min(p.scrollTarget, Math.max(0, maxBody - bodyLimit(p))));
                 return true;
             }
         }
@@ -748,7 +770,16 @@ public class EmberClickGui extends TabScreen {
 
     private static class Panel {
         Category category; String name; List<Module> modules; ItemStack icon;
-        double x, y, bodyH; boolean collapsed; float openAnim = 1f; int scroll;
+        double x, y, bodyH; boolean collapsed; float openAnim = 1f;
+
+        /** Where the panel is drawn this frame - y plus whatever the intro is still offsetting. */
+        double renderY;
+        /** Staggered entrance, so panels arrive in sequence instead of all at once. */
+        float introAnim;
+
+        /** Scroll eases toward its target rather than jumping a row at a time. */
+        double scroll, scrollTarget;
+
         boolean isClient; List<ClientEntry> clientEntries;
     }
 
