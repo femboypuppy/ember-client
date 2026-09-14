@@ -294,17 +294,39 @@ public class HudRenderer {
         var view = meteordevelopment.meteorclient.utils.render.EmberGlass.texture();
         if (view == null) return false;
 
-        // Clearer glass refracts more: a thick, frosted pane hides the bending, a thin one
-        // shows it. So the rim distortion rises as the glass amount falls.
-        double refract = (1 - meteordevelopment.meteorclient.utils.render.EmberAppearance.glass()) * 9;
+        double sw = meteordevelopment.meteorclient.utils.Utils.getWindowWidth();
+        double sh = meteordevelopment.meteorclient.utils.Utils.getWindowHeight();
+        var sampler = meteordevelopment.meteorclient.utils.render.EmberGlass.sampler();
 
+        // Clear glass bends light hardest. A thick frosted pane scatters it instead, so the
+        // lens weakens as the pane frosts over.
+        double amount = meteordevelopment.meteorclient.utils.render.EmberAppearance.glass();
+        double lens = (1 - amount) * 26 + 6;
+
+        // Base refraction.
         Renderer2D.TEXTURE.begin();
-        meteordevelopment.meteorclient.utils.render.EmberShapes.roundedScreenTexture(
-            Renderer2D.TEXTURE, x, y, width, height, radius,
-            meteordevelopment.meteorclient.utils.Utils.getWindowWidth(),
-            meteordevelopment.meteorclient.utils.Utils.getWindowHeight(),
-            true, refract, tint);
-        Renderer2D.TEXTURE.render(view, meteordevelopment.meteorclient.utils.render.EmberGlass.sampler());
+        meteordevelopment.meteorclient.utils.render.EmberShapes.liquidGlass(
+            Renderer2D.TEXTURE, x, y, width, height, radius, sw, sh, true, lens, tint, false);
+        Renderer2D.TEXTURE.render(view, sampler);
+
+        // Chromatic aberration: red and blue sample from slightly different depths, fading out
+        // away from the rim. Real glass splits wavelengths at a curved edge, and this fringe is
+        // most of what separates a lens from a blur to the eye.
+        int fringe = (int) (70 * (1 - amount));
+
+        if (fringe > 4) {
+            Renderer2D.TEXTURE.begin();
+            meteordevelopment.meteorclient.utils.render.EmberShapes.liquidGlass(
+                Renderer2D.TEXTURE, x, y, width, height, radius, sw, sh, true, lens * 1.35,
+                new Color(255, 90, 90, fringe), true);
+            Renderer2D.TEXTURE.render(view, sampler);
+
+            Renderer2D.TEXTURE.begin();
+            meteordevelopment.meteorclient.utils.render.EmberShapes.liquidGlass(
+                Renderer2D.TEXTURE, x, y, width, height, radius, sw, sh, true, lens * 0.7,
+                new Color(90, 150, 255, fringe), true);
+            Renderer2D.TEXTURE.render(view, sampler);
+        }
 
         return true;
     }

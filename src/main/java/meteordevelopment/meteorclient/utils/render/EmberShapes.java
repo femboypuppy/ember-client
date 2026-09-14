@@ -56,50 +56,104 @@ public final class EmberShapes {
      * {@code flipV} exists because a framebuffer's origin is its bottom left while the
      * interface is laid out from the top.
      */
-    public static void roundedScreenTexture(Renderer2D r, double x, double y, double w, double h, double radius,
-                                            double screenW, double screenH, boolean flipV, double refract, Color color) {
+    /**
+     * Signed distance to a rounded rectangle, negative inside. This is what lets the lens know
+     * how close every point is to the edge in any direction, rather than only vertically.
+     */
+    private static double sdRoundRect(double px, double py, double hw, double hh, double radius) {
+        double qx = Math.abs(px) - (hw - radius);
+        double qy = Math.abs(py) - (hh - radius);
+
+        double ax = Math.max(qx, 0), ay = Math.max(qy, 0);
+        return Math.sqrt(ax * ax + ay * ay) + Math.min(Math.max(qx, qy), 0) - radius;
+    }
+
+    /**
+     * Fills a rounded rectangle with a lensed view of a full-screen texture - the refraction
+     * half of a liquid glass panel.
+     *
+     * The surface is cut into a grid, and each cell samples from a point displaced outward
+     * along the edge normal, by an amount that rises sharply as the signed distance to the
+     * edge approaches zero. That is what bends the scene around the whole rim rather than only
+     * at the corners, and what separates a lens from a plain blur.
+     *
+     * @param lens     how far, in pixels, the rim pulls its sample from
+     * @param edgeOnly fade the whole fill out away from the edge, for the colour-fringe passes
+     */
+    public static void liquidGlass(Renderer2D r, double x, double y, double w, double h, double radius,
+                                   double screenW, double screenH, boolean flipV,
+                                   double lens, Color tint, boolean edgeOnly) {
         if (w <= 0 || h <= 0 || screenW <= 0 || screenH <= 0) return;
 
         radius = Math.min(radius, Math.min(w, h) / 2);
 
-        // Finer slices than a plain rounded fill: these carry the refraction gradient as well
-        // as the corner arc, and coarse steps make that gradient band.
-        int steps = Math.max(14, (int) Math.ceil(radius * 3));
-        double sliceH = h / (steps * 2.0);
+        double hw = w / 2, hh = h / 2;
+        double cx = x + hw, cy = y + hh;
 
-        for (int i = 0; i < steps * 2; i++) {
-            double top = i * sliceH;
-            double bottom = top + sliceH;
+        // How far inward the lens reaches. Tied to the corner radius, since that is what sets
+        // how thick the glass edge looks.
+        double band = Math.max(8, radius * 1.8);
 
+        int rows = (int) Math.max(10, Math.min(56, h / 4));
+        int cols = (int) Math.max(10, Math.min(72, w / 4));
+
+        double cellH = h / rows;
+        double cellW = w / cols;
+
+        for (int row = 0; row < rows; row++) {
+            double top = row * cellH;
+
+            // The rounded silhouette still comes from a per-row inset, so the outline stays
+            // clean no matter how coarse the grid is.
             double dy;
-            if (bottom <= radius) dy = radius - top;
-            else if (top >= h - radius) dy = bottom - (h - radius);
+            if (top + cellH <= radius) dy = radius - top;
+            else if (top >= h - radius) dy = (top + cellH) - (h - radius);
             else dy = 0;
 
             double inset = dy <= 0 ? 0 : radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
-            double sw = w - inset * 2;
-            if (sw <= 0) continue;
+            double rowW = w - inset * 2;
+            if (rowW <= 0) continue;
 
-            double sx = x + inset;
-            double sy = y + top;
+            int rowCols = Math.max(1, (int) Math.round(rowW / cellW));
+            double stepW = rowW / rowCols;
 
-            // Near an edge the strip samples from further out, so the scene appears pulled
-            // around the rim the way it bends through the thick edge of real glass. Strips in
-            // the flat middle sample straight through and stay undistorted.
-            double edge = radius <= 0 ? 0 : Math.min(1, dy / radius);
-            double push = refract * edge * edge;
+            for (int col = 0; col < rowCols; col++) {
+                double sx = x + inset + col * stepW;
+                double sy = y + top;
 
-            double u1 = (sx - push) / screenW;
-            double u2 = (sx + sw + push) / screenW;
-            double v1 = (sy - push) / screenH;
-            double v2 = (sy + sliceH + push) / screenH;
+                double px = sx + stepW / 2 - cx;
+                double py = sy + cellH / 2 - cy;
 
-            if (flipV) {
-                v1 = 1 - v1;
-                v2 = 1 - v2;
+                double d = sdRoundRect(px, py, hw, hh, radius);
+                double t = Math.max(0, Math.min(1, 1 + d / band));
+
+                // Steep falloff: the middle of the pane stays honest and the distortion piles
+                // up in the last few pixels, which is how a thick glass edge behaves.
+                double amount = t * t * t;
+
+                double len = Math.sqrt(px * px + py * py);
+                double nx = len < 0.001 ? 0 : px / len;
+                double ny = len < 0.001 ? 0 : py / len;
+
+                double push = lens * amount;
+                double ox = nx * push, oy = ny * push;
+
+                int alpha = edgeOnly ? (int) (tint.a * amount) : tint.a;
+                if (alpha <= 2) continue;
+
+                double u1 = (sx + ox) / screenW;
+                double u2 = (sx + stepW + ox) / screenW;
+                double v1 = (sy + oy) / screenH;
+                double v2 = (sy + cellH + oy) / screenH;
+
+                if (flipV) {
+                    v1 = 1 - v1;
+                    v2 = 1 - v2;
+                }
+
+                r.texQuad(sx, sy, stepW + 0.5, cellH + 0.5, 0, u1, v1, u2, v2,
+                    new Color(tint.r, tint.g, tint.b, alpha));
             }
-
-            r.texQuad(sx, sy, sw, sliceH, 0, u1, v1, u2, v2, color);
         }
     }
 

@@ -56,13 +56,26 @@ public final class EmberStrip {
             return;
         }
 
-        r.roundedQuad(x, y, w, h, radius, new Color(255, 255, 255, (int) (16 * opacity)));
+        double glass = EmberAppearance.glass();
 
-        // A single bright line along the top is what actually reads as glass; without it the
-        // panel just looks half transparent.
+        // The milky film belongs to frost, not to clear glass, so it follows the slider.
+        int film = (int) (4 + 22 * glass);
+        r.roundedQuad(x, y, w, h, radius, new Color(255, 255, 255, (int) (film * opacity)));
+
+        // Specular: a bright band along the top edge and a dimmer one down the left, as if lit
+        // from above and in front. Clear glass reflects more of it than frost does.
         double inset = Math.min(radius, w / 2);
-        r.quad(x + inset, y, w - inset * 2, Math.max(0.6, h * 0.012),
-            new Color(255, 255, 255, (int) (46 * opacity)));
+        double thick = Math.max(0.8, h * 0.014);
+        int spec = (int) ((92 - 40 * glass) * opacity);
+
+        r.quad(x + inset, y, w - inset * 2, thick, new Color(255, 255, 255, spec));
+        r.quad(x, y + Math.min(radius, h / 2), thick, h - Math.min(radius, h / 2) * 2,
+            new Color(255, 255, 255, (int) (spec * 0.45)));
+
+        // A dark counter-edge along the bottom gives the pane thickness instead of letting it
+        // fade out into whatever is underneath.
+        r.quad(x + inset, y + h - thick, w - inset * 2, thick,
+            new Color(0, 0, 0, (int) (60 * opacity)));
     }
 
     /**
