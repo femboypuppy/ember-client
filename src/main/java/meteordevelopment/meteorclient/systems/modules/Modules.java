@@ -541,6 +541,7 @@ public class Modules extends System<Modules> {
         add(new HoleESP());
         add(new ItemPhysics());
         add(new ItemHighlight());
+        add(new JumpCircles());
         add(new LightOverlay());
         add(new LogoutSpots());
         add(new Marker());
