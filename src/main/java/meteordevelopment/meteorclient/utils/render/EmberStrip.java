@@ -32,9 +32,10 @@ public final class EmberStrip {
      * right down and lifts it slightly, so the scene reads through the glass.
      */
     public static Color background() {
-        boolean frosted = EmberAppearance.frosted();
-        return frosted
-            ? new Color(18, 18, 26, EmberAppearance.panelAlpha())
+        // Frosted stays neutral grey. A blue-leaning tint that is invisible at full opacity
+        // turns into a clear purple cast once the scene shows through it.
+        return EmberAppearance.frosted()
+            ? new Color(10, 10, 10, EmberAppearance.panelAlpha())
             : new Color(7, 7, 9, EmberAppearance.panelAlpha());
     }
 

@@ -191,6 +191,10 @@ public class HudRenderer {
     public void dropShadow(double x, double y, double width, double height, double radius, double size, float opacity) {
         if (width <= 0 || height <= 0 || size <= 0 || opacity <= 0.01f) return;
 
+        // Glass wants far less shadow: a heavy one under a translucent panel darkens the
+        // scene showing through it, which is the opposite of what frosted is for.
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) opacity *= 0.4f;
+
         int layers = 10;
 
         for (int i = layers; i >= 1; i--) {

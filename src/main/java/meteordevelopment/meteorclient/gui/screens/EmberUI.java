@@ -36,14 +36,16 @@ public final class EmberUI {
      * slightly, so the scene behind reads through; the constants above stay the solid values.
      */
     public static Color bg() {
+        // Neutral grey, not the slightly blue tint this used to carry - over a bright scene
+        // even a couple of points of extra blue read as a purple cast.
         return meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()
-            ? new Color(18, 18, 26, 150)
+            ? new Color(10, 10, 10, 150)
             : BG_SOLID;
     }
 
     public static Color raised() {
         return meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()
-            ? new Color(34, 34, 44, 165)
+            ? new Color(28, 28, 28, 165)
             : RAISED_SOLID;
     }
 
@@ -80,9 +82,13 @@ public final class EmberUI {
      * shadow implies a light source that is never consistent.
      */
     public static void shadow(GuiRenderer r, double x, double y, double w, double h, float fade) {
-        r.glow(x, y, w, h, 52, new Color(0, 0, 0, (int) (105 * fade)), false);
-        r.glow(x, y, w, h, 28, new Color(0, 0, 0, (int) (85 * fade)), false);
-        r.glow(x, y, w, h, 13, new Color(0, 0, 0, (int) (70 * fade)), false);
+        // Glass needs far less: a heavy shadow under a translucent panel darkens the scene
+        // showing through it and undoes the effect.
+        float k = meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted() ? 0.4f : 1f;
+
+        r.glow(x, y, w, h, 52, new Color(0, 0, 0, (int) (105 * fade * k)), false);
+        r.glow(x, y, w, h, 28, new Color(0, 0, 0, (int) (85 * fade * k)), false);
+        r.glow(x, y, w, h, 13, new Color(0, 0, 0, (int) (70 * fade * k)), false);
     }
 
     /** Subtle lift under the cursor. Flat fill, no edge bar - the image has no such marker. */
