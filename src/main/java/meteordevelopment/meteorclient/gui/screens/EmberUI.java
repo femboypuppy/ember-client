@@ -13,9 +13,9 @@ import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
  */
 public final class EmberUI {
     /** Panel body. Matches the HUD strips so the menu and the widgets read as one client. */
-    public static final Color BG = new Color(8, 8, 11, 244);
+    public static final Color BG_SOLID = new Color(8, 8, 11, 244);
     /** Header strip and controls that sit on top of the body. */
-    public static final Color RAISED = new Color(20, 20, 25, 255);
+    public static final Color RAISED_SOLID = new Color(20, 20, 25, 255);
     /** Input wells and the off state of a switch. */
     public static final Color WELL = new Color(31, 31, 38, 255);
     public static final Color DIVIDER = new Color(38, 38, 46, 255);
@@ -29,6 +29,30 @@ public final class EmberUI {
     public static final double ROW_RADIUS = 8;
 
     private EmberUI() {
+    }
+
+    /**
+     * Panel and header fills follow the chosen appearance. Frosted thins them and lifts them
+     * slightly, so the scene behind reads through; the constants above stay the solid values.
+     */
+    public static Color bg() {
+        return meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()
+            ? new Color(18, 18, 26, 150)
+            : BG_SOLID;
+    }
+
+    public static Color raised() {
+        return meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()
+            ? new Color(34, 34, 44, 165)
+            : RAISED_SOLID;
+    }
+
+    /** White film and a lit top edge, which is what actually reads as glass. */
+    public static void gloss(GuiRenderer r, double x, double y, double w, double h, double radius, float fade) {
+        if (!meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) return;
+
+        r.roundedRect(x, y, w, h, radius, new Color(255, 255, 255, (int) (14 * fade)));
+        r.quad(x + radius, y, w - radius * 2, 1, new Color(255, 255, 255, (int) (48 * fade)));
     }
 
     public static Color accent() {

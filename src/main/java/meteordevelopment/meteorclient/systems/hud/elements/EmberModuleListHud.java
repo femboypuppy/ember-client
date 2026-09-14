@@ -150,7 +150,7 @@ public class EmberModuleListHud extends HudElement {
 
             if (glow.get()) renderer.softGlow(rx, cy, rw, rowH, radius, 6 * s, new Color(accent.r, accent.g, accent.b, (int) (140 * a)));
             renderer.dropShadow(rx, cy, rw, rowH, radius, 15 * s, a);
-            renderer.roundedQuad(rx, cy, rw, rowH, radius, new Color(panel.r, panel.g, panel.b, (int) (panel.a * a)));
+            meteordevelopment.meteorclient.utils.render.EmberStrip.panel(renderer, rx, cy, rw, rowH, radius, a);
 
             double barX = fromRight ? rx + rw - bar - 3 * s : rx + 3 * s;
             renderer.roundedQuad(barX, cy + 4 * s, bar, rowH - 8 * s, bar / 2, new Color(accent.r, accent.g, accent.b, (int) (255 * a)));

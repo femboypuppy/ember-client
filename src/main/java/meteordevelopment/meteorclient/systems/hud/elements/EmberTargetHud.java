@@ -140,7 +140,7 @@ public class EmberTargetHud extends HudElement {
         setSize(w, h);
 
         renderer.dropShadow(x, y, w, h, radius, 20 * s);
-        renderer.roundedQuad(x, y, w, h, radius, EmberStrip.background());
+        EmberStrip.panel(renderer, x, y, w, h, radius, 1);
 
         double cx = x + pad;
 

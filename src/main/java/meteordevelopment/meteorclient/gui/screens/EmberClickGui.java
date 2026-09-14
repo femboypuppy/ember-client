@@ -328,16 +328,17 @@ public class EmberClickGui extends TabScreen {
         double x = p.x, y = p.renderY;
         double totalH = HH + p.bodyH * p.openAnim;
 
-        r.roundedRect(x, y, PW, totalH, EmberUI.RADIUS, EmberUI.alpha(EmberUI.BG, fade));
+        r.roundedRect(x, y, PW, totalH, EmberUI.RADIUS, EmberUI.alpha(EmberUI.bg(), fade));
+        EmberUI.gloss(r, x, y, PW, totalH, EmberUI.RADIUS, fade);
 
         boolean hHover = mx >= x && mx < x + PW && my >= y && my < y + HH;
         float hAmt = anim("hdr_" + p.name, hoverAnims, hHover ? 1f : 0f, 10f, frameDt);
 
         // Header sits slightly above the body, brightening a touch under the cursor.
         Color hc = new Color(
-            EmberUI.RAISED.r + (int) (10 * hAmt),
-            EmberUI.RAISED.g + (int) (10 * hAmt),
-            EmberUI.RAISED.b + (int) (12 * hAmt),
+            EmberUI.raised().r + (int) (10 * hAmt),
+            EmberUI.raised().g + (int) (10 * hAmt),
+            EmberUI.raised().b + (int) (12 * hAmt),
             (int) (255 * fade));
 
         if (p.openAnim < 0.05f) {
@@ -497,7 +498,7 @@ public class EmberClickGui extends TabScreen {
 
     private void drawSearchBar(GuiRenderer r, float fade) {
         double x = searchX(), y = searchY();
-        r.roundedRect(x, y, SEARCH_W, SEARCH_H, SEARCH_H / 2, EmberUI.alpha(EmberUI.RAISED, fade));
+        r.roundedRect(x, y, SEARCH_W, SEARCH_H, SEARCH_H / 2, EmberUI.alpha(EmberUI.raised(), fade));
 
         if (searchFocused) {
             r.roundedRect(x, y, SEARCH_W, SEARCH_H, SEARCH_H / 2, EmberUI.accent((int) (28 * fade)));
@@ -508,7 +509,7 @@ public class EmberClickGui extends TabScreen {
         double cx = x + SEARCH_W - 20, cy = y + SEARCH_H / 2;
         Color ic = EmberUI.alpha(EmberUI.accent(), fade);
         r.quad(cx - 5, cy - 5, 10, 10, GuiRenderer.CIRCLE, ic);
-        r.quad(cx - 3.4, cy - 3.4, 6.8, 6.8, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.RAISED, fade));
+        r.quad(cx - 3.4, cy - 3.4, 6.8, 6.8, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.raised(), fade));
         EmberUI.bar(r, cx + 3.4, cy + 3.4, cx + 7.5, cy + 7.5, 2.2, ic);
     }
 
@@ -539,7 +540,7 @@ public class EmberClickGui extends TabScreen {
         boolean hover = mx >= bx && mx < bx + CFG_W && my >= by && my < by + CFG_H;
         float hA = anim("cfgbtn", hoverAnims, hover ? 1f : 0f, 12f, frameDt);
 
-        r.roundedRect(bx, by, CFG_W, CFG_H, CFG_H / 2, EmberUI.alpha(EmberUI.RAISED, fade));
+        r.roundedRect(bx, by, CFG_W, CFG_H, CFG_H / 2, EmberUI.alpha(EmberUI.raised(), fade));
         if (hA > 0.01f) r.roundedRect(bx, by, CFG_W, CFG_H, CFG_H / 2, EmberUI.accent((int) (34 * hA * fade)));
 
         // Folder glyph.
@@ -561,7 +562,7 @@ public class EmberClickGui extends TabScreen {
         boolean hover = mx >= bx && mx < bx + GEAR && my >= by && my < by + GEAR;
         float hA = anim("gearbtn", hoverAnims, hover ? 1f : 0f, 12f, frameDt);
 
-        r.quad(bx, by, GEAR, GEAR, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.RAISED, fade));
+        r.quad(bx, by, GEAR, GEAR, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.raised(), fade));
         if (hA > 0.01f) r.quad(bx, by, GEAR, GEAR, GuiRenderer.CIRCLE, EmberUI.accent((int) (34 * hA * fade)));
 
         double cx = bx + GEAR / 2, cy = by + GEAR / 2;
@@ -574,7 +575,7 @@ public class EmberClickGui extends TabScreen {
         }
 
         r.quad(cx - 5.5, cy - 5.5, 11, 11, GuiRenderer.CIRCLE, gc);
-        r.quad(cx - 2.4, cy - 2.4, 4.8, 4.8, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.RAISED, fade));
+        r.quad(cx - 2.4, cy - 2.4, 4.8, 4.8, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.raised(), fade));
     }
 
     // --- Helpers ---

@@ -121,7 +121,7 @@ public class EmberKeybindsHud extends HudElement {
         }
 
         renderer.dropShadow(x, y, w, h, radius, 20 * s);
-        renderer.roundedQuad(x, y, w, h, radius, bg);
+        EmberStrip.panel(renderer, x, y, w, h, radius, 1);
 
         double cy = y + pad;
 

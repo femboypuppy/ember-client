@@ -110,8 +110,8 @@ public class EmberSettingsPopup {
 
     /** Flat near-black, matching the ClickGUI. Only the accent tracks the chosen colour. */
     private static void syncPalette() {
-        PANEL_BG = EmberUI.BG;
-        HEADER_BG = EmberUI.RAISED;
+        PANEL_BG = EmberUI.bg();
+        HEADER_BG = EmberUI.raised();
         DIVIDER = EmberUI.DIVIDER;
         CONTROL_BG = EmberUI.WELL;
         CONTROL_HOVER = new Color(44, 44, 53, 255);
@@ -467,7 +467,7 @@ public class EmberSettingsPopup {
         dropdownRect = new double[]{x, y, w, h};
 
         EmberUI.shadow(r, x, y, w, h, fade);
-        r.roundedRect(x, y, w, h, 10, alpha(EmberUI.RAISED, fade));
+        r.roundedRect(x, y, w, h, 10, alpha(EmberUI.raised(), fade));
 
         double ry = y + 4;
         for (int i = 0; i < values.length; i++) {

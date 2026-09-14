@@ -213,7 +213,7 @@ public class SpotifyHud extends HudElement {
         }
 
         renderer.dropShadow(x, y, w, h, radius, 22 * s);
-        renderer.roundedQuad(x, y, w, h, radius, bg);
+        meteordevelopment.meteorclient.utils.render.EmberStrip.panel(renderer, x, y, w, h, radius, 1);
 
         // Album art
         double ax = x + pad, ay = y + pad;

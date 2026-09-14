@@ -28,10 +28,39 @@ public final class EmberStrip {
 
     /**
      * Essentially pure black. The reference bars read as black with colour only in the icons,
-     * so the palette's tinted panel colour is deliberately not used here.
+     * so the palette's tinted panel colour is deliberately not used here. Frosted thins it
+     * right down and lifts it slightly, so the scene reads through the glass.
      */
     public static Color background() {
-        return new Color(7, 7, 9, 242);
+        boolean frosted = EmberAppearance.frosted();
+        return frosted
+            ? new Color(18, 18, 26, EmberAppearance.panelAlpha())
+            : new Color(7, 7, 9, EmberAppearance.panelAlpha());
+    }
+
+    /**
+     * The glass treatment: a white film over the fill and a lit top edge. Drawn after the
+     * background, and only when frosted - on a solid panel it would just look washed out.
+     *
+     * @param opacity 0..1, so a fading widget's glass fades with it
+     */
+    public static void gloss(HudRenderer r, double x, double y, double w, double h, double radius, double opacity) {
+        if (!EmberAppearance.frosted() || opacity <= 0.01) return;
+
+        r.roundedQuad(x, y, w, h, radius, new Color(255, 255, 255, (int) (16 * opacity)));
+
+        // A single bright line along the top is what actually reads as glass; without it the
+        // panel just looks half transparent.
+        double inset = Math.min(radius, w / 2);
+        r.quad(x + inset, y, w - inset * 2, Math.max(0.6, h * 0.012),
+            new Color(255, 255, 255, (int) (46 * opacity)));
+    }
+
+    /** Background plus glass, the pairing every Ember panel wants. */
+    public static void panel(HudRenderer r, double x, double y, double w, double h, double radius, double opacity) {
+        Color bg = background();
+        r.roundedQuad(x, y, w, h, radius, new Color(bg.r, bg.g, bg.b, (int) (bg.a * opacity)));
+        gloss(r, x, y, w, h, radius, opacity);
     }
 
     public static double height(HudRenderer r, double s, double textScale) {
@@ -65,7 +94,7 @@ public final class EmberStrip {
         Color accent = EmberPalette.accent();
 
         r.dropShadow(x, y, w, h, radius, 22 * s);
-        r.roundedQuad(x, y, w, h, radius, bg);
+        panel(r, x, y, w, h, radius, 1);
 
         double iconSize = 11 * s;
         double textH = r.textHeight(true, textScale);

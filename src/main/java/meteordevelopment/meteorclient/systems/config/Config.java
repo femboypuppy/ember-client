@@ -40,6 +40,14 @@ public class Config extends System<Config> {
         .build()
     );
 
+    public final Setting<meteordevelopment.meteorclient.utils.render.EmberAppearance> appearance = sgVisual.add(
+        new EnumSetting.Builder<meteordevelopment.meteorclient.utils.render.EmberAppearance>()
+            .name("ember-appearance")
+            .description("Solid panels, or frosted glass that lets the scene through.")
+            .defaultValue(meteordevelopment.meteorclient.utils.render.EmberAppearance.Solid)
+            .build()
+    );
+
     public final Setting<FontFace> font = sgVisual.add(new FontFaceSetting.Builder()
         .name("font")
         .description("Custom font to use.")

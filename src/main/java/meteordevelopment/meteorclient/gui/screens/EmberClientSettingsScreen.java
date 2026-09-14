@@ -165,6 +165,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = themeRow(r, dt, x, y, w);
         y += 8;
 
+        y = appearanceRow(r, dt, x, y, w);
+
         // The master switch for the HUD. Without this the only ways to reach it are Meteor's
         // own HUD tab, the .toggle command or a keybind, none of which live in Ember's UI.
         y = toggleRow(r, dt, x, y, w, "HUD enabled", Hud.get().active,
@@ -206,6 +208,37 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             (int) MathHelper.lerp(hr * 0.35f, ROW_BG.b, 86), 235));
         hits.add(new Hit(x, y, w, ROW_H, () -> Hud.get().resetToDefaultElements()));
         texts.add(new Label("Reset HUD to Ember defaults", x + 12, y + (ROW_H - 0) / 2, TEXT_WHITE, 0.92));
+    }
+
+    /** Solid or frosted, as two pills on one row. */
+    private double appearanceRow(GuiRenderer r, float dt, double x, double y, double w) {
+        r.roundedRect(x, y, w, ROW_H, 7, ROW_BG);
+
+        var options = meteordevelopment.meteorclient.utils.render.EmberAppearance.values();
+        var current = meteordevelopment.meteorclient.utils.render.EmberAppearance.current();
+
+        double bw = 78, gap = 6;
+        double total = options.length * bw + (options.length - 1) * gap;
+        double sx = x + w - 12 - total;
+
+        for (int i = 0; i < options.length; i++) {
+            var option = options[i];
+            double bx = sx + i * (bw + gap);
+            boolean sel = current == option;
+            float a = anim("appearance" + i, sel || hovered(bx, y + 5, bw, ROW_H - 10) ? 1f : 0f, dt);
+
+            Color fill = sel ? accentAlpha(225) : new Color(
+                (int) MathHelper.lerp(a * 0.4f, ROW_BG.r, accent().r),
+                (int) MathHelper.lerp(a * 0.4f, ROW_BG.g, accent().g),
+                (int) MathHelper.lerp(a * 0.4f, ROW_BG.b, accent().b), 235);
+
+            r.roundedRect(bx, y + 5, bw, ROW_H - 10, 6, fill);
+            hits.add(new Hit(bx, y + 5, bw, ROW_H - 10, () -> Config.get().appearance.set(option)));
+            texts.add(new Label(option.name(), bx + 9, y + ROW_H / 2, sel ? ON_ACCENT : TEXT_WHITE, 0.84));
+        }
+
+        texts.add(new Label("Appearance", x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));
+        return y + ROW_H + 8;
     }
 
     private double themeRow(GuiRenderer r, float dt, double x, double y, double w) {
