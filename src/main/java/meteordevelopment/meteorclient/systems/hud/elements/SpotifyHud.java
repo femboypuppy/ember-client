@@ -46,6 +46,16 @@ public class SpotifyHud extends HudElement {
         .build()
     );
 
+    /** Compact is the island that opens on hover; Expanded is always the full player. */
+    public enum Mode { Compact, Expanded }
+
+    private final Setting<Mode> mode = sgGeneral.add(new meteordevelopment.meteorclient.settings.EnumSetting.Builder<Mode>()
+        .name("mode")
+        .description("Compact island that opens on hover, or the full player with controls.")
+        .defaultValue(Mode.Compact)
+        .build()
+    );
+
     private final Setting<Double> collapsedWidth = sgGeneral.add(new DoubleSetting.Builder()
         .name("collapsed-width")
         .description("How much room the title gets while the island is closed.")
@@ -173,6 +183,11 @@ public class SpotifyHud extends HudElement {
         boolean withArtist = !artist.isEmpty();
         boolean withProgress = showProgress.get();
 
+        if (mode.get() == Mode.Expanded) {
+            renderExpanded(renderer, s, titleScale, subScale, titleH, subH, title, artist, has, accent, bg, artBg, white, gray, track);
+            return;
+        }
+
         // A new track pops the island open on its own, the way a real one announces itself.
         if (has && !title.equals(lastTitle)) {
             lastTitle = title;
@@ -280,6 +295,98 @@ public class SpotifyHud extends HudElement {
                 }
             }
         }
+    }
+
+    /**
+     * The full player: art, title, artist, transport row and a progress bar, always open.
+     * Laid out as a fixed card rather than an animated one - nothing here collapses, so the
+     * island's easing would only make the box breathe for no reason.
+     */
+    private void renderExpanded(HudRenderer renderer, double s, double titleScale, double subScale,
+                                double titleH, double subH, String title, String artist, boolean has,
+                                Color accent, Color bg, Color artBg, Color white, Color gray, Color track) {
+        double pad = 9 * s;
+        double gap = 10 * s;
+        double rowGap = 4 * s;
+        double transportH = 15 * s;
+        double barH = 3.5 * s;
+
+        double contentW = width.get() * s;
+        double contentH = titleH + rowGap + subH + rowGap + transportH + rowGap + barH;
+        double art = contentH;
+
+        double w = pad + art + gap + contentW + pad;
+        double h = pad * 2 + contentH;
+        double radius = Math.min(13 * s, h * 0.3);
+
+        setSize(w, h);
+
+        renderer.dropShadow(x, y, w, h, radius, 22 * s);
+        meteordevelopment.meteorclient.utils.render.EmberStrip.panel(renderer, x, y, w, h, radius, 1);
+
+        // Album art
+        double ax = x + pad, ay = y + pad;
+        double artRadius = art * 0.2;
+        renderer.roundedQuad(ax, ay, art, art, artRadius, artBg);
+
+        if (MediaInfo.hasArt() && has) {
+            renderer.post(() -> renderer.roundedTextureRegion(
+                MediaInfo.ART_ID, ax, ay, art, artRadius, 0, 0, 1, 1, ART_TINT));
+        }
+
+        double tx = ax + art + gap;
+        double ty = y + pad;
+
+        renderer.text(truncate(renderer, title, contentW, titleScale), tx, ty, has ? white : gray, true, titleScale);
+        ty += titleH + rowGap;
+
+        renderer.text(truncate(renderer, artist, contentW, subScale), tx, ty, gray, false, subScale);
+        ty += subH + rowGap;
+
+        // Transport row, centred under the text
+        double cx = tx + contentW / 2;
+        double cy = ty + transportH / 2;
+        double step = 26 * s;
+
+        drawSkip(renderer, cx - step, cy, 9 * s, white, false);
+        drawPlayPause(renderer, cx, cy, 12 * s, white, MediaInfo.isPlaying());
+        drawSkip(renderer, cx + step, cy, 9 * s, white, true);
+
+        ty += transportH + rowGap;
+
+        // Progress
+        int position = MediaInfo.getPosition();
+        int duration = MediaInfo.getDuration();
+
+        renderer.roundedQuad(tx, ty, contentW, barH, barH / 2, track);
+
+        double pct = duration > 0 ? Math.min(1.0, (double) position / duration) : 0;
+        double filled = contentW * pct;
+        if (filled > barH) renderer.roundedQuad(tx, ty, filled, barH, barH / 2, accent);
+    }
+
+    /** Play triangle, or two bars when something is already playing. */
+    private void drawPlayPause(HudRenderer renderer, double cx, double cy, double size, Color c, boolean playing) {
+        double half = size / 2;
+
+        if (playing) {
+            double barW = size * 0.26, gap = size * 0.2;
+            renderer.roundedQuad(cx - gap / 2 - barW, cy - half, barW, size, barW * 0.3, c);
+            renderer.roundedQuad(cx + gap / 2, cy - half, barW, size, barW * 0.3, c);
+            return;
+        }
+
+        renderer.triangle(cx - half * 0.7, cy - half, cx - half * 0.7, cy + half, cx + half * 0.85, cy, c);
+    }
+
+    /** Previous or next: a triangle with a bar on its leading edge. */
+    private void drawSkip(HudRenderer renderer, double cx, double cy, double size, Color c, boolean forward) {
+        double half = size / 2;
+        double barW = size * 0.22;
+        double dir = forward ? 1 : -1;
+
+        renderer.triangle(cx - half * dir, cy - half, cx - half * dir, cy + half, cx + half * 0.55 * dir, cy, c);
+        renderer.roundedQuad(cx + half * 0.6 * dir - (forward ? 0 : barW), cy - half, barW, size, barW * 0.3, c);
     }
 
     /**

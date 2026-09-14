@@ -46,7 +46,15 @@ public final class EmberStrip {
      * @param opacity 0..1, so a fading widget's glass fades with it
      */
     public static void gloss(HudRenderer r, double x, double y, double w, double h, double radius, double opacity) {
-        if (!EmberAppearance.frosted() || opacity <= 0.01) return;
+        if (opacity <= 0.01) return;
+
+        // The top edge catches light in both modes; the white film is glass only.
+        if (!EmberAppearance.frosted()) {
+            double inset = Math.min(radius, w / 2);
+            r.quad(x + inset, y, w - inset * 2, Math.max(0.6, h * 0.01),
+                new Color(255, 255, 255, (int) (26 * opacity)));
+            return;
+        }
 
         r.roundedQuad(x, y, w, h, radius, new Color(255, 255, 255, (int) (16 * opacity)));
 
@@ -57,10 +65,36 @@ public final class EmberStrip {
             new Color(255, 255, 255, (int) (46 * opacity)));
     }
 
-    /** Background plus glass, the pairing every Ember panel wants. */
+    /**
+     * The lit edge that makes a panel read as a piece of glass rather than a flat card. Drawn
+     * just outside the fill so the fill leaves it as a ring, and tinted with the accent so it
+     * picks up the client's colour along its corners.
+     *
+     * It is a specular rim, not a true reflection - mirroring what is actually behind the
+     * panel would mean sampling the framebuffer around it every frame, the same cost that
+     * rules out a real background blur.
+     */
+    public static void rim(HudRenderer r, double x, double y, double w, double h, double radius, double opacity) {
+        if (opacity <= 0.01) return;
+
+        Color a = EmberPalette.accent();
+        double t = Math.max(0.8, Math.min(w, h) * 0.012);
+
+        // Accent halfway to white: pure accent reads as a coloured outline, pure white as a
+        // border. Between the two it looks like light caught on an edge.
+        Color edge = new Color((a.r + 255) / 2, (a.g + 255) / 2, (a.b + 255) / 2,
+            (int) ((EmberAppearance.frosted() ? 96 : 60) * opacity));
+
+        r.roundedQuad(x - t, y - t, w + t * 2, h + t * 2, radius + t, edge);
+    }
+
+    /** Rim, background and glass - the stack every Ember panel wants. */
     public static void panel(HudRenderer r, double x, double y, double w, double h, double radius, double opacity) {
+        rim(r, x, y, w, h, radius, opacity);
+
         Color bg = background();
         r.roundedQuad(x, y, w, h, radius, new Color(bg.r, bg.g, bg.b, (int) (bg.a * opacity)));
+
         gloss(r, x, y, w, h, radius, opacity);
     }
 

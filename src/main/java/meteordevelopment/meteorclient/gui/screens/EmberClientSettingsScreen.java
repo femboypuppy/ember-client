@@ -155,6 +155,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
 
         // Shadow, not an accent halo - the menu dropped those and this should match.
         EmberUI.shadow(r, px, py, PW, panelH, f);
+        EmberUI.rim(r, px, py, PW, panelH, EmberUI.RADIUS, f);
         r.roundedRect(px, py, PW, panelH, EmberUI.RADIUS, PANEL_BG);
         EmberUI.gloss(r, px, py, PW, panelH, EmberUI.RADIUS, f);
 

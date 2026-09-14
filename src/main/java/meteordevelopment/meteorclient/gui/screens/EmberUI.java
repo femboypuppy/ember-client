@@ -51,10 +51,32 @@ public final class EmberUI {
 
     /** White film and a lit top edge, which is what actually reads as glass. */
     public static void gloss(GuiRenderer r, double x, double y, double w, double h, double radius, float fade) {
-        if (!meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) return;
+        if (!meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) {
+            r.quad(x + radius, y, w - radius * 2, 1, new Color(255, 255, 255, (int) (24 * fade)));
+            return;
+        }
 
         r.roundedRect(x, y, w, h, radius, new Color(255, 255, 255, (int) (14 * fade)));
         r.quad(x + radius, y, w - radius * 2, 1, new Color(255, 255, 255, (int) (48 * fade)));
+    }
+
+    /**
+     * Lit edge around a panel, drawn before the fill so the fill leaves it as a ring. Tinted
+     * with the accent so the corners pick up the client's colour.
+     *
+     * A specular rim, not a true reflection: mirroring what sits behind a panel would mean
+     * sampling the framebuffer around it every frame.
+     */
+    public static void rim(GuiRenderer r, double x, double y, double w, double h, double radius, float fade) {
+        Color a = accent();
+        double t = 1.2;
+
+        // Accent halfway to white - pure accent reads as a coloured outline, pure white as a
+        // plain border; between them it looks like light caught on an edge.
+        Color edge = new Color((a.r + 255) / 2, (a.g + 255) / 2, (a.b + 255) / 2,
+            (int) ((meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted() ? 92 : 58) * fade));
+
+        r.roundedRect(x - t, y - t, w + t * 2, h + t * 2, radius + t, edge);
     }
 
     public static Color accent() {

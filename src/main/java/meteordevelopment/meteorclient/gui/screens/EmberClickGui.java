@@ -328,6 +328,7 @@ public class EmberClickGui extends TabScreen {
         double x = p.x, y = p.renderY;
         double totalH = HH + p.bodyH * p.openAnim;
 
+        EmberUI.rim(r, x, y, PW, totalH, EmberUI.RADIUS, fade);
         r.roundedRect(x, y, PW, totalH, EmberUI.RADIUS, EmberUI.alpha(EmberUI.bg(), fade));
         EmberUI.gloss(r, x, y, PW, totalH, EmberUI.RADIUS, fade);
 
