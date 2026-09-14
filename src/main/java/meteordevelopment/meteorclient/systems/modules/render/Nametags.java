@@ -23,7 +23,10 @@ import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.entity.EntityUtils;
 import meteordevelopment.meteorclient.utils.misc.Names;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
+import meteordevelopment.meteorclient.utils.render.EmberShapes;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import net.minecraft.client.network.AbstractClientPlayerEntity;
+import net.minecraft.util.Identifier;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
@@ -412,7 +415,7 @@ public class Nametags extends Module {
             };
         }
 
-        gmText = "[" + gmText + "] ";
+        gmText = "[" + gmText + "]";
 
         // Name
         String name;
@@ -429,60 +432,88 @@ public class Nametags extends Module {
         int health = Math.round(player.getHealth() + absorption);
         double healthPercentage = health / (player.getMaxHealth() + absorption);
 
-        String healthText = " " + health;
         Color healthColor;
-
         if (healthPercentage <= 0.333) healthColor = RED;
         else if (healthPercentage <= 0.666) healthColor = AMBER;
         else healthColor = GREEN;
 
-        // Ping
-        int ping = EntityUtils.getPing(player);
-        String pingText = " [" + ping + "ms]";
-
-        // Distance
-        double dist = Math.round(PlayerUtils.distanceToCamera(player) * 10.0) / 10.0;
-        String distText = " " + dist + "m";
-
-        // Calc widths
-        double gmWidth = text.getWidth(gmText, shadow);
-        double nameWidth = text.getWidth(name, shadow);
-        double healthWidth = text.getWidth(healthText, shadow);
-        double pingWidth = text.getWidth(pingText, shadow);
-        double distWidth = text.getWidth(distText, shadow);
-
-        double width = nameWidth;
-
         boolean renderPlayerDistance = player != mc.getCameraEntity() || Modules.get().isActive(Freecam.class);
 
-        if (displayHealth.get()) width += healthWidth;
-        if (displayGameMode.get()) width += gmWidth;
-        if (displayPing.get()) width += pingWidth;
-        if (displayDistance.get() && renderPlayerDistance) width += distWidth;
-
-        double widthHalf = width / 2;
-        double heightDown = text.getHeight(shadow);
-
-        drawBg(-widthHalf, -heightDown, width, heightDown);
-
-        // Render texts
-        text.beginBig();
-        double hX = -widthHalf;
-        double hY = -heightDown;
-
-        if (displayGameMode.get()) hX = text.render(gmText, hX, hY, gamemodeColor.get(), shadow);
-        hX = text.render(name, hX, hY, nameColor, shadow);
-
-        if (displayHealth.get()) hX = text.render(healthText, hX, hY, healthColor, shadow);
-        if (displayPing.get()) hX = text.render(pingText, hX, hY, pingColor.get(), shadow);
+        // The second line gathers the small details that used to be appended to the name.
+        StringBuilder sub = new StringBuilder();
+        if (displayGameMode.get()) sub.append(gmText);
         if (displayDistance.get() && renderPlayerDistance) {
-            switch (distanceColorMode.get()) {
-                case Flat ->  text.render(distText, hX, hY, distanceColor.get(), shadow);
-                case Gradient -> text.render(distText, hX, hY, EntityUtils.getColorFromDistance(player), shadow);
-            }
+            if (!sub.isEmpty()) sub.append("  ");
+            sub.append("distance ").append(Math.round(PlayerUtils.distanceToCamera(player) * 10.0) / 10.0);
+        }
+        if (displayPing.get()) {
+            if (!sub.isEmpty()) sub.append("  ");
+            sub.append(EntityUtils.getPing(player)).append("ms");
+        }
+        if (displayHealth.get()) {
+            if (!sub.isEmpty()) sub.append("  ");
+            sub.append(health).append("hp");
         }
 
+        String subText = sub.toString();
+
+        // Card metrics. Text is measured unscaled and the sub line drawn at SUB_SCALE, so its
+        // measured width is scaled to match rather than trusted directly.
+        double lineH = text.getHeight(shadow);
+        double headSize = NAMETAG_HEAD;
+        double pad = 4;
+        double gap = 5;
+
+        double nameWidth = text.getWidth(name, shadow);
+        double subWidth = text.getWidth(subText, shadow) * SUB_SCALE;
+
+        double barH = displayHealth.get() ? 4 : 0;
+        double contentW = Math.max(Math.max(nameWidth, subWidth), headSize * 1.6);
+        double contentH = lineH + (subText.isEmpty() ? 0 : lineH * SUB_SCALE + 1) + (barH > 0 ? barH + 3 : 0);
+
+        double cardH = Math.max(headSize, contentH) + pad * 2;
+        double cardW = pad + headSize + gap + contentW + pad;
+
+        double x0 = -cardW / 2;
+        double y0 = -cardH;
+
+        drawCard(x0, y0, cardW, cardH, Math.min(6, cardH / 2));
+
+        // Head
+        Identifier skin = skinOf(player);
+        double headX = x0 + pad;
+        double headY = y0 + (cardH - headSize) / 2;
+
+        if (skin != null) drawHead(skin, headX, headY, headSize);
+
+        // Text column
+        double tx = headX + headSize + gap;
+        double ty = y0 + (cardH - contentH) / 2;
+
+        text.beginBig();
+        text.render(name, tx, ty, nameColor, shadow);
         text.end();
+
+        double cursorY = ty + lineH;
+
+        if (!subText.isEmpty()) {
+            text.begin(SUB_SCALE, false, true);
+            text.render(subText, tx, cursorY + 1, SUB_COLOR, shadow);
+            text.end();
+            cursorY += lineH * SUB_SCALE + 1;
+        }
+
+        if (barH > 0) {
+            double barW = contentW;
+            double barY = cursorY + 2;
+
+            drawRounded(tx, barY, barW, barH, barH / 2, BAR_TRACK);
+
+            double filled = barW * Math.max(0, Math.min(1, healthPercentage));
+            if (filled > barH) drawRounded(tx, barY, filled, barH, barH / 2, healthColor);
+        }
+
+        double heightDown = cardH;
 
         if (displayItems.get()) {
             // Item calc
@@ -720,6 +751,43 @@ public class Nametags extends Module {
         Renderer2D.COLOR.begin();
         Renderer2D.COLOR.quad(x - 1, y - 1, width + 2, height + 2, background.get());
         Renderer2D.COLOR.render();
+    }
+
+    // --- Ember nametag card ---
+
+    /** Head size inside a player card, in nametag units. */
+    private static final double NAMETAG_HEAD = 20;
+    private static final double SUB_SCALE = 0.62;
+    private static final Color SUB_COLOR = new Color(168, 168, 180, 255);
+    private static final Color BAR_TRACK = new Color(0, 0, 0, 140);
+    private static final Color SKIN_TINT = new Color(255, 255, 255, 255);
+
+    private void drawCard(double x, double y, double w, double h, double radius) {
+        Renderer2D.COLOR.begin();
+        EmberShapes.roundedQuad(Renderer2D.COLOR, x, y, w, h, radius, background.get());
+        Renderer2D.COLOR.render();
+    }
+
+    private void drawRounded(double x, double y, double w, double h, double radius, Color color) {
+        Renderer2D.COLOR.begin();
+        EmberShapes.roundedQuad(Renderer2D.COLOR, x, y, w, h, radius, color);
+        Renderer2D.COLOR.render();
+    }
+
+    /** Face and hat layer, both 8x8 patches of a 64x64 skin, with rounded corners. */
+    private void drawHead(Identifier skin, double x, double y, double size) {
+        var texture = mc.getTextureManager().getTexture(skin);
+        double radius = size * 0.26;
+
+        Renderer2D.TEXTURE.begin();
+        EmberShapes.roundedTexture(Renderer2D.TEXTURE, x, y, size, radius, 0.125, 0.125, 0.25, 0.25, SKIN_TINT);
+        EmberShapes.roundedTexture(Renderer2D.TEXTURE, x, y, size, radius, 0.625, 0.125, 0.75, 0.25, SKIN_TINT);
+        Renderer2D.TEXTURE.render(texture.getGlTextureView(), texture.getSampler());
+    }
+
+    private Identifier skinOf(PlayerEntity player) {
+        if (player instanceof AbstractClientPlayerEntity client) return client.getSkin().body().texturePath();
+        return null;
     }
 
     public enum Position {
