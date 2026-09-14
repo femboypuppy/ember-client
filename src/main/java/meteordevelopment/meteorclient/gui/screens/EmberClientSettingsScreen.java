@@ -75,8 +75,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     /** Recorded while laying out, so section headings cannot drift away from their rows. */
     private double widgetsLabelY = -1;
 
-    /** True between pressing on the glass slider and releasing, so it can be dragged. */
-    private boolean draggingSlider;
+    /** Which slider is being held, so several on one screen can drag independently. */
+    private Object draggingSlider;
 
     public EmberClientSettingsScreen(GuiTheme theme) {
         // WidgetScreen already records the screen this was opened from as `parent`.
@@ -198,6 +198,10 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         if (meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) {
             y = sliderRow(r, dt, x, y, w, "Glass", Config.get().glass.get(),
                 v -> Config.get().glass.set(v));
+            y = sliderRow(r, dt, x, y, w, "Tint", Config.get().glassTint.get(),
+                v -> Config.get().glassTint.set(v));
+            y = toggleRow(r, dt, x, y, w, "Accent tint", Config.get().glassAccent.get(),
+                () -> Config.get().glassAccent.set(!Config.get().glassAccent.get()));
         }
 
         // The master switch for the HUD. Without this the only ways to reach it are Meteor's
@@ -263,12 +267,13 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         double tx = x + w - 12 - trackW;
         double ty = y + (ROW_H - trackH) / 2;
 
+        boolean dragging = label.equals(draggingSlider);
         boolean over = hovered(tx - 8, y, trackW + 16, ROW_H);
-        float a = anim("glass-slider", over || draggingSlider ? 1f : 0f, dt);
+        float a = anim("slider-" + label, over || dragging ? 1f : 0f, dt);
 
         // Follow the cursor while held, which is what makes it feel like a slider rather
         // than a row of steps.
-        if (draggingSlider) {
+        if (dragging) {
             double next = Math.max(0, Math.min(1, (mx - tx) / trackW));
             if (Math.abs(next - value) > 0.001) {
                 onChange.accept(next);
@@ -283,7 +288,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         double knob = 11 + 2 * a;
         r.roundedRect(tx + filled - knob / 2, y + (ROW_H - knob) / 2, knob, knob, knob / 2, TEXT_WHITE);
 
-        hits.add(new Hit(tx - 8, y, trackW + 16, ROW_H, () -> draggingSlider = true));
+        hits.add(new Hit(tx - 8, y, trackW + 16, ROW_H, () -> draggingSlider = label));
 
         texts.add(new Label(label, x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));
         texts.add(new Label(String.format("%.0f%%", value * 100), x + w - 12 - trackW - 46,
@@ -482,7 +487,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
 
     @Override
     public boolean mouseReleased(Click click) {
-        draggingSlider = false;
+        draggingSlider = null;
         return super.mouseReleased(click);
     }
 

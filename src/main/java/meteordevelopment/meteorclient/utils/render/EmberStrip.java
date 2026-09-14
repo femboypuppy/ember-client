@@ -34,9 +34,11 @@ public final class EmberStrip {
     public static Color background() {
         // Frosted stays neutral grey. A blue-leaning tint that is invisible at full opacity
         // turns into a clear purple cast once the scene shows through it.
-        return EmberAppearance.frosted()
-            ? new Color(10, 10, 10, EmberAppearance.panelAlpha())
-            : new Color(7, 7, 9, EmberAppearance.panelAlpha());
+        if (!EmberAppearance.frosted()) return new Color(7, 7, 9, EmberAppearance.panelAlpha());
+
+        // Dark pane through to white, driven by the tint slider.
+        int v = (int) (10 + 235 * EmberAppearance.glassTint());
+        return new Color(v, v, v, EmberAppearance.panelAlpha());
     }
 
     /**
@@ -99,8 +101,13 @@ public final class EmberStrip {
         // already separates itself, so its rim can be quieter.
         double strength = EmberAppearance.frosted() ? 150 - 70 * EmberAppearance.glass() : 60;
 
-        Color edge = new Color((a.r + 255) / 2, (a.g + 255) / 2, (a.b + 255) / 2,
-            (int) (strength * opacity));
+        // With the accent turned off the rim is plain white, so the only colour anywhere on
+        // the panel is what the lens pulls in from behind it.
+        boolean tinted = !EmberAppearance.frosted() || EmberAppearance.glassAccent();
+
+        Color edge = tinted
+            ? new Color((a.r + 255) / 2, (a.g + 255) / 2, (a.b + 255) / 2, (int) (strength * opacity))
+            : new Color(255, 255, 255, (int) (strength * 0.8 * opacity));
 
         r.roundedQuad(x - t, y - t, w + t * 2, h + t * 2, radius + t, edge);
     }

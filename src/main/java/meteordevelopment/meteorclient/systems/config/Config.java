@@ -59,6 +59,25 @@ public class Config extends System<Config> {
         .build()
     );
 
+    public final Setting<Double> glassTint = sgVisual.add(new DoubleSetting.Builder()
+        .name("ember-glass-tint")
+        .description("Dark glass through to light: low is a dark pane, high is white.")
+        .defaultValue(0.0)
+        .min(0)
+        .max(1)
+        .sliderRange(0, 1)
+        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .build()
+    );
+
+    public final Setting<Boolean> glassAccent = sgVisual.add(new BoolSetting.Builder()
+        .name("ember-glass-accent")
+        .description("Tint the glass edge with the accent. Off leaves only the colour it picks up from behind.")
+        .defaultValue(true)
+        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .build()
+    );
+
     public final Setting<FontFace> font = sgVisual.add(new FontFaceSetting.Builder()
         .name("font")
         .description("Custom font to use.")

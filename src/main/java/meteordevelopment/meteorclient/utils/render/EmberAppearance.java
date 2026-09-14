@@ -38,4 +38,19 @@ public enum EmberAppearance {
         Config config = Config.get();
         return config == null ? 0.45 : config.glass.get();
     }
+
+    /** 0 is a dark pane, 1 is white. The wash and the film both follow it. */
+    public static double glassTint() {
+        Config config = Config.get();
+        return config == null ? 0 : config.glassTint.get();
+    }
+
+    /**
+     * Whether the edge carries the accent. With it off the glass has no colour of its own and
+     * shows only what it picks up from behind, which is closer to real glass.
+     */
+    public static boolean glassAccent() {
+        Config config = Config.get();
+        return config == null || config.glassAccent.get();
+    }
 }

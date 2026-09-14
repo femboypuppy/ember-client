@@ -37,16 +37,19 @@ public final class EmberUI {
      */
     public static Color bg() {
         // Neutral grey, not the slightly blue tint this used to carry - over a bright scene
-        // even a couple of points of extra blue read as a purple cast.
-        return meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()
-            ? new Color(10, 10, 10, 150)
-            : BG_SOLID;
+        // even a couple of points of extra blue read as a purple cast. Frosted also runs from
+        // a dark pane to white with the tint slider.
+        if (!meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) return BG_SOLID;
+
+        int v = (int) (10 + 235 * meteordevelopment.meteorclient.utils.render.EmberAppearance.glassTint());
+        return new Color(v, v, v, 150);
     }
 
     public static Color raised() {
-        return meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()
-            ? new Color(28, 28, 28, 165)
-            : RAISED_SOLID;
+        if (!meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) return RAISED_SOLID;
+
+        int v = (int) (28 + 215 * meteordevelopment.meteorclient.utils.render.EmberAppearance.glassTint());
+        return new Color(v, v, v, 165);
     }
 
     /** White film and a lit top edge, which is what actually reads as glass. */
