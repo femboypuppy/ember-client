@@ -16,3 +16,8 @@ logs
 .idea/*
 !.idea/copyright/*
 !.idea/scopes/*
+
+# JVM crash dumps, written into the project directory when a build or the game dies
+hs_err_pid*.log
+replay_pid*.log
+
