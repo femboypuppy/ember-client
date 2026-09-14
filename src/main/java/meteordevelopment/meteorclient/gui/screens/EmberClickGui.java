@@ -411,7 +411,9 @@ public class EmberClickGui extends TabScreen {
      * a frame - the single biggest cost in this screen.
      */
     private void drawAllPanelText() {
-        theme.textRenderer().begin(theme.scale(0.92));
+        // Headers sit clearly above the rows in the reference, so they take a larger step up
+        // than the stock theme uses.
+        theme.textRenderer().begin(theme.scale(1.05));
         double headerH = theme.textHeight();
 
         for (Panel p : panels) {
@@ -457,13 +459,13 @@ public class EmberClickGui extends TabScreen {
         theme.textRenderer().end();
     }
 
-    /** Dim when off, full white when on - the switch carries the colour, not the label. */
+    /**
+     * Module names stay white whether or not the module is on, matching the reference - the
+     * switch alone says what is enabled. Dimming the label as well made a panel of mostly-off
+     * modules read as disabled rather than merely idle.
+     */
     private Color blendText(float amount) {
-        return new Color(
-            (int) (EmberUI.TEXT_DIM.r + (EmberUI.TEXT.r - EmberUI.TEXT_DIM.r) * amount),
-            (int) (EmberUI.TEXT_DIM.g + (EmberUI.TEXT.g - EmberUI.TEXT_DIM.g) * amount),
-            (int) (EmberUI.TEXT_DIM.b + (EmberUI.TEXT.b - EmberUI.TEXT_DIM.b) * amount),
-            255);
+        return EmberUI.TEXT;
     }
 
     // --- Search ---
@@ -482,20 +484,21 @@ public class EmberClickGui extends TabScreen {
             r.roundedRect(x, y, SEARCH_W, SEARCH_H, SEARCH_H / 2, EmberUI.accent((int) (28 * fade)));
         }
 
-        // Magnifier: a ring with a short handle.
-        double cx = x + 16, cy = y + SEARCH_H / 2;
-        Color ic = EmberUI.alpha(searchFocused ? EmberUI.accent() : EmberUI.TEXT_FAINT, fade);
-        r.quad(cx - 4.5, cy - 4.5, 9, 9, GuiRenderer.CIRCLE, ic);
-        r.quad(cx - 3, cy - 3, 6, 6, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.RAISED, fade));
-        EmberUI.bar(r, cx + 3, cy + 3, cx + 6.5, cy + 6.5, 2, ic);
+        // Magnifier on the trailing edge, as in the reference, and tinted with the accent
+        // rather than left grey.
+        double cx = x + SEARCH_W - 20, cy = y + SEARCH_H / 2;
+        Color ic = EmberUI.alpha(EmberUI.accent(), fade);
+        r.quad(cx - 5, cy - 5, 10, 10, GuiRenderer.CIRCLE, ic);
+        r.quad(cx - 3.4, cy - 3.4, 6.8, 6.8, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.RAISED, fade));
+        EmberUI.bar(r, cx + 3.4, cy + 3.4, cx + 7.5, cy + 7.5, 2.2, ic);
     }
 
     private void drawSearchText() {
         double x = searchX(), y = searchY();
-        theme.textRenderer().begin(theme.scale(0.8));
+        theme.textRenderer().begin(theme.scale(0.82));
         boolean empty = search.isEmpty();
-        theme.textRenderer().render(empty && !searchFocused ? "Search modules" : search + (searchFocused ? "|" : ""),
-            x + 28, y + (SEARCH_H - theme.textHeight()) / 2,
+        theme.textRenderer().render(empty && !searchFocused ? "Search..." : search + (searchFocused ? "|" : ""),
+            x + 16, y + (SEARCH_H - theme.textHeight()) / 2,
             empty && !searchFocused ? EmberUI.TEXT_FAINT : EmberUI.TEXT, false);
         theme.textRenderer().end();
     }

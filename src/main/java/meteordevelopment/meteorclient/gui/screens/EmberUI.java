@@ -24,8 +24,9 @@ public final class EmberUI {
     public static final Color TEXT_DIM = new Color(142, 142, 154, 255);
     public static final Color TEXT_FAINT = new Color(96, 96, 108, 255);
 
-    public static final double RADIUS = 10;
-    public static final double ROW_RADIUS = 7;
+    /** Generous, matching the reference - its panels are noticeably softer than stock. */
+    public static final double RADIUS = 13;
+    public static final double ROW_RADIUS = 8;
 
     private EmberUI() {
     }
