@@ -235,6 +235,50 @@ public class HudRenderer {
         Renderer2D.TEXTURE.render(texture.getGlTextureView(), texture.getSampler());
     }
 
+    /**
+     * Ember: a square patch of a texture with rounded corners. There is no stencil to mask
+     * with and painting the corners over only works against a known flat colour, so the quad
+     * is cut into horizontal strips instead, each inset to follow the corner arc with its UVs
+     * inset to match. All strips go into one batch, so it stays a single draw.
+     */
+    public void roundedTextureRegion(Identifier id, double x, double y, double size, double radius,
+                                     double u1, double v1, double u2, double v2, Color color) {
+        if (size <= 0) return;
+
+        radius = Math.min(radius, size / 2);
+
+        var texture = mc.getTextureManager().getTexture(id);
+        int steps = Math.max(6, (int) Math.ceil(radius * 2));
+        double sliceH = size / (steps * 2.0);
+
+        Renderer2D.TEXTURE.begin();
+
+        for (int i = 0; i < steps * 2; i++) {
+            double top = i * sliceH;
+            double bottom = top + sliceH;
+
+            // How far into a corner zone this strip sits, measured from the nearer edge.
+            double dy;
+            if (bottom <= radius) dy = radius - top;
+            else if (top >= size - radius) dy = bottom - (size - radius);
+            else dy = 0;
+
+            double inset = dy <= 0 ? 0 : radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
+            double w = size - inset * 2;
+            if (w <= 0) continue;
+
+            // UVs track the geometry, or the face would stretch as the strips narrow.
+            double uInset = (u2 - u1) * (inset / size);
+            double vTop = v1 + (v2 - v1) * (top / size);
+            double vBottom = v1 + (v2 - v1) * (bottom / size);
+
+            Renderer2D.TEXTURE.texQuad(x + inset, y + top, w, sliceH, 0,
+                u1 + uInset, vTop, u2 - uInset, vBottom, color);
+        }
+
+        Renderer2D.TEXTURE.render(texture.getGlTextureView(), texture.getSampler());
+    }
+
     public double text(String text, double x, double y, Color color, boolean shadow, double scale) {
         if (scale == -1) scale = hud.getTextScale();
 

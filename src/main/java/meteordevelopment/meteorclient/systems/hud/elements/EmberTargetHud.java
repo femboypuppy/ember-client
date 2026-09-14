@@ -86,6 +86,9 @@ public class EmberTargetHud extends HudElement {
     private LivingEntity target;
     private long lastSeen;
 
+    private final meteordevelopment.meteorclient.utils.render.EmberCounter counter =
+        new meteordevelopment.meteorclient.utils.render.EmberCounter();
+
     public EmberTargetHud() {
         super(INFO);
     }
@@ -113,9 +116,13 @@ public class EmberTargetHud extends HudElement {
         double rowGap = 4 * s;
         double barH = 5 * s;
 
+        counter.tick();
+
         String name = shown != null ? shown.getName().getString() : "Target";
-        double health = shown != null ? shown.getHealth() : 20;
         double maxHealth = shown != null ? Math.max(1, shown.getMaxHealth()) : 20;
+
+        // Number and bar read the same eased value, so they never disagree mid-animation.
+        double health = counter.get("hp", shown != null ? shown.getHealth() : 20, 0.16);
         double pct = Math.max(0, Math.min(1, health / maxHealth));
 
         String healthText = String.format("%.1f HP", health);
@@ -164,7 +171,7 @@ public class EmberTargetHud extends HudElement {
         StringBuilder sb = new StringBuilder();
 
         if (showDistance.get() && shown != null && mc.player != null) {
-            sb.append(String.format("%.1fm", mc.player.distanceTo(shown)));
+            sb.append(String.format("%.1fm", counter.get("dist", mc.player.distanceTo(shown), 0.09)));
         }
 
         if (showArmor.get() && shown != null) {
@@ -191,9 +198,10 @@ public class EmberTargetHud extends HudElement {
         Identifier skin = player.getSkin().body().texturePath();
 
         // Face at (8,8) and hat layer at (40,8), both 8x8 patches of a 64x64 skin.
+        double r = size * 0.22;
         renderer.post(() -> {
-            renderer.textureRegion(skin, hx, hy, size, size, 0.125, 0.125, 0.25, 0.25, SKIN_TINT);
-            renderer.textureRegion(skin, hx, hy, size, size, 0.625, 0.125, 0.75, 0.25, SKIN_TINT);
+            renderer.roundedTextureRegion(skin, hx, hy, size, r, 0.125, 0.125, 0.25, 0.25, SKIN_TINT);
+            renderer.roundedTextureRegion(skin, hx, hy, size, r, 0.625, 0.125, 0.75, 0.25, SKIN_TINT);
         });
     }
 

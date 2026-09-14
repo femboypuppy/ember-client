@@ -129,6 +129,9 @@ public class EmberStatusBarHud extends HudElement {
     private double cpuPercent = -1;
     private long lastCpuPoll;
 
+    private final meteordevelopment.meteorclient.utils.render.EmberCounter counter =
+        new meteordevelopment.meteorclient.utils.render.EmberCounter();
+
     public EmberStatusBarHud() {
         super(INFO);
     }
@@ -137,6 +140,8 @@ public class EmberStatusBarHud extends HudElement {
     public void render(HudRenderer renderer) {
         double s = scale.get();
         double textScale = 0.9 * s;
+
+        counter.tick();
 
         Color accent = EmberPalette.accent();
 
@@ -152,26 +157,36 @@ public class EmberStatusBarHud extends HudElement {
             segments.add(new EmberStrip.Segment(EmberIcons.Glyph.CLOCK, LocalTime.now().format(CLOCK)));
         }
 
+        // Every figure eases toward its reading, so the bar counts rather than flickers.
         if (showPing.get()) {
-            segments.add(new EmberStrip.Segment(EmberIcons.Glyph.PING, ping() + " MS"));
+            long shown = Math.round(counter.get("ping", ping(), 0.3));
+            segments.add(new EmberStrip.Segment(EmberIcons.Glyph.PING, shown + " MS"));
         }
 
         if (showFps.get()) {
-            segments.add(new EmberStrip.Segment(EmberIcons.Glyph.FPS, mc.getCurrentFps() + " FPS"));
+            long shown = Math.round(counter.get("fps", mc.getCurrentFps(), 0.25));
+            segments.add(new EmberStrip.Segment(EmberIcons.Glyph.FPS, shown + " FPS"));
         }
 
         if (showCpu.get()) {
             double cpu = cpu();
-            if (cpu >= 0) segments.add(new EmberStrip.Segment(EmberIcons.Glyph.CPU, Math.round(cpu) + "% CPU"));
+            if (cpu >= 0) {
+                long shown = Math.round(counter.get("cpu", cpu, 0.35));
+                segments.add(new EmberStrip.Segment(EmberIcons.Glyph.CPU, shown + "% CPU"));
+            }
         }
 
         if (showGpu.get()) {
             int gpu = meteordevelopment.meteorclient.utils.misc.GpuMonitor.usage();
-            if (gpu >= 0) segments.add(new EmberStrip.Segment(EmberIcons.Glyph.GPU, gpu + "% GPU"));
+            if (gpu >= 0) {
+                long shown = Math.round(counter.get("gpu", gpu, 0.35));
+                segments.add(new EmberStrip.Segment(EmberIcons.Glyph.GPU, shown + "% GPU"));
+            }
         }
 
         if (showRam.get()) {
-            segments.add(new EmberStrip.Segment(EmberIcons.Glyph.RAM, Math.round(ram()) + "% RAM"));
+            long shown = Math.round(counter.get("ram", ram(), 0.35));
+            segments.add(new EmberStrip.Segment(EmberIcons.Glyph.RAM, shown + "% RAM"));
         }
 
         if (showUser.get()) {
@@ -203,13 +218,14 @@ public class EmberStatusBarHud extends HudElement {
         Identifier skin = skin();
 
         if (skin != null) {
-            renderer.roundedQuad(bx, by, size, size, size * 0.3, new Color(0, 0, 0, 120));
+            double r = size * 0.3;
+            renderer.roundedQuad(bx, by, size, size, r, new Color(0, 0, 0, 120));
 
             // The face is an 8x8 patch at (8,8) of a 64x64 skin, the hat layer at (40,8).
-            final double fx = bx, fy = by, fs = size;
+            final double fx = bx, fy = by, fs = size, fr = r;
             renderer.post(() -> {
-                renderer.textureRegion(skin, fx, fy, fs, fs, 0.125, 0.125, 0.25, 0.25, SKIN_TINT);
-                renderer.textureRegion(skin, fx, fy, fs, fs, 0.625, 0.125, 0.75, 0.25, SKIN_TINT);
+                renderer.roundedTextureRegion(skin, fx, fy, fs, fr, 0.125, 0.125, 0.25, 0.25, SKIN_TINT);
+                renderer.roundedTextureRegion(skin, fx, fy, fs, fr, 0.625, 0.125, 0.75, 0.25, SKIN_TINT);
             });
             return;
         }

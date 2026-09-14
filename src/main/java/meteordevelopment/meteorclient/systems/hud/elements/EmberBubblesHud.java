@@ -77,6 +77,9 @@ public class EmberBubblesHud extends HudElement {
     private long lastSpeedNanos;
     private double speed;
 
+    private final meteordevelopment.meteorclient.utils.render.EmberCounter counter =
+        new meteordevelopment.meteorclient.utils.render.EmberCounter();
+
     public EmberBubblesHud() {
         super(INFO);
     }
@@ -90,19 +93,26 @@ public class EmberBubblesHud extends HudElement {
 
         List<EmberStrip.Segment> segments = new ArrayList<>(4);
 
+        counter.tick();
+
         if (showCoords.get() && mc.player != null) {
+            // Short time constant: coordinates roll rather than flicker, but stay close
+            // enough to the real position to be worth reading while you move.
             segments.add(new EmberStrip.Segment(EmberIcons.Glyph.GLOBE,
-                String.format("%.0fX %.0fY %.0fZ", mc.player.getX(), mc.player.getY(), mc.player.getZ()), accent));
+                String.format("%.0fX %.0fY %.0fZ",
+                    counter.get("x", mc.player.getX(), 0.07),
+                    counter.get("y", mc.player.getY(), 0.07),
+                    counter.get("z", mc.player.getZ(), 0.07)), accent));
         }
 
         if (showSpeed.get() && mc.player != null) {
             segments.add(new EmberStrip.Segment(EmberIcons.Glyph.SPEED,
-                String.format("%.2f BPS", updateSpeed()), accent));
+                String.format("%.2f BPS", counter.get("bps", updateSpeed(), 0.12)), accent));
         }
 
         if (showTps.get()) {
             segments.add(new EmberStrip.Segment(EmberIcons.Glyph.TPS,
-                String.format("%.1f TPS", TickRate.INSTANCE.getTickRate()), accent));
+                String.format("%.1f TPS", counter.get("tps", TickRate.INSTANCE.getTickRate(), 0.3)), accent));
         }
 
         if (showServer.get()) {
