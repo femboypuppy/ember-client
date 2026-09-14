@@ -39,6 +39,23 @@ public enum EmberAppearance {
         return config == null ? 0.45 : config.glass.get();
     }
 
+    /**
+     * How far the scene behind is smeared. Separate from {@link #glass()} because blur and
+     * refraction pull in opposite directions: smearing the background hides the very bending
+     * that makes glass look liquid, so tying them to one control meant sharp and liquid could
+     * never happen together.
+     */
+    public static double glassBlur() {
+        Config config = Config.get();
+        return config == null ? 0.35 : config.glassBlur.get();
+    }
+
+    /** How hard the edges bend the scene and split its colour. */
+    public static double glassLiquid() {
+        Config config = Config.get();
+        return config == null ? 0.75 : config.glassLiquid.get();
+    }
+
     /** 0 is a dark pane, 1 is white. The wash and the film both follow it. */
     public static double glassTint() {
         Config config = Config.get();

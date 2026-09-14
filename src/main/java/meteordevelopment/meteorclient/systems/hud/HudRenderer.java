@@ -298,10 +298,9 @@ public class HudRenderer {
         double sh = meteordevelopment.meteorclient.utils.Utils.getWindowHeight();
         var sampler = meteordevelopment.meteorclient.utils.render.EmberGlass.sampler();
 
-        // Clear glass bends light hardest. A thick frosted pane scatters it instead, so the
-        // lens weakens as the pane frosts over.
-        double amount = meteordevelopment.meteorclient.utils.render.EmberAppearance.glass();
-        double lens = (1 - amount) * 26 + 6;
+        // Driven by liquidity alone, so a sharp pane can still bend hard at its edges.
+        double liquid = meteordevelopment.meteorclient.utils.render.EmberAppearance.glassLiquid();
+        double lens = 4 + liquid * 44;
 
         // Base refraction.
         Renderer2D.TEXTURE.begin();
@@ -312,7 +311,7 @@ public class HudRenderer {
         // Chromatic aberration: red and blue sample from slightly different depths, fading out
         // away from the rim. Real glass splits wavelengths at a curved edge, and this fringe is
         // most of what separates a lens from a blur to the eye.
-        int fringe = (int) (70 * (1 - amount));
+        int fringe = (int) (95 * liquid);
 
         if (fringe > 4) {
             Renderer2D.TEXTURE.begin();

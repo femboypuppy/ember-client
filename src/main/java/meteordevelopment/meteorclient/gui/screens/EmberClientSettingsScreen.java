@@ -198,6 +198,10 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         if (meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) {
             y = sliderRow(r, dt, x, y, w, "Glass", Config.get().glass.get(),
                 v -> Config.get().glass.set(v));
+            y = sliderRow(r, dt, x, y, w, "Blur", Config.get().glassBlur.get(),
+                v -> Config.get().glassBlur.set(v));
+            y = sliderRow(r, dt, x, y, w, "Liquidity", Config.get().glassLiquid.get(),
+                v -> Config.get().glassLiquid.set(v));
             y = sliderRow(r, dt, x, y, w, "Tint", Config.get().glassTint.get(),
                 v -> Config.get().glassTint.set(v));
             y = toggleRow(r, dt, x, y, w, "Accent tint", Config.get().glassAccent.get(),

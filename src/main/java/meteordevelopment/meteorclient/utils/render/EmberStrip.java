@@ -99,7 +99,9 @@ public final class EmberStrip {
         // border. Between the two it looks like light caught on an edge.
         // Clear glass needs a hard bright rim to be legible at all against the scene; frost
         // already separates itself, so its rim can be quieter.
-        double strength = EmberAppearance.frosted() ? 150 - 70 * EmberAppearance.glass() : 60;
+        // Follows liquidity: a hard bright rim is part of what sells a lens, and it should not
+        // fade just because the pane was made more solid.
+        double strength = EmberAppearance.frosted() ? 80 + 80 * EmberAppearance.glassLiquid() : 60;
 
         // With the accent turned off the rim is plain white, so the only colour anywhere on
         // the panel is what the lens pulls in from behind it.

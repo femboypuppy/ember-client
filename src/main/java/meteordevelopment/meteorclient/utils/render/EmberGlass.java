@@ -92,11 +92,12 @@ public final class EmberGlass {
         int height = mc.getWindow().getFramebufferHeight();
         if (width <= 0 || height <= 0) return;
 
-        // Clear glass barely softens what is behind it; frost smears it. Both the number of
-        // passes and the sampling offset follow the glass amount.
-        double amount = EmberAppearance.glass();
-        int iterations = 1 + (int) Math.round(amount * 3);
-        float offset = (float) (1.5 + amount * 6);
+        // Passes and sampling offset both follow the blur control alone. At zero only the
+        // initial full-resolution pass runs, which is effectively a sharp copy of the scene -
+        // enough to refract through without smearing away the refraction.
+        double amount = EmberAppearance.glassBlur();
+        int iterations = (int) Math.round(amount * 4);
+        float offset = (float) (0.4 + amount * 7);
 
         try {
             if (fbos[0] == null || width != builtWidth || height != builtHeight) {

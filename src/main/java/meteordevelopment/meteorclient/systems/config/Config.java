@@ -59,6 +59,28 @@ public class Config extends System<Config> {
         .build()
     );
 
+    public final Setting<Double> glassBlur = sgVisual.add(new DoubleSetting.Builder()
+        .name("ember-glass-blur")
+        .description("How far the scene behind the glass is smeared. Low keeps it sharp.")
+        .defaultValue(0.35)
+        .min(0)
+        .max(1)
+        .sliderRange(0, 1)
+        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .build()
+    );
+
+    public final Setting<Double> glassLiquid = sgVisual.add(new DoubleSetting.Builder()
+        .name("ember-glass-liquidity")
+        .description("How hard the edges bend the scene, and how strongly they split its colour.")
+        .defaultValue(0.75)
+        .min(0)
+        .max(1)
+        .sliderRange(0, 1)
+        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .build()
+    );
+
     public final Setting<Double> glassTint = sgVisual.add(new DoubleSetting.Builder()
         .name("ember-glass-tint")
         .description("Dark glass through to light: low is a dark pane, high is white.")
