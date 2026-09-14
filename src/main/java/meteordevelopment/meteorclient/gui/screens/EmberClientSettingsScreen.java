@@ -369,15 +369,11 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             (int) MathHelper.lerp(ha * 0.25f, ROW_BG.g, accent().g),
             (int) MathHelper.lerp(ha * 0.25f, ROW_BG.b, accent().b), 235));
 
-        // Pill switch
+        // The same switch the module menu uses, spring and all, rather than a second one
+        // drawn by hand that has to be kept in step by eye.
         double tw = 34, th = 16;
         double tx = x + w - 12 - tw, ty = y + (ROW_H - th) / 2;
-        Color off = EmberPalette.toggleOff();
-        r.roundedRect(tx, ty, tw, th, th / 2, new Color(
-            (int) MathHelper.lerp(oa, off.r, accent().r),
-            (int) MathHelper.lerp(oa, off.g, accent().g),
-            (int) MathHelper.lerp(oa, off.b, accent().b), 255));
-        r.roundedRect(tx + 2 + (tw - th - 2) * oa, ty + 2, th - 4, th - 4, (th - 4) / 2, TEXT_WHITE);
+        EmberUI.toggle(r, tx, ty, tw, th, oa, 1f);
 
         hits.add(new Hit(x, y, w, ROW_H, toggle));
         texts.add(new Label(label, x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));

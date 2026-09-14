@@ -58,19 +58,23 @@ public class EmberConfigScreen extends WidgetScreen {
         super(theme, "Configs");
     }
 
+    /**
+     * Shared with the module menu and the client settings, so all three are the same flat
+     * black and all three follow the appearance setting. This screen was still filling from
+     * the accent-tinted palette, which left it looking purple beside them.
+     */
     private static void syncPalette() {
-        Color panel = EmberPalette.panel();
-        PANEL_BG = new Color(panel.r, panel.g, panel.b, 248);
-        HEADER_BG = EmberPalette.header();
-        DIVIDER = EmberPalette.divider();
-        ROW_BG = EmberPalette.control();
-        INPUT_BG = new Color(panel.r, panel.g, panel.b, 255);
-        LIST_BG = new Color(EmberPalette.search().r, EmberPalette.search().g, EmberPalette.search().b, 200);
-        DISABLED = EmberPalette.toggleOff();
-        TEXT_WHITE = EmberPalette.textBright();
-        TEXT_DIM = EmberPalette.textDim();
+        PANEL_BG = EmberUI.bg();
+        HEADER_BG = EmberUI.raised();
+        DIVIDER = EmberUI.DIVIDER;
+        ROW_BG = EmberUI.WELL;
+        INPUT_BG = EmberUI.WELL;
+        LIST_BG = new Color(EmberUI.WELL.r, EmberUI.WELL.g, EmberUI.WELL.b, 190);
+        DISABLED = EmberUI.WELL;
+        TEXT_WHITE = EmberUI.TEXT;
+        TEXT_DIM = EmberUI.TEXT_DIM;
         // Dark text for use on top of accent-coloured buttons.
-        ON_ACCENT = new Color(panel.r, panel.g, panel.b, 255);
+        ON_ACCENT = new Color(10, 10, 13, 255);
     }
 
     @Override
@@ -128,14 +132,16 @@ public class EmberConfigScreen extends WidgetScreen {
         r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (150 * f)));
         r.scissorEnd();
 
-        r.glow(px, py + 8, PW, PH, 24, new Color(0, 0, 0, (int) (130 * f)), false);
-        r.glow(px, py, PW, PH, 34, accentAlpha((int) (160 * f)), false);
-        r.roundedRect(px, py, PW, PH, PR, PANEL_BG);
+        // Shadow and lit edge, not an accent halo - the other screens dropped those.
+        EmberUI.shadow(r, px, py, PW, PH, f);
+        EmberUI.rim(r, px, py, PW, PH, EmberUI.RADIUS, f);
+        r.roundedRect(px, py, PW, PH, EmberUI.RADIUS, PANEL_BG);
+        EmberUI.gloss(r, px, py, PW, PH, EmberUI.RADIUS, f);
 
         // Header
         double hh = 40;
-        r.roundedRect(px, py, PW, hh + PR, PR, HEADER_BG);
-        r.quad(px, py + hh, PW, PR, HEADER_BG);
+        r.roundedRect(px, py, PW, hh + EmberUI.RADIUS, EmberUI.RADIUS, HEADER_BG);
+        r.quad(px, py + hh, PW, EmberUI.RADIUS, HEADER_BG);
         r.quad(px, py + hh, PW, 1, DIVIDER);
 
         // Close button
