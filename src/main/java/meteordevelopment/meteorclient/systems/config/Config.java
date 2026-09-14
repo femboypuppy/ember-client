@@ -48,6 +48,17 @@ public class Config extends System<Config> {
             .build()
     );
 
+    public final Setting<Double> glass = sgVisual.add(new DoubleSetting.Builder()
+        .name("ember-glass")
+        .description("How solid frosted panels are: low is clear liquid glass, high is opaque frost.")
+        .defaultValue(0.45)
+        .min(0)
+        .max(1)
+        .sliderRange(0, 1)
+        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .build()
+    );
+
     public final Setting<FontFace> font = sgVisual.add(new FontFaceSetting.Builder()
         .name("font")
         .description("Custom font to use.")

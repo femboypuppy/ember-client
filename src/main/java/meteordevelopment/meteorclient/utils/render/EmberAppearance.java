@@ -28,4 +28,14 @@ public enum EmberAppearance {
     public static int panelAlpha() {
         return frosted() ? 132 : 242;
     }
+
+    /**
+     * How solid the glass is, 0 to 1. At zero it is clear and barely tinted, with a hard rim
+     * and pronounced edge refraction - liquid glass. At one it is heavily blurred and close to
+     * opaque - frost. Everything about the frosted look reads this one number.
+     */
+    public static double glass() {
+        Config config = Config.get();
+        return config == null ? 0.45 : config.glass.get();
+    }
 }

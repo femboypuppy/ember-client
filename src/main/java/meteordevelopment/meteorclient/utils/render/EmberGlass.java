@@ -37,15 +37,13 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  */
 public final class EmberGlass {
     private static final int LEVELS = 5;
-    /** Downsample steps and sampling offset; roughly Blur's level eight. */
-    private static final int ITERATIONS = 3;
-    private static final float OFFSET = 4.25f;
 
     private static final GpuTextureView[] fbos = new GpuTextureView[LEVELS + 1];
     private static GpuBufferSlice[] ubos;
 
     private static boolean ready;
     private static int builtWidth, builtHeight;
+    private static float builtOffset = -1;
 
     private EmberGlass() {
     }
@@ -94,20 +92,28 @@ public final class EmberGlass {
         int height = mc.getWindow().getFramebufferHeight();
         if (width <= 0 || height <= 0) return;
 
+        // Clear glass barely softens what is behind it; frost smears it. Both the number of
+        // passes and the sampling offset follow the glass amount.
+        double amount = EmberAppearance.glass();
+        int iterations = 1 + (int) Math.round(amount * 3);
+        float offset = (float) (1.5 + amount * 6);
+
         try {
             if (fbos[0] == null || width != builtWidth || height != builtHeight) {
                 release();
                 build(width, height);
             }
 
+            if (offset != builtOffset) writeUniforms(offset);
+
             // Scene into the first level, then down and back up.
             renderToFbo(fbos[0], mc.getFramebuffer().getColorAttachmentView(), MeteorRenderPipelines.BLUR_DOWN, ubos[0]);
 
-            for (int i = 0; i < ITERATIONS; i++) {
+            for (int i = 0; i < iterations; i++) {
                 renderToFbo(fbos[i + 1], fbos[i], MeteorRenderPipelines.BLUR_DOWN, ubos[i + 1]);
             }
 
-            for (int i = ITERATIONS; i >= 1; i--) {
+            for (int i = iterations; i >= 1; i--) {
                 renderToFbo(fbos[i - 1], fbos[i], MeteorRenderPipelines.BLUR_UP, ubos[i - 1]);
             }
 
@@ -132,15 +138,20 @@ public final class EmberGlass {
 
         builtWidth = width;
         builtHeight = height;
+        builtOffset = -1;
+    }
 
+    /** Rewritten whenever the sampling offset changes, which is whenever the slider moves. */
+    private static void writeUniforms(float offset) {
         UNIFORM_STORAGE.clear();
 
         BlurUniformData[] data = new BlurUniformData[fbos.length];
         for (int i = 0; i < fbos.length; i++) {
-            data[i] = new BlurUniformData(0.5f / fbos[i].getWidth(0), 0.5f / fbos[i].getHeight(0), OFFSET);
+            data[i] = new BlurUniformData(0.5f / fbos[i].getWidth(0), 0.5f / fbos[i].getHeight(0), offset);
         }
 
         ubos = UNIFORM_STORAGE.writeAll(data);
+        builtOffset = offset;
     }
 
     private static void renderToFbo(GpuTextureView target, GpuTextureView source, RenderPipeline pipeline, GpuBufferSlice ubo) {

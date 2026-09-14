@@ -57,12 +57,14 @@ public final class EmberShapes {
      * interface is laid out from the top.
      */
     public static void roundedScreenTexture(Renderer2D r, double x, double y, double w, double h, double radius,
-                                            double screenW, double screenH, boolean flipV, Color color) {
+                                            double screenW, double screenH, boolean flipV, double refract, Color color) {
         if (w <= 0 || h <= 0 || screenW <= 0 || screenH <= 0) return;
 
         radius = Math.min(radius, Math.min(w, h) / 2);
 
-        int steps = Math.max(8, (int) Math.ceil(radius * 2));
+        // Finer slices than a plain rounded fill: these carry the refraction gradient as well
+        // as the corner arc, and coarse steps make that gradient band.
+        int steps = Math.max(14, (int) Math.ceil(radius * 3));
         double sliceH = h / (steps * 2.0);
 
         for (int i = 0; i < steps * 2; i++) {
@@ -81,10 +83,16 @@ public final class EmberShapes {
             double sx = x + inset;
             double sy = y + top;
 
-            double u1 = sx / screenW;
-            double u2 = (sx + sw) / screenW;
-            double v1 = sy / screenH;
-            double v2 = (sy + sliceH) / screenH;
+            // Near an edge the strip samples from further out, so the scene appears pulled
+            // around the rim the way it bends through the thick edge of real glass. Strips in
+            // the flat middle sample straight through and stay undistorted.
+            double edge = radius <= 0 ? 0 : Math.min(1, dy / radius);
+            double push = refract * edge * edge;
+
+            double u1 = (sx - push) / screenW;
+            double u2 = (sx + sw + push) / screenW;
+            double v1 = (sy - push) / screenH;
+            double v2 = (sy + sliceH + push) / screenH;
 
             if (flipV) {
                 v1 = 1 - v1;

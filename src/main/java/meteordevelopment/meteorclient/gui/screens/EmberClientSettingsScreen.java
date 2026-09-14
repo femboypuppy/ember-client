@@ -75,6 +75,9 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     /** Recorded while laying out, so section headings cannot drift away from their rows. */
     private double widgetsLabelY = -1;
 
+    /** True between pressing on the glass slider and releasing, so it can be dragged. */
+    private boolean draggingSlider;
+
     public EmberClientSettingsScreen(GuiTheme theme) {
         // WidgetScreen already records the screen this was opened from as `parent`.
         super(theme, "Client Settings");
@@ -191,6 +194,12 @@ public class EmberClientSettingsScreen extends WidgetScreen {
 
         y = appearanceRow(r, dt, x, y, w);
 
+        // Only meaningful while frosted, so it stays out of the way otherwise.
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) {
+            y = sliderRow(r, dt, x, y, w, "Glass", Config.get().glass.get(),
+                v -> Config.get().glass.set(v));
+        }
+
         // The master switch for the HUD. Without this the only ways to reach it are Meteor's
         // own HUD tab, the .toggle command or a keybind, none of which live in Ember's UI.
         y = toggleRow(r, dt, x, y, w, "HUD enabled", Hud.get().active,
@@ -240,6 +249,47 @@ public class EmberClientSettingsScreen extends WidgetScreen {
 
         // What the panel has to be tall enough to hold, measured from below the header.
         measuredLeftH = (y + ROW_H) - (py + HEADER_H);
+    }
+
+    /**
+     * A 0..1 slider. Clicking the track jumps to that value and keeps following the cursor
+     * until the button comes up, so it can be dragged as well as tapped.
+     */
+    private double sliderRow(GuiRenderer r, float dt, double x, double y, double w, String label,
+                             double value, java.util.function.DoubleConsumer onChange) {
+        r.roundedRect(x, y, w, ROW_H, 7, ROW_BG);
+
+        double trackW = 150, trackH = 4;
+        double tx = x + w - 12 - trackW;
+        double ty = y + (ROW_H - trackH) / 2;
+
+        boolean over = hovered(tx - 8, y, trackW + 16, ROW_H);
+        float a = anim("glass-slider", over || draggingSlider ? 1f : 0f, dt);
+
+        // Follow the cursor while held, which is what makes it feel like a slider rather
+        // than a row of steps.
+        if (draggingSlider) {
+            double next = Math.max(0, Math.min(1, (mx - tx) / trackW));
+            if (Math.abs(next - value) > 0.001) {
+                onChange.accept(next);
+                value = next;
+            }
+        }
+
+        r.roundedRect(tx, ty, trackW, trackH, trackH / 2, new Color(44, 44, 53, 255));
+        double filled = trackW * value;
+        if (filled > trackH) r.roundedRect(tx, ty, filled, trackH, trackH / 2, accent());
+
+        double knob = 11 + 2 * a;
+        r.roundedRect(tx + filled - knob / 2, y + (ROW_H - knob) / 2, knob, knob, knob / 2, TEXT_WHITE);
+
+        hits.add(new Hit(tx - 8, y, trackW + 16, ROW_H, () -> draggingSlider = true));
+
+        texts.add(new Label(label, x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));
+        texts.add(new Label(String.format("%.0f%%", value * 100), x + w - 12 - trackW - 46,
+            y + ROW_H / 2, TEXT_DIM, 0.84));
+
+        return y + ROW_H + 8;
     }
 
     /** Solid or frosted, as two pills on one row. */
@@ -429,6 +479,12 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     }
 
     // --- Input ---
+
+    @Override
+    public boolean mouseReleased(Click click) {
+        draggingSlider = false;
+        return super.mouseReleased(click);
+    }
 
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {

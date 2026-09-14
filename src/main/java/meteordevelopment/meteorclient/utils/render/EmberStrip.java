@@ -82,8 +82,12 @@ public final class EmberStrip {
 
         // Accent halfway to white: pure accent reads as a coloured outline, pure white as a
         // border. Between the two it looks like light caught on an edge.
+        // Clear glass needs a hard bright rim to be legible at all against the scene; frost
+        // already separates itself, so its rim can be quieter.
+        double strength = EmberAppearance.frosted() ? 150 - 70 * EmberAppearance.glass() : 60;
+
         Color edge = new Color((a.r + 255) / 2, (a.g + 255) / 2, (a.b + 255) / 2,
-            (int) ((EmberAppearance.frosted() ? 96 : 60) * opacity));
+            (int) (strength * opacity));
 
         r.roundedQuad(x - t, y - t, w + t * 2, h + t * 2, radius + t, edge);
     }
@@ -95,12 +99,13 @@ public final class EmberStrip {
         Color bg = background();
 
         if (EmberAppearance.frosted()) {
-            // The blurred scene first, then a thin dark wash over it. Glass is mostly what is
-            // behind it; the wash only keeps text readable against a bright background.
+            // The blurred scene first, then a wash over it. How heavy that wash is comes
+            // straight from the glass amount: near zero it is barely there and the panel is
+            // clear, near one it approaches a solid frosted pane.
             boolean filled = r.glassFill(x, y, w, h, radius,
                 new Color(255, 255, 255, (int) (255 * opacity)));
 
-            int wash = filled ? 108 : bg.a;
+            int wash = filled ? (int) (22 + 178 * EmberAppearance.glass()) : bg.a;
             r.roundedQuad(x, y, w, h, radius, new Color(bg.r, bg.g, bg.b, (int) (wash * opacity)));
         }
         else {

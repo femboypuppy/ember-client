@@ -294,12 +294,16 @@ public class HudRenderer {
         var view = meteordevelopment.meteorclient.utils.render.EmberGlass.texture();
         if (view == null) return false;
 
+        // Clearer glass refracts more: a thick, frosted pane hides the bending, a thin one
+        // shows it. So the rim distortion rises as the glass amount falls.
+        double refract = (1 - meteordevelopment.meteorclient.utils.render.EmberAppearance.glass()) * 9;
+
         Renderer2D.TEXTURE.begin();
         meteordevelopment.meteorclient.utils.render.EmberShapes.roundedScreenTexture(
             Renderer2D.TEXTURE, x, y, width, height, radius,
             meteordevelopment.meteorclient.utils.Utils.getWindowWidth(),
             meteordevelopment.meteorclient.utils.Utils.getWindowHeight(),
-            true, tint);
+            true, refract, tint);
         Renderer2D.TEXTURE.render(view, meteordevelopment.meteorclient.utils.render.EmberGlass.sampler());
 
         return true;
