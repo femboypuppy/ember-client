@@ -42,7 +42,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     }
 
     private static final double PW = 560;
-    private static final double PH = 430;
+    /** Starting height only; the panel is sized to whatever the left column actually needs. */
+    private static final double PH_MIN = 300;
     private static final double PR = 10;
     private static final double ROW_H = 32;
     private static final double HEADER_H = 44;
@@ -63,22 +64,37 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     private float fade;
     private int fontScroll;
 
+    /**
+     * The panel grows to fit its rows instead of assuming a height. Rows have been added to
+     * this screen repeatedly, and a fixed height simply let the later ones spill out the
+     * bottom with no sign anything was wrong.
+     */
+    private double panelH = 430;
+    private double measuredLeftH;
+
+    /** Recorded while laying out, so section headings cannot drift away from their rows. */
+    private double widgetsLabelY = -1;
+
     public EmberClientSettingsScreen(GuiTheme theme) {
         // WidgetScreen already records the screen this was opened from as `parent`.
         super(theme, "Client Settings");
     }
 
+    /**
+     * Shared with the module menu, so this screen is flat black and follows the appearance
+     * setting like everything else. It used to fill from the accent-tinted palette, which left
+     * it looking purple next to a menu that had already moved to black.
+     */
     private static void syncPalette() {
-        Color panel = EmberPalette.panel();
-        PANEL_BG = new Color(panel.r, panel.g, panel.b, 248);
-        HEADER_BG = EmberPalette.header();
-        DIVIDER = EmberPalette.divider();
-        ROW_BG = EmberPalette.control();
-        LIST_BG = new Color(EmberPalette.search().r, EmberPalette.search().g, EmberPalette.search().b, 200);
-        TEXT_WHITE = EmberPalette.textBright();
-        TEXT_DIM = EmberPalette.textDim();
+        PANEL_BG = EmberUI.bg();
+        HEADER_BG = EmberUI.raised();
+        DIVIDER = EmberUI.DIVIDER;
+        ROW_BG = EmberUI.WELL;
+        LIST_BG = new Color(EmberUI.WELL.r, EmberUI.WELL.g, EmberUI.WELL.b, 190);
+        TEXT_WHITE = EmberUI.TEXT;
+        TEXT_DIM = EmberUI.TEXT_DIM;
         // Dark text for use on top of accent-coloured fills.
-        ON_ACCENT = new Color(panel.r, panel.g, panel.b, 255);
+        ON_ACCENT = new Color(10, 10, 13, 255);
     }
 
     @Override
@@ -119,8 +135,14 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         fade = Math.min(1f, fade + dt / 0.22f);
         float f = 1f - (1f - fade) * (1f - fade) * (1f - fade);
 
+        // Sized from what the previous frame actually laid out, clamped to the screen. The
+        // correction lands during the open fade, so it is never visible as a resize.
+        if (measuredLeftH > 0) {
+            panelH = Math.max(PH_MIN, Math.min(getWindowHeight() - 40, HEADER_H + measuredLeftH + 18));
+        }
+
         px = (getWindowWidth() - PW) / 2;
-        py = (getWindowHeight() - PH) / 2;
+        py = (getWindowHeight() - panelH) / 2;
 
         GuiRenderer r = new GuiRenderer();
         r.theme = theme;
@@ -131,9 +153,10 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (150 * f)));
         r.scissorEnd();
 
-        r.glow(px, py + 8, PW, PH, 24, new Color(0, 0, 0, (int) (130 * f)), false);
-        r.glow(px, py, PW, PH, 34, accentAlpha((int) (150 * f)), false);
-        r.roundedRect(px, py, PW, PH, PR, PANEL_BG);
+        // Shadow, not an accent halo - the menu dropped those and this should match.
+        EmberUI.shadow(r, px, py, PW, panelH, f);
+        r.roundedRect(px, py, PW, panelH, EmberUI.RADIUS, PANEL_BG);
+        EmberUI.gloss(r, px, py, PW, panelH, EmberUI.RADIUS, f);
 
         // Header
         r.roundedRect(px, py, PW, HEADER_H + PR, PR, HEADER_BG);
@@ -177,7 +200,12 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             () -> Config.get().customFont.set(!Config.get().customFont.get()));
         y += 16;
 
-        y += 18; // section label
+        // Recorded rather than recomputed: the heading used to be placed by an arithmetic
+        // expression that assumed how many rows sat above it, so every row added since landed
+        // it on top of one of them.
+        widgetsLabelY = y;
+        y += 18;
+
         y = widgetRow(r, dt, x, y, w, "Status bar", "ember-status-bar");
         y = widgetRow(r, dt, x, y, w, "Info pill", "ember-bubbles");
         y = widgetRow(r, dt, x, y, w, "Keybinds", "ember-keybinds");
@@ -208,6 +236,9 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             (int) MathHelper.lerp(hr * 0.35f, ROW_BG.b, 86), 235));
         hits.add(new Hit(x, y, w, ROW_H, () -> Hud.get().resetToDefaultElements()));
         texts.add(new Label("Reset HUD to Ember defaults", x + 12, y + (ROW_H - 0) / 2, TEXT_WHITE, 0.92));
+
+        // What the panel has to be tall enough to hold, measured from below the header.
+        measuredLeftH = (y + ROW_H) - (py + HEADER_H);
     }
 
     /** Solid or frosted, as two pills on one row. */
@@ -315,7 +346,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     private void drawFontList(GuiRenderer r, float dt) {
         double x = px + PW - 18 - LIST_W;
         double y = py + HEADER_H + 16 + 18;
-        double h = py + PH - 18 - y;
+        double h = py + panelH - 18 - y;
 
         r.roundedRect(x, y, LIST_W, h, 8, LIST_BG);
 
@@ -380,7 +411,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         theme.textRenderer().begin(theme.scale(0.82));
         double lx = px + 18;
         theme.textRenderer().render("APPEARANCE", lx, py + HEADER_H + 16, TEXT_DIM, false);
-        theme.textRenderer().render("WIDGETS", lx, py + HEADER_H + 16 + 18 + ROW_H + 8 + ROW_H + 6 + 16, TEXT_DIM, false);
+        if (widgetsLabelY > 0) theme.textRenderer().render("WIDGETS", lx, widgetsLabelY, TEXT_DIM, false);
         theme.textRenderer().render("FONT", px + PW - 18 - LIST_W, py + HEADER_H + 16, TEXT_DIM, false);
         theme.textRenderer().end();
 
@@ -413,7 +444,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         }
 
         // A click outside the panel closes it, like the other Ember screens.
-        if (cx < px || cx >= px + PW || cy < py || cy >= py + PH) {
+        if (cx < px || cx >= px + PW || cy < py || cy >= py + panelH) {
             close();
             return true;
         }
