@@ -49,6 +49,53 @@ public final class EmberShapes {
     }
 
     /**
+     * Emits a rounded rectangle filled with the part of a full-screen texture that lies behind
+     * it - the UVs come from the rectangle's own screen position rather than from a 0..1 box,
+     * so the content stays pinned to the world as the panel moves across it.
+     *
+     * {@code flipV} exists because a framebuffer's origin is its bottom left while the
+     * interface is laid out from the top.
+     */
+    public static void roundedScreenTexture(Renderer2D r, double x, double y, double w, double h, double radius,
+                                            double screenW, double screenH, boolean flipV, Color color) {
+        if (w <= 0 || h <= 0 || screenW <= 0 || screenH <= 0) return;
+
+        radius = Math.min(radius, Math.min(w, h) / 2);
+
+        int steps = Math.max(8, (int) Math.ceil(radius * 2));
+        double sliceH = h / (steps * 2.0);
+
+        for (int i = 0; i < steps * 2; i++) {
+            double top = i * sliceH;
+            double bottom = top + sliceH;
+
+            double dy;
+            if (bottom <= radius) dy = radius - top;
+            else if (top >= h - radius) dy = bottom - (h - radius);
+            else dy = 0;
+
+            double inset = dy <= 0 ? 0 : radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
+            double sw = w - inset * 2;
+            if (sw <= 0) continue;
+
+            double sx = x + inset;
+            double sy = y + top;
+
+            double u1 = sx / screenW;
+            double u2 = (sx + sw) / screenW;
+            double v1 = sy / screenH;
+            double v2 = (sy + sliceH) / screenH;
+
+            if (flipV) {
+                v1 = 1 - v1;
+                v2 = 1 - v2;
+            }
+
+            r.texQuad(sx, sy, sw, sliceH, 0, u1, v1, u2, v2, color);
+        }
+    }
+
+    /**
      * Emits a square patch of a texture with rounded corners, as horizontal strips whose UVs
      * are inset along with the geometry so the image does not stretch as the strips narrow.
      * The caller owns begin() and render(), and so chooses the texture.

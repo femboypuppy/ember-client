@@ -283,6 +283,28 @@ public class HudRenderer {
         Renderer2D.TEXTURE.render(texture.getGlTextureView(), texture.getSampler());
     }
 
+    /**
+     * Ember: fills a rounded panel with the blurred scene behind it. Returns false when no
+     * blurred frame is available, so the caller can fall back to a flat fill rather than
+     * leaving a hole.
+     */
+    public boolean glassFill(double x, double y, double width, double height, double radius, Color tint) {
+        if (!meteordevelopment.meteorclient.utils.render.EmberGlass.ready()) return false;
+
+        var view = meteordevelopment.meteorclient.utils.render.EmberGlass.texture();
+        if (view == null) return false;
+
+        Renderer2D.TEXTURE.begin();
+        meteordevelopment.meteorclient.utils.render.EmberShapes.roundedScreenTexture(
+            Renderer2D.TEXTURE, x, y, width, height, radius,
+            meteordevelopment.meteorclient.utils.Utils.getWindowWidth(),
+            meteordevelopment.meteorclient.utils.Utils.getWindowHeight(),
+            true, tint);
+        Renderer2D.TEXTURE.render(view, meteordevelopment.meteorclient.utils.render.EmberGlass.sampler());
+
+        return true;
+    }
+
     public double text(String text, double x, double y, Color color, boolean shadow, double scale) {
         if (scale == -1) scale = hud.getTextScale();
 

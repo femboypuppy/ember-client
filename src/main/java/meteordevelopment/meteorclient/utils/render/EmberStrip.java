@@ -93,7 +93,19 @@ public final class EmberStrip {
         rim(r, x, y, w, h, radius, opacity);
 
         Color bg = background();
-        r.roundedQuad(x, y, w, h, radius, new Color(bg.r, bg.g, bg.b, (int) (bg.a * opacity)));
+
+        if (EmberAppearance.frosted()) {
+            // The blurred scene first, then a thin dark wash over it. Glass is mostly what is
+            // behind it; the wash only keeps text readable against a bright background.
+            boolean filled = r.glassFill(x, y, w, h, radius,
+                new Color(255, 255, 255, (int) (255 * opacity)));
+
+            int wash = filled ? 108 : bg.a;
+            r.roundedQuad(x, y, w, h, radius, new Color(bg.r, bg.g, bg.b, (int) (wash * opacity)));
+        }
+        else {
+            r.roundedQuad(x, y, w, h, radius, new Color(bg.r, bg.g, bg.b, (int) (bg.a * opacity)));
+        }
 
         gloss(r, x, y, w, h, radius, opacity);
     }
