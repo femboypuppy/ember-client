@@ -97,9 +97,17 @@ public class EmberSettingsPopup {
     private Keybind capturing;
     private Setting<?> capturingSetting;
 
-    /** The enum row whose list is open, and where that list is anchored. */
+    /**
+     * The enum row whose list is open, and where that list is anchored.
+     *
+     * Rows are records rebuilt every frame, so this must never be compared by identity - the
+     * instance captured on click is not the instance drawn on the next frame. Matching on the
+     * setting behind the row is what actually identifies it.
+     */
     private Row dropdownRow;
     private double dropdownAnchorX, dropdownAnchorY;
+    /** Set while the owning row draws, so a list is never placed from a stale anchor. */
+    private boolean anchorValid;
     /** {x, y, w, h} of the open list, or null - used to cull text drawn behind it. */
     private double[] dropdownRect;
 
@@ -255,6 +263,7 @@ public class EmberSettingsPopup {
 
         hits.clear();
         texts.clear();
+        anchorValid = false;
 
         // Dim everything behind; its own batch so it doesn't darken the glow.
         r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
@@ -423,7 +432,7 @@ public class EmberSettingsPopup {
     /** The closed control: current value with a chevron, which opens the list below it. */
     private void drawEnum(GuiRenderer r, Row row, double ctrlX, double cy, float fade, float dt) {
         double bh = 28, by = cy - bh / 2;
-        boolean open = dropdownRow == row;
+        boolean open = isDropdownOpen(row);
         float ha = anim(row + "enm", over(ctrlX, by, CTRL_W, bh) || open, dt);
 
         r.roundedRect(ctrlX, by, CTRL_W, bh, 8, alpha(lerp(CONTROL_BG, CONTROL_HOVER, ha), fade));
@@ -435,8 +444,12 @@ public class EmberSettingsPopup {
         text(prettyEnum(row.setting().get()), ctrlX + 12, cy - 4.5, alpha(TEXT, fade), LABEL_SCALE - 0.06, 0, CTRL_W - 38);
 
         hits.add(new Hit(ctrlX, by, CTRL_W, bh, row, "enumOpen"));
-        if (open) dropdownAnchorX = ctrlX;
-        if (open) dropdownAnchorY = by + bh + 4;
+
+        if (open) {
+            dropdownAnchorX = ctrlX;
+            dropdownAnchorY = by + bh + 4;
+            anchorValid = true;
+        }
     }
 
     /**
@@ -444,9 +457,23 @@ public class EmberSettingsPopup {
      * overlay text: all text is flushed in one late pass, so without that mark the rows it
      * covers would print straight through the panel.
      */
+    /** Identity by setting, never by Row instance - see the field's note. */
+    private boolean isDropdownOpen(Row row) {
+        return dropdownRow != null && row != null
+            && dropdownRow.setting() != null && dropdownRow.setting() == row.setting();
+    }
+
     private void drawDropdown(GuiRenderer r, float fade, float dt) {
         dropdownRect = null;
         if (dropdownRow == null) return;
+
+        // The anchor is written by the row as it draws. If it was not written this frame the
+        // row is scrolled out of sight, and a list with no row under it should not be floating
+        // on its own at the last place it happened to sit.
+        if (!anchorValid) {
+            dropdownRow = null;
+            return;
+        }
 
         Object current = dropdownRow.setting().get();
         Object[] values = current.getClass().getEnumConstants();
@@ -807,7 +834,7 @@ public class EmberSettingsPopup {
                     reset(row);
                     dropdownRow = null;
                 } else {
-                    dropdownRow = dropdownRow == row ? null : row;
+                    dropdownRow = isDropdownOpen(row) ? null : row;
                 }
             }
             case "string" -> {
