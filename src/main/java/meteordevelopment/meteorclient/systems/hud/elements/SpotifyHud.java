@@ -139,6 +139,8 @@ public class SpotifyHud extends HudElement {
     private float expand;
     private String lastTitle = "";
     private long autoOpenUntil;
+    /** Previous mouse state, so a held button does not fire the control every frame. */
+    private boolean transportDown;
 
     public SpotifyHud() {
         super(INFO);
@@ -347,10 +349,20 @@ public class SpotifyHud extends HudElement {
         double cx = tx + contentW / 2;
         double cy = ty + transportH / 2;
         double step = 26 * s;
+        double hit = 18 * s;
 
-        drawSkip(renderer, cx - step, cy, 9 * s, white, false);
-        drawPlayPause(renderer, cx, cy, 12 * s, white, MediaInfo.isPlaying());
-        drawSkip(renderer, cx + step, cy, 9 * s, white, true);
+        // Buttons light up under the cursor and respond to a click, which only means anything
+        // while a screen is open - during play the cursor is locked, and the module's keybinds
+        // cover that case instead.
+        Color prevC = transportColor(cx - step, cy, hit, white, accent);
+        Color playC = transportColor(cx, cy, hit, white, accent);
+        Color nextC = transportColor(cx + step, cy, hit, white, accent);
+
+        drawSkip(renderer, cx - step, cy, 9 * s, prevC, false);
+        drawPlayPause(renderer, cx, cy, 12 * s, playC, MediaInfo.isPlaying());
+        drawSkip(renderer, cx + step, cy, 9 * s, nextC, true);
+
+        handleTransportClick(cx, cy, step, hit);
 
         ty += transportH + rowGap;
 
@@ -365,28 +377,84 @@ public class SpotifyHud extends HudElement {
         if (filled > barH) renderer.roundedQuad(tx, ty, filled, barH, barH / 2, accent);
     }
 
+    /** Accent while the cursor is over a transport button, so it reads as pressable. */
+    private Color transportColor(double cx, double cy, double hit, Color normal, Color accent) {
+        return overPoint(cx, cy, hit) ? accent : normal;
+    }
+
+    private boolean overPoint(double cx, double cy, double hit) {
+        if (mc.currentScreen == null) return false;
+
+        double[] cursor = cursorInHudSpace();
+        if (cursor == null) return false;
+
+        return Math.abs(cursor[0] - cx) <= hit / 2 && Math.abs(cursor[1] - cy) <= hit / 2;
+    }
+
+    /**
+     * Polls the mouse rather than receiving a click. HUD elements are drawn, not focusable, so
+     * nothing routes clicks to them outside the editor - watching for the press edge here is
+     * what lets the controls actually do something.
+     */
+    private void handleTransportClick(double cx, double cy, double step, double hit) {
+        boolean down = mc.currentScreen != null
+            && !meteordevelopment.meteorclient.systems.hud.screens.HudEditorScreen.isOpen()
+            && GLFW.glfwGetMouseButton(mc.getWindow().getHandle(), GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
+
+        boolean pressed = down && !transportDown;
+        transportDown = down;
+
+        if (!pressed) return;
+
+        if (overPoint(cx - step, cy, hit)) MediaInfo.sendCommand("prev");
+        else if (overPoint(cx, cy, hit)) MediaInfo.sendCommand("toggle");
+        else if (overPoint(cx + step, cy, hit)) MediaInfo.sendCommand("next");
+    }
+
+    /**
+     * A solid triangle built from stacked slices rather than one primitive. The single
+     * triangle these used was thin and ragged at HUD sizes; slices give a clean edge and
+     * match how every other Ember shape is drawn.
+     */
+    private void drawTriangle(HudRenderer renderer, double cx, double cy, double size, Color c, boolean right) {
+        double half = size / 2;
+        int steps = Math.max(6, (int) Math.ceil(size));
+        double sliceH = size / steps;
+
+        for (int i = 0; i < steps; i++) {
+            double top = i * sliceH;
+            // Full width at the flat edge, tapering to nothing at the point.
+            double t = Math.abs((top + sliceH / 2) - half) / half;
+            double w = half * (1 - t) * 1.7;
+            if (w <= 0) continue;
+
+            double sx = right ? cx - half * 0.75 : cx + half * 0.75 - w;
+            renderer.quad(sx, cy - half + top, w, sliceH + 0.5, c);
+        }
+    }
+
     /** Play triangle, or two bars when something is already playing. */
     private void drawPlayPause(HudRenderer renderer, double cx, double cy, double size, Color c, boolean playing) {
-        double half = size / 2;
-
         if (playing) {
-            double barW = size * 0.26, gap = size * 0.2;
-            renderer.roundedQuad(cx - gap / 2 - barW, cy - half, barW, size, barW * 0.3, c);
-            renderer.roundedQuad(cx + gap / 2, cy - half, barW, size, barW * 0.3, c);
+            double half = size / 2;
+            double barW = size * 0.28, gap = size * 0.22;
+            renderer.roundedQuad(cx - gap / 2 - barW, cy - half, barW, size, barW * 0.35, c);
+            renderer.roundedQuad(cx + gap / 2, cy - half, barW, size, barW * 0.35, c);
             return;
         }
 
-        renderer.triangle(cx - half * 0.7, cy - half, cx - half * 0.7, cy + half, cx + half * 0.85, cy, c);
+        drawTriangle(renderer, cx, cy, size, c, true);
     }
 
     /** Previous or next: a triangle with a bar on its leading edge. */
     private void drawSkip(HudRenderer renderer, double cx, double cy, double size, Color c, boolean forward) {
         double half = size / 2;
-        double barW = size * 0.22;
-        double dir = forward ? 1 : -1;
+        double barW = Math.max(1.2, size * 0.2);
 
-        renderer.triangle(cx - half * dir, cy - half, cx - half * dir, cy + half, cx + half * 0.55 * dir, cy, c);
-        renderer.roundedQuad(cx + half * 0.6 * dir - (forward ? 0 : barW), cy - half, barW, size, barW * 0.3, c);
+        drawTriangle(renderer, cx - (forward ? barW * 0.6 : -barW * 0.6), cy, size, c, forward);
+
+        double bx = forward ? cx + half * 0.62 : cx - half * 0.62 - barW;
+        renderer.roundedQuad(bx, cy - half, barW, size, barW * 0.35, c);
     }
 
     /**
@@ -398,18 +466,32 @@ public class SpotifyHud extends HudElement {
     private boolean hovered() {
         if (mc.currentScreen == null) return false;
 
+        double[] cursor = cursorInHudSpace();
+        if (cursor == null) return false;
+
+        return cursor[0] >= x && cursor[0] < x + getWidth()
+            && cursor[1] >= y && cursor[1] < y + getHeight();
+    }
+
+    /**
+     * The cursor in the framebuffer space the HUD lays out in, or null if it cannot be read.
+     * GLFW reports window pixels, which differ from the framebuffer on a scaled display, so
+     * the reading is converted rather than used directly.
+     */
+    private double[] cursorInHudSpace() {
         long handle = mc.getWindow().getHandle();
+
         double[] px = new double[1], py = new double[1];
         GLFW.glfwGetCursorPos(handle, px, py);
 
         int[] ww = new int[1], wh = new int[1];
         GLFW.glfwGetWindowSize(handle, ww, wh);
-        if (ww[0] <= 0 || wh[0] <= 0) return false;
+        if (ww[0] <= 0 || wh[0] <= 0) return null;
 
-        double hx = px[0] * Utils.getWindowWidth() / ww[0];
-        double hy = py[0] * Utils.getWindowHeight() / wh[0];
-
-        return hx >= x && hx < x + getWidth() && hy >= y && hy < y + getHeight();
+        return new double[]{
+            px[0] * Utils.getWindowWidth() / ww[0],
+            py[0] * Utils.getWindowHeight() / wh[0]
+        };
     }
 
     private static double lerp(double a, double b, double t) {
