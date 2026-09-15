@@ -125,7 +125,18 @@ public class HudRenderer {
         Renderer2D.COLOR.quad(x, y, width, height, color);
     }
 
-    /** Ember: rounded rectangle built from plain quads, with the corners cut in slices. */
+    /**
+     * Ember: rounded rectangle with antialiased corners.
+     *
+     * The corners were cut into hard-edged slices, and since nothing here antialiases, every
+     * slice snapped to a whole pixel and the curve came out as a visible staircase. Each row
+     * is one pixel tall now, and the pixel the curve passes through is drawn separately at an
+     * alpha equal to how much of it the shape actually covers - analytic coverage, which costs
+     * a couple of extra quads rather than a texture lookup.
+     *
+     * A texture would be smoother still, but a drop shadow stacks ten of these per panel and
+     * each one would become its own draw call.
+     */
     public void roundedQuad(double x, double y, double width, double height, double radius, Color color) {
         if (radius <= 0) {
             quad(x, y, width, height, color);
@@ -134,24 +145,43 @@ public class HudRenderer {
 
         radius = Math.min(radius, Math.min(width, height) / 2);
 
+        // Straight middle band, full width.
         quad(x, y + radius, width, height - radius * 2, color);
-        quad(x + radius, y, width - radius * 2, radius, color);
-        quad(x + radius, y + height - radius, width - radius * 2, radius, color);
 
-        int steps = Math.max(4, (int) Math.ceil(radius * 2));
-        for (int i = 0; i < steps; i++) {
-            double sliceTop = i * radius / steps;
-            double sliceBottom = (i + 1) * radius / steps;
-            double dy = radius - sliceTop;
-            double inset = radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
-            double sliceHeight = sliceBottom - sliceTop;
-            double sliceWidth = radius - inset;
-            if (sliceWidth <= 0) continue;
+        int rows = (int) Math.ceil(radius);
 
-            quad(x + inset, y + sliceTop, sliceWidth, sliceHeight, color);
-            quad(x + width - radius, y + sliceTop, sliceWidth, sliceHeight, color);
-            quad(x + inset, y + height - sliceBottom, sliceWidth, sliceHeight, color);
-            quad(x + width - radius, y + height - sliceBottom, sliceWidth, sliceHeight, color);
+        for (int i = 0; i < rows; i++) {
+            double top = i;
+            double bottom = Math.min(radius, i + 1.0);
+            double rowH = bottom - top;
+            if (rowH <= 0.0001) continue;
+
+            // Corner circle sits radius in from both edges; solve it at the row's midline.
+            double dy = radius - (top + rowH / 2);
+            double dx = Math.sqrt(Math.max(0, radius * radius - dy * dy));
+            double edge = radius - dx;
+
+            double solid = Math.ceil(edge - 0.0001);
+            double coverage = solid - edge;
+
+            double innerW = width - solid * 2;
+            double topY = y + top;
+            double botY = y + height - bottom;
+
+            if (innerW > 0) {
+                quad(x + solid, topY, innerW, rowH, color);
+                quad(x + solid, botY, innerW, rowH, color);
+            }
+
+            // The one pixel the curve cuts through, weighted by its coverage.
+            if (coverage > 0.02 && solid >= 1) {
+                Color soft = new Color(color.r, color.g, color.b, (int) (color.a * coverage));
+
+                quad(x + solid - 1, topY, 1, rowH, soft);
+                quad(x + width - solid, topY, 1, rowH, soft);
+                quad(x + solid - 1, botY, 1, rowH, soft);
+                quad(x + width - solid, botY, 1, rowH, soft);
+            }
         }
     }
 

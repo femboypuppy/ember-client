@@ -27,24 +27,42 @@ public final class EmberShapes {
         }
 
         r.quad(x, y + radius, w, h - radius * 2, color);
-        r.quad(x + radius, y, w - radius * 2, radius, color);
-        r.quad(x + radius, y + h - radius, w - radius * 2, radius, color);
 
-        int steps = Math.max(4, (int) Math.ceil(radius * 2));
+        // One pixel per row, with the pixel the curve passes through drawn at an alpha equal
+        // to how much of it the shape covers. Hard slices left the corner as a staircase,
+        // since nothing in this path antialiases.
+        int rows = (int) Math.ceil(radius);
 
-        for (int i = 0; i < steps; i++) {
-            double sliceTop = i * radius / steps;
-            double sliceBottom = (i + 1) * radius / steps;
-            double dy = radius - sliceTop;
-            double inset = radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
-            double sliceH = sliceBottom - sliceTop;
-            double sliceW = radius - inset;
-            if (sliceW <= 0) continue;
+        for (int i = 0; i < rows; i++) {
+            double top = i;
+            double bottom = Math.min(radius, i + 1.0);
+            double rowH = bottom - top;
+            if (rowH <= 0.0001) continue;
 
-            r.quad(x + inset, y + sliceTop, sliceW, sliceH, color);
-            r.quad(x + w - radius, y + sliceTop, sliceW, sliceH, color);
-            r.quad(x + inset, y + h - sliceBottom, sliceW, sliceH, color);
-            r.quad(x + w - radius, y + h - sliceBottom, sliceW, sliceH, color);
+            double dy = radius - (top + rowH / 2);
+            double dx = Math.sqrt(Math.max(0, radius * radius - dy * dy));
+            double edge = radius - dx;
+
+            double solid = Math.ceil(edge - 0.0001);
+            double coverage = solid - edge;
+
+            double innerW = w - solid * 2;
+            double topY = y + top;
+            double botY = y + h - bottom;
+
+            if (innerW > 0) {
+                r.quad(x + solid, topY, innerW, rowH, color);
+                r.quad(x + solid, botY, innerW, rowH, color);
+            }
+
+            if (coverage > 0.02 && solid >= 1) {
+                Color soft = new Color(color.r, color.g, color.b, (int) (color.a * coverage));
+
+                r.quad(x + solid - 1, topY, 1, rowH, soft);
+                r.quad(x + w - solid, topY, 1, rowH, soft);
+                r.quad(x + solid - 1, botY, 1, rowH, soft);
+                r.quad(x + w - solid, botY, 1, rowH, soft);
+            }
         }
     }
 
