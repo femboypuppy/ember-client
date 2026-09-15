@@ -136,8 +136,11 @@ public class EmberArmorHud extends HudElement {
         if (piece.isEmpty()) return;
 
         // Items go through post() - drawing them inline corrupts the batch the text uses.
-        final double ix = sx + (slot - 16 * s) / 2, iy = sy + (slot - 16 * s) / 2;
-        renderer.post(() -> renderer.item(piece, (int) ix, (int) iy, (float) s, false));
+        // Sized to leave a little of the well showing around the piece, and centred exactly:
+        // the integer form of this call rounds down twice and creeps toward the top left.
+        final double itemSize = slot * 0.76;
+        final double ix = sx + (slot - itemSize) / 2, iy = sy + (slot - itemSize) / 2;
+        renderer.post(() -> renderer.itemExact(piece, ix, iy, itemSize));
 
         if (!piece.isDamageable() || durability.get() == Durability.None) return;
 

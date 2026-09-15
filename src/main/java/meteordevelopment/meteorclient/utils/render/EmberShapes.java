@@ -186,27 +186,49 @@ public final class EmberShapes {
 
         radius = Math.min(radius, size / 2);
 
-        int steps = Math.max(6, (int) Math.ceil(radius * 2));
-        double sliceH = size / (steps * 2.0);
+        // One pixel per row, with the pixel the curve crosses drawn at partial alpha - the
+        // same analytic coverage the solid shapes use. As plain strips this had the staircase
+        // edge, which shows up worst on album art, where the fill is a photograph rather than
+        // a flat colour and every step is a different shade.
+        int rows = Math.max(1, (int) Math.ceil(size));
+        double rowH = size / rows;
 
-        for (int i = 0; i < steps * 2; i++) {
-            double top = i * sliceH;
-            double bottom = top + sliceH;
+        for (int i = 0; i < rows; i++) {
+            double top = i * rowH;
+            double bottom = top + rowH;
+            double mid = top + rowH / 2;
 
             double dy;
-            if (bottom <= radius) dy = radius - top;
-            else if (top >= size - radius) dy = bottom - (size - radius);
+            if (mid < radius) dy = radius - mid;
+            else if (mid > size - radius) dy = mid - (size - radius);
             else dy = 0;
 
             double inset = dy <= 0 ? 0 : radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
-            double w = size - inset * 2;
-            if (w <= 0) continue;
 
-            double uInset = (u2 - u1) * (inset / size);
+            double solid = Math.ceil(inset - 0.0001);
+            double coverage = solid - inset;
+
             double vTop = v1 + (v2 - v1) * (top / size);
             double vBottom = v1 + (v2 - v1) * (bottom / size);
+            double innerW = size - solid * 2;
 
-            r.texQuad(x + inset, y + top, w, sliceH, 0, u1 + uInset, vTop, u2 - uInset, vBottom, color);
+            if (innerW > 0) {
+                double uLeft = u1 + (u2 - u1) * (solid / size);
+                double uRight = u2 - (u2 - u1) * (solid / size);
+                r.texQuad(x + solid, y + top, innerW, rowH, 0, uLeft, vTop, uRight, vBottom, color);
+            }
+
+            if (coverage > 0.02 && solid >= 1) {
+                Color soft = new Color(color.r, color.g, color.b, (int) (color.a * coverage));
+
+                double uA = u1 + (u2 - u1) * ((solid - 1) / size);
+                double uB = u1 + (u2 - u1) * (solid / size);
+                r.texQuad(x + solid - 1, y + top, 1, rowH, 0, uA, vTop, uB, vBottom, soft);
+
+                double uC = u2 - (u2 - u1) * (solid / size);
+                double uD = u2 - (u2 - u1) * ((solid - 1) / size);
+                r.texQuad(x + size - solid, y + top, 1, rowH, 0, uC, vTop, uD, vBottom, soft);
+            }
         }
     }
 }

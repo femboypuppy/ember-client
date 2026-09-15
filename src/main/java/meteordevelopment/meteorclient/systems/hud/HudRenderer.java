@@ -282,34 +282,12 @@ public class HudRenderer {
         radius = Math.min(radius, size / 2);
 
         var texture = mc.getTextureManager().getTexture(id);
-        int steps = Math.max(6, (int) Math.ceil(radius * 2));
-        double sliceH = size / (steps * 2.0);
 
+        // One implementation of this, shared with the nametag path, so an antialiasing fix
+        // cannot land on one and miss the other.
         Renderer2D.TEXTURE.begin();
-
-        for (int i = 0; i < steps * 2; i++) {
-            double top = i * sliceH;
-            double bottom = top + sliceH;
-
-            // How far into a corner zone this strip sits, measured from the nearer edge.
-            double dy;
-            if (bottom <= radius) dy = radius - top;
-            else if (top >= size - radius) dy = bottom - (size - radius);
-            else dy = 0;
-
-            double inset = dy <= 0 ? 0 : radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
-            double w = size - inset * 2;
-            if (w <= 0) continue;
-
-            // UVs track the geometry, or the face would stretch as the strips narrow.
-            double uInset = (u2 - u1) * (inset / size);
-            double vTop = v1 + (v2 - v1) * (top / size);
-            double vBottom = v1 + (v2 - v1) * (bottom / size);
-
-            Renderer2D.TEXTURE.texQuad(x + inset, y + top, w, sliceH, 0,
-                u1 + uInset, vTop, u2 - uInset, vBottom, color);
-        }
-
+        meteordevelopment.meteorclient.utils.render.EmberShapes.roundedTexture(
+            Renderer2D.TEXTURE, x, y, size, radius, u1, v1, u2, v2, color);
         Renderer2D.TEXTURE.render(texture.getGlTextureView(), texture.getSampler());
     }
 
@@ -445,6 +423,33 @@ public class HudRenderer {
 
     public void item(ItemStack itemStack, int x, int y, float scale, boolean overlay) {
         RenderUtils.drawItem(drawContext, itemStack, x, y, scale, overlay);
+    }
+
+    /**
+     * Ember: draws an item at an exact position and pixel size.
+     *
+     * RenderUtils.drawItem takes integer coordinates and then divides them by the scale with
+     * another integer cast, so a position is rounded down twice and the item drifts up and
+     * left by up to a pixel plus the scale. That is invisible on a free-floating item and
+     * obvious inside a slot. Translating the matrix instead keeps it exactly where it is put.
+     */
+    public void itemExact(ItemStack itemStack, double x, double y, double size) {
+        if (drawContext == null || size <= 0) return;
+
+        float guiScale = (float) mc.getWindow().getScaleFactor();
+        float scale = (float) (size / 16.0);
+
+        var matrices = drawContext.getMatrices();
+        matrices.pushMatrix();
+
+        // Into framebuffer pixels, over to the corner, then up to the wanted size.
+        matrices.scale(1f / guiScale, 1f / guiScale);
+        matrices.translate((float) x, (float) y);
+        matrices.scale(scale, scale);
+
+        drawContext.drawItem(itemStack, 0, 0);
+
+        matrices.popMatrix();
     }
 
     public void entity(LivingEntity entity,  int x, int y, int width, int height, float yaw, float pitch) {
