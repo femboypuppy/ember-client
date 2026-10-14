@@ -126,7 +126,7 @@ public class EmberStaffHud extends HudElement {
         for (StaffEntry e : entries) {
             if (e.online) {
                 onlineCount++;
-                if (e.nearby) anyNearby = true;
+                if (e.nearby || e.inRegion || e.spectator || e.vanished) anyNearby = true;
             }
         }
 
@@ -259,9 +259,10 @@ public class EmberStaffHud extends HudElement {
                 : new Color(165, 165, 175, (int) (200 * a));
             renderer.text(entry.name, textX, rowCenterY - rowTextH / 2, nameColor, true, rowScale);
 
-            // Primary right badge (Rank or LEFT)
+            // Primary right badge (Rank, SPECTATOR, VANISHED, or LEFT)
             String primary = primaryBadge(entry, nowMs);
-            Color primaryCol = !entry.online ? ALERT_RED : (entry.nearby ? ALERT_RED : WARN_AMBER);
+            boolean urgentState = !entry.online || entry.nearby || entry.spectator || entry.vanished || entry.inRegion;
+            Color primaryCol = urgentState ? ALERT_RED : WARN_AMBER;
             double pbW = renderer.textWidth(primary, true, badgeScale) + 9 * s;
             double pbH = badgeTextH + 3.5 * s;
             double pbX = x + w - padX - pbW;
@@ -272,10 +273,10 @@ public class EmberStaffHud extends HudElement {
             renderer.text(primary, pbX + (pbW - ptw) / 2, pbY + (pbH - badgeTextH) / 2,
                 withAlpha(primaryCol, (int) (250 * a)), true, badgeScale);
 
-            // Optional secondary badge (JOINED or NEARBY)
+            // Optional secondary badge (JOINED, IN REGION, or NEARBY)
             String secondary = secondaryBadge(entry, nowMs);
             if (secondary != null) {
-                Color secCol = entry.nearby ? ALERT_RED : SAFE_GREEN;
+                Color secCol = (entry.nearby || entry.inRegion || entry.spectator || entry.vanished) ? ALERT_RED : SAFE_GREEN;
                 double sbW = renderer.textWidth(secondary, true, badgeScale) + 9 * s;
                 double sbX = pbX - 5 * s - sbW;
                 renderer.roundedQuad(sbX, pbY, sbW, pbH, pbH / 2, withAlpha(secCol, (int) (52 * a)));
@@ -290,12 +291,15 @@ public class EmberStaffHud extends HudElement {
 
     private String primaryBadge(StaffEntry entry, long nowMs) {
         if (!entry.online) return "LEFT";
+        if (entry.spectator) return "SPECTATOR";
+        if (entry.vanished) return "VANISHED";
         return entry.rank != null && !entry.rank.isEmpty() ? entry.rank : "STAFF";
     }
 
     private String secondaryBadge(StaffEntry entry, long nowMs) {
         if (!entry.online) return null;
         if (entry.nearby) return String.format("NEAR %.0fm", entry.distance);
+        if (entry.inRegion) return "IN REGION";
         if (nowMs - entry.joinedAt < 4500) return "JOINED";
         return null;
     }

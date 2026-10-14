@@ -1,5 +1,6 @@
 package meteordevelopment.meteorclient.systems.modules.donut;
 
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.hud.Hud;
@@ -13,24 +14,76 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.network.packet.Packet;
+import net.minecraft.network.packet.s2c.play.BundleS2CPacket;
+import net.minecraft.network.packet.s2c.play.PlayerListS2CPacket;
 import net.minecraft.scoreboard.Team;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.util.Identifier;
+import net.minecraft.world.GameMode;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 public class StaffDetector extends Module {
+    /**
+     * Built-in DonutSMP known staff/admin roster.
+     */
+    public static final List<String> DEFAULT_DONUT_STAFF = List.of(
+        "DrDonutt",
+        "FluffyMaster07",
+        "archivePedro",
+        "Munkerlich",
+        "Frenk_Btw",
+        "Napooo_",
+        "auzzitech",
+        "CryptoDaveYT",
+        "W1zoX_",
+        "ZEEF69",
+        "Showered",
+        "CaptainMoose35",
+        "BobIsFound",
+        "NoahvdAa",
+        "0GSummer",
+        "LzouzMP5",
+        "PastaGamer08",
+        "u_vv",
+        "Owen1212055",
+        "Splaterd",
+        "Fallerfly",
+        "Frwost",
+        "bautiedgar",
+        "Itszdeath"
+    );
+
+    /**
+     * DonutSMP marks staff members in the Tab list with a leading star glyph.
+     */
+    private static final Set<Integer> STAR_CODEPOINTS = new HashSet<>();
+    private static final Set<String> DEFAULT_STAFF_LOWER = new HashSet<>();
+
+    static {
+        "\u2605\u2606\u2726\u2727\u272A\u272F\u2730\u2B50".codePoints().forEach(STAR_CODEPOINTS::add);
+        for (String s : DEFAULT_DONUT_STAFF) {
+            DEFAULT_STAFF_LOWER.add(s.toLowerCase(Locale.ROOT));
+        }
+    }
+
     public static final class StaffEntry {
         public final String name;
         public String rank;
         public Identifier skin;
         public int ping;
         public boolean online;
+        public boolean vanished;
+        public boolean spectator;
+        public boolean inRegion;
         public boolean nearby;
         public double distance;
         public long joinedAt;
         public long leftAt;
+        public long regionProvenAt;
         public float anim;
         public float pulse;
 
@@ -48,9 +101,24 @@ public class StaffDetector extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAlerts = settings.createGroup("Alerts");
 
+    private final Setting<Boolean> useDonutRoster = sgGeneral.add(new BoolSetting.Builder()
+        .name("donut-staff-roster")
+        .description("Automatically include the built-in DonutSMP admin and moderator username roster.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> checkStarPrefix = sgGeneral.add(new BoolSetting.Builder()
+        .name("detect-star-prefix")
+        .description("Detect DonutSMP staff by the star symbol (★) at the start of their tab list name.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<List<String>> staffNames = sgGeneral.add(new StringListSetting.Builder()
         .name("staff-names")
         .description("Usernames that always count as staff.")
+        .defaultValue(DEFAULT_DONUT_STAFF)
         .build()
     );
 
@@ -88,7 +156,7 @@ public class StaffDetector extends Module {
 
     private final Setting<Boolean> alertNearby = sgAlerts.add(new BoolSetting.Builder()
         .name("alert-nearby")
-        .description("Highlight when a staff member comes into render distance.")
+        .description("Highlight when a staff member comes into render distance or onto your region shard.")
         .defaultValue(true)
         .build()
     );
@@ -116,14 +184,17 @@ public class StaffDetector extends Module {
 
     private final Setting<Boolean> sound = sgAlerts.add(new BoolSetting.Builder()
         .name("sound")
-        .description("Play a sound when staff join, leave, or come near you.")
+        .description("Play a sound when staff join, leave, vanish, or come near you.")
         .defaultValue(true)
         .build()
     );
 
     /** Staff currently online or recently left (keyed by lowercase name). */
     private final Map<String, StaffEntry> tracked = new LinkedHashMap<>();
+    private final Set<String> learnedStarredNames = new HashSet<>();
     private final Set<String> nearbySet = new HashSet<>();
+    private final Map<UUID, Long> regionSwitchTimestamps = new ConcurrentHashMap<>();
+    private final Map<UUID, Boolean> listedState = new ConcurrentHashMap<>();
     private boolean primed;
     private long lastScanMs;
 
@@ -134,7 +205,10 @@ public class StaffDetector extends Module {
     @Override
     public void onActivate() {
         tracked.clear();
+        learnedStarredNames.clear();
         nearbySet.clear();
+        regionSwitchTimestamps.clear();
+        listedState.clear();
         primed = false;
         lastScanMs = 0;
 
@@ -169,6 +243,39 @@ public class StaffDetector extends Module {
     }
 
     @EventHandler
+    private void onReceivePacket(PacketEvent.Receive event) {
+        handlePacket(event.packet);
+    }
+
+    private void handlePacket(Packet<?> packet) {
+        if (packet instanceof PlayerListS2CPacket listPacket) {
+            var actions = listPacket.getActions();
+            boolean checkListed = actions.contains(PlayerListS2CPacket.Action.ADD_PLAYER)
+                || actions.contains(PlayerListS2CPacket.Action.UPDATE_LISTED);
+            // On DonutSMP, UPDATE_GAME_MODE without ADD_PLAYER only arrives for players on your current region shard
+            boolean checkRegionSwitch = actions.contains(PlayerListS2CPacket.Action.UPDATE_GAME_MODE)
+                && !actions.contains(PlayerListS2CPacket.Action.ADD_PLAYER);
+
+            if (checkListed || checkRegionSwitch) {
+                long now = System.currentTimeMillis();
+                for (PlayerListS2CPacket.Entry entry : listPacket.getEntries()) {
+                    if (entry == null || entry.profileId() == null) continue;
+                    if (checkListed) {
+                        listedState.put(entry.profileId(), entry.listed());
+                    }
+                    if (checkRegionSwitch) {
+                        regionSwitchTimestamps.put(entry.profileId(), now);
+                    }
+                }
+            }
+        } else if (packet instanceof BundleS2CPacket bundle) {
+            for (Packet<?> sub : bundle.getPackets()) {
+                handlePacket(sub);
+            }
+        }
+    }
+
+    @EventHandler
     private void onTick(TickEvent.Post event) {
         scanNow();
     }
@@ -193,7 +300,10 @@ public class StaffDetector extends Module {
     public void scanNow() {
         if (mc.getNetworkHandler() == null || mc.world == null || mc.player == null) {
             tracked.clear();
+            learnedStarredNames.clear();
             nearbySet.clear();
+            regionSwitchTimestamps.clear();
+            listedState.clear();
             primed = false;
             return;
         }
@@ -203,16 +313,22 @@ public class StaffDetector extends Module {
         lastScanMs = nowMs;
 
         String self = mc.player.getName().getString();
+
         Map<String, PlayerListEntry> currentTab = new LinkedHashMap<>();
         Map<String, String> currentRanks = new LinkedHashMap<>();
 
         for (PlayerListEntry info : mc.getNetworkHandler().getPlayerList()) {
+            if (info.getProfile() == null) continue;
             String name = info.getProfile().name();
             if (name == null || name.equalsIgnoreCase(self)) continue;
 
-            String rank = staffRank(info, name);
+            // Strip any zero-width characters around the username if present
+            String cleanName = stripZeroWidth(name).trim();
+            if (cleanName.isEmpty()) continue;
+
+            String rank = staffRank(info, cleanName);
             if (rank != null) {
-                String key = name.toLowerCase(Locale.ROOT);
+                String key = cleanName.toLowerCase(Locale.ROOT);
                 currentTab.put(key, info);
                 currentRanks.put(key, rank);
             }
@@ -222,47 +338,98 @@ public class StaffDetector extends Module {
         for (Map.Entry<String, PlayerListEntry> e : currentTab.entrySet()) {
             String key = e.getKey();
             PlayerListEntry info = e.getValue();
-            String name = info.getProfile().name();
+            String name = stripZeroWidth(info.getProfile().name()).trim();
+            UUID uuid = info.getProfile().id();
             String rank = currentRanks.get(key);
             Identifier skin = info.getSkinTextures() != null && info.getSkinTextures().body() != null
                 ? info.getSkinTextures().body().texturePath()
                 : null;
             int ping = info.getLatency();
+            boolean isSpectator = info.getGameMode() == GameMode.SPECTATOR;
+            boolean isVanished = uuid != null && Boolean.FALSE.equals(listedState.get(uuid));
+            Long regionSwitchAt = uuid != null ? regionSwitchTimestamps.get(uuid) : null;
+            boolean inRegion = regionSwitchAt != null && (nowMs - regionSwitchAt < 600_000L);
 
             StaffEntry existing = tracked.get(key);
             if (existing == null) {
                 StaffEntry created = new StaffEntry(name, rank, skin, ping, nowMs);
+                created.spectator = isSpectator;
+                created.vanished = isVanished;
+                created.inRegion = inRegion;
+                if (inRegion) created.regionProvenAt = regionSwitchAt;
                 tracked.put(key, created);
                 if (primed) {
-                    alert(name + " joined", rank);
+                    alert(name + " joined", statusSummary(created));
                 }
             } else {
                 boolean wasOffline = !existing.online;
+                boolean wasSpectator = existing.spectator;
+                boolean wasVanished = existing.vanished;
+                boolean wasInRegion = existing.inRegion;
+
                 existing.online = true;
                 existing.rank = rank;
                 if (skin != null) existing.skin = skin;
                 existing.ping = ping;
+                existing.spectator = isSpectator;
+                existing.vanished = isVanished;
+                existing.inRegion = inRegion || existing.nearby;
+                if (inRegion) existing.regionProvenAt = regionSwitchAt;
                 existing.leftAt = 0;
+
                 if (wasOffline) {
                     existing.joinedAt = nowMs;
                     existing.pulse = 1f;
                     if (primed) {
-                        alert(name + " joined", rank);
+                        alert(name + " joined", statusSummary(existing));
+                    }
+                } else if (primed) {
+                    if (!wasSpectator && isSpectator) {
+                        existing.pulse = 1f;
+                        alert(name + " entered Spectator", rank);
+                    } else if (!wasVanished && isVanished) {
+                        existing.pulse = 1f;
+                        alert(name + " vanished", rank);
+                    } else if (!wasInRegion && inRegion && alertNearby.get()) {
+                        existing.pulse = 1f;
+                        alert(name + " is in your region!", rank);
                     }
                 }
             }
         }
 
-        // Check for staff who left
+        // Check nearby players in world (also catches vanished staff whose player entity is still in world)
+        Map<String, PlayerEntity> nearbyPlayers = new HashMap<>();
+        for (PlayerEntity player : mc.world.getPlayers()) {
+            if (player == mc.player) continue;
+            String pName = player.getName().getString();
+            if (pName != null) {
+                String cleanPName = stripZeroWidth(pName).trim();
+                nearbyPlayers.put(cleanPName.toLowerCase(Locale.ROOT), player);
+            }
+        }
+
+        // Check for staff who left Tab (if still in world, they vanished; otherwise they left)
         for (StaffEntry entry : tracked.values()) {
             String key = entry.name.toLowerCase(Locale.ROOT);
             if (entry.online && !currentTab.containsKey(key)) {
-                entry.online = false;
-                entry.nearby = false;
-                entry.leftAt = nowMs;
-                entry.pulse = 1f;
-                if (primed && alertLeave.get()) {
-                    alert(entry.name + " left", entry.rank);
+                if (nearbyPlayers.containsKey(key)) {
+                    if (!entry.vanished) {
+                        entry.vanished = true;
+                        entry.pulse = 1f;
+                        if (primed) alert(entry.name + " vanished nearby!", entry.rank);
+                    }
+                } else {
+                    entry.online = false;
+                    entry.nearby = false;
+                    entry.vanished = false;
+                    entry.spectator = false;
+                    entry.inRegion = false;
+                    entry.leftAt = nowMs;
+                    entry.pulse = 1f;
+                    if (primed && alertLeave.get()) {
+                        alert(entry.name + " left", entry.rank);
+                    }
                 }
             }
         }
@@ -276,14 +443,6 @@ public class StaffDetector extends Module {
             }
         }
 
-        // Check nearby players in world
-        Map<String, PlayerEntity> nearbyPlayers = new HashMap<>();
-        for (PlayerEntity player : mc.world.getPlayers()) {
-            if (player == mc.player) continue;
-            String pName = player.getName().getString();
-            if (pName != null) nearbyPlayers.put(pName.toLowerCase(Locale.ROOT), player);
-        }
-
         Set<String> seenNearby = new HashSet<>();
         for (StaffEntry entry : tracked.values()) {
             if (!entry.online) {
@@ -294,6 +453,7 @@ public class StaffDetector extends Module {
             PlayerEntity entity = nearbyPlayers.get(key);
             if (entity != null) {
                 entry.nearby = true;
+                entry.inRegion = true;
                 entry.distance = mc.player.distanceTo(entity);
                 seenNearby.add(key);
                 if (nearbySet.add(key) && alertNearby.get()) {
@@ -315,13 +475,30 @@ public class StaffDetector extends Module {
         });
     }
 
+    private String statusSummary(StaffEntry entry) {
+        if (entry.spectator) return "SPECTATOR";
+        if (entry.vanished) return "VANISHED";
+        return entry.rank;
+    }
+
     private String staffRank(PlayerListEntry info, String name) {
-        for (String listed : staffNames.get()) {
-            if (listed.trim().equalsIgnoreCase(name)) return "STAFF";
+        String lowerName = name.toLowerCase(Locale.ROOT);
+
+        // 1. Check built-in DonutSMP staff roster
+        if (useDonutRoster.get() && DEFAULT_STAFF_LOWER.contains(lowerName)) {
+            if (lowerName.equals("drdonutt")) return "OWNER";
+            return "ADMIN";
         }
 
-        if (!checkRanks.get()) return null;
+        // 2. Check custom staff-names setting
+        for (String listed : staffNames.get()) {
+            if (listed != null && listed.trim().equalsIgnoreCase(name)) {
+                if (lowerName.equals("drdonutt")) return "OWNER";
+                return DEFAULT_STAFF_LOWER.contains(lowerName) ? "ADMIN" : "STAFF";
+            }
+        }
 
+        // 3. Check DonutSMP leading star prefix in Tab display name / scoreboard team
         StringBuilder text = new StringBuilder();
         if (info.getDisplayName() != null) text.append(info.getDisplayName().getString()).append(' ');
 
@@ -330,8 +507,19 @@ public class StaffDetector extends Module {
             text.append(team.getPrefix().getString()).append(' ').append(team.getSuffix().getString());
         }
 
+        String fullTabText = text.toString();
+        if (checkStarPrefix.get()) {
+            if (hasLeadingStar(fullTabText) || learnedStarredNames.contains(lowerName)) {
+                learnedStarredNames.add(lowerName);
+                return lowerName.equals("drdonutt") ? "OWNER" : "★ STAFF";
+            }
+        }
+
+        // 4. Check rank words in tab decoration
+        if (!checkRanks.get()) return null;
+
         // Strip Minecraft formatting codes (§x) before matching rank words
-        String clean = text.toString().replaceAll("(?i)\\u00a7[0-9A-FK-ORX]", "");
+        String clean = stripFormatting(fullTabText);
 
         // A username can itself contain a rank word ("mod_steve"), so only the decoration around it is checked.
         String decoration = clean.replace(name, " ");
@@ -345,6 +533,38 @@ public class StaffDetector extends Module {
         }
 
         return null;
+    }
+
+    /**
+     * Checks if the Tab list display name starts with a DonutSMP staff star symbol
+     * (★, ☆, ✦, ✧, ✪, ✯, ✰, ⭐) after stripping formatting codes and zero-width characters.
+     */
+    public static boolean hasLeadingStar(String text) {
+        if (text == null || text.isEmpty()) return false;
+        String clean = stripFormatting(text);
+
+        int i = 0;
+        while (i < clean.length()) {
+            int cp = clean.codePointAt(i);
+            i += Character.charCount(cp);
+
+            if (Character.isWhitespace(cp) || Character.isSpaceChar(cp)
+                || cp == 0x200B || cp == 0x200C || cp == 0x200D || cp == 0xFE0F || cp == 0xFEFF) {
+                continue;
+            }
+            return STAR_CODEPOINTS.contains(cp);
+        }
+        return false;
+    }
+
+    private static String stripFormatting(String text) {
+        if (text == null) return "";
+        return text.replaceAll("(?i)\\u00a7[0-9A-FK-ORX]", "");
+    }
+
+    private static String stripZeroWidth(String text) {
+        if (text == null) return "";
+        return text.replaceAll("[\\u200B\\u200C\\u200D\\uFE0F\\uFEFF]", "");
     }
 
     private void alert(String title, String subtitle) {
