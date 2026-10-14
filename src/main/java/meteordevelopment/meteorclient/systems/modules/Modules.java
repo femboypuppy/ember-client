@@ -407,6 +407,7 @@ public class Modules extends System<Modules> {
         add(new meteordevelopment.meteorclient.systems.modules.donut.InvisESP());
         add(new meteordevelopment.meteorclient.systems.modules.donut.KeyPearl());
         add(new meteordevelopment.meteorclient.systems.modules.donut.PlayerDetection());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.RegionMap());
         add(new meteordevelopment.meteorclient.systems.modules.donut.RTPer());
         add(new meteordevelopment.meteorclient.systems.modules.donut.ShieldBreaker());
         add(new meteordevelopment.meteorclient.systems.modules.donut.SpawnerNotifier());

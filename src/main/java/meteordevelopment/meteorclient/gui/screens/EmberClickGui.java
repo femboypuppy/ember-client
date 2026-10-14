@@ -107,8 +107,8 @@ public class EmberClickGui extends TabScreen {
             cp.icon = new ItemStack(Items.ENDER_EYE);
             List<ClientEntry> entries = new ArrayList<>();
 
-            String[] wanted = {"ember-status-bar", "ember-bubbles", "ember-keybinds", "ember-staff", "ember-armor",
-                "ember-target", "ember-module-list", "ember-notifications", "spotify"};
+            String[] wanted = {"ember-status-bar", "ember-bubbles", "ember-keybinds", "ember-staff", "ember-region-map",
+                "ember-armor", "ember-target", "ember-module-list", "ember-notifications", "spotify"};
 
             for (String wName : wanted) {
                 HudElement found = null;
@@ -124,6 +124,7 @@ public class EmberClickGui extends TabScreen {
                             case "ember-status-bar" -> Hud.get().add(info, 8, 8, XAnchor.Left, YAnchor.Top);
                             case "ember-keybinds" -> Hud.get().add(info, 8, 112, XAnchor.Left, YAnchor.Top);
                             case "ember-staff" -> Hud.get().add(info, 8, 168, XAnchor.Left, YAnchor.Top);
+                            case "ember-region-map" -> Hud.get().add(info, 8, 224, XAnchor.Left, YAnchor.Top);
                             case "ember-armor" -> Hud.get().add(info, 8, -48, XAnchor.Left, YAnchor.Bottom);
                             case "ember-bubbles" -> Hud.get().add(info, 8, -8, XAnchor.Left, YAnchor.Bottom);
                             case "ember-target" -> Hud.get().add(info, 0, -52, XAnchor.Center, YAnchor.Bottom);
@@ -705,9 +706,11 @@ public class EmberClickGui extends TabScreen {
             }
         }
 
-        // Allow dragging the Staff Detector HUD widget directly on screen while ClickGUI is open
+        // Allow dragging the Staff Detector and Region Map HUD widgets directly on screen while ClickGUI is open
         for (HudElement el : Hud.get()) {
-            if (el instanceof meteordevelopment.meteorclient.systems.hud.elements.EmberStaffHud && el.getWidth() > 0 && el.getHeight() > 0) {
+            if ((el instanceof meteordevelopment.meteorclient.systems.hud.elements.EmberStaffHud
+                || el instanceof meteordevelopment.meteorclient.systems.hud.elements.EmberRegionMapHud)
+                && el.getWidth() > 0 && el.getHeight() > 0) {
                 if (cx >= el.x && cx <= el.x + el.getWidth() && cy >= el.y && cy <= el.y + el.getHeight()) {
                     if (btn == 0) {
                         draggingHud = el;

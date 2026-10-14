@@ -228,6 +228,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = widgetRow(r, dt, x, y, w, "Info pill", "ember-bubbles");
         y = widgetRow(r, dt, x, y, w, "Keybinds", "ember-keybinds");
         y = widgetRow(r, dt, x, y, w, "Staff detector", "ember-staff");
+        y = widgetRow(r, dt, x, y, w, "Region map", "ember-region-map");
         y = widgetRow(r, dt, x, y, w, "Armor", "ember-armor");
         y = widgetRow(r, dt, x, y, w, "Target", "ember-target");
         y = widgetRow(r, dt, x, y, w, "Module list", "ember-module-list");
