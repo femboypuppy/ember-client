@@ -114,12 +114,9 @@ public abstract class Module implements ISerializable<Module>, Comparable<Module
         if (isActive()) toggle();
     }
 
-    /** True when the Ember notifications widget is on, so chat feedback can stand down. */
+    /** True when the Ember notifications widget is handling module toggle feedback. */
     private static boolean ember$notificationsActive() {
-        for (meteordevelopment.meteorclient.systems.hud.HudElement element : meteordevelopment.meteorclient.systems.hud.Hud.get()) {
-            if (element.info.name.equals("ember-notifications")) return element.isActive();
-        }
-        return false;
+        return meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud.shouldInterceptToggles();
     }
 
     public void sendToggledMsg() {

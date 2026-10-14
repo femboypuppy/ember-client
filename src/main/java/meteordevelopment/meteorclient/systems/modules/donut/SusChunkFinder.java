@@ -343,8 +343,8 @@ public class SusChunkFinder extends Module {
 
             mc.execute(() -> {
                 if (autoWaypoint.get()) FindsStorage.waypoint("Sus chunk", center);
-                if (chatNotify.get()) info("Sus chunk at (highlight)%d, %d(default): %s", blockX, blockZ, reason);
-                EmberNotificationsHud.push("Sus chunk found", blockX + ", " + blockZ, EmberNotificationsHud.GOOD);
+                if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) info("Sus chunk at (highlight)%d, %d(default): %s", blockX, blockZ, reason);
+                EmberNotificationsHud.push("Sus chunk found", blockX + ", " + blockZ + " — " + reason, EmberNotificationsHud.GOOD);
             });
         });
     }

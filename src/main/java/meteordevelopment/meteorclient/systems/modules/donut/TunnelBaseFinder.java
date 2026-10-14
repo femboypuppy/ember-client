@@ -327,10 +327,10 @@ public class TunnelBaseFinder extends Module {
             if (!isActive()) return;
 
             if (autoWaypoint.get()) FindsStorage.waypoint("Tunnel", pos);
-            if (chatNotify.get()) {
+            if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) {
                 info("Tunnel found: %d blocks along %s at %d, %d, %d", length, axis, pos.getX(), pos.getY(), pos.getZ());
             }
-            EmberNotificationsHud.push("Tunnel found", length + " blocks at " + pos.getX() + ", " + pos.getZ(), EmberNotificationsHud.GOOD);
+            EmberNotificationsHud.push("Tunnel found", length + " blocks (" + axis + ") at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ(), EmberNotificationsHud.GOOD);
         });
     }
 

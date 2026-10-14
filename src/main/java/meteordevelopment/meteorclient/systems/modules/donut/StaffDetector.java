@@ -180,8 +180,12 @@ public class StaffDetector extends Module {
     }
 
     private void alert(String title, String subtitle) {
-        if (chat.get()) info("%s (%s)", title, subtitle);
-        if (notification.get()) EmberNotificationsHud.push(title, subtitle, EmberNotificationsHud.BAD);
+        if (notification.get()) {
+            EmberNotificationsHud.push(title, subtitle, EmberNotificationsHud.BAD);
+            if (chat.get() && !EmberNotificationsHud.shouldInterceptChat()) info("%s (%s)", title, subtitle);
+        } else if (chat.get()) {
+            info("%s (%s)", title, subtitle);
+        }
         if (sound.get() && mc.player != null) mc.player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_PLING.value(), 1f, 2f);
     }
 }

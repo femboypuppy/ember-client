@@ -250,10 +250,14 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         if (!active || shouldHideHud()) return;
         if ((mc.options.hudHidden || mc.debugHudEntryList.isF3Enabled()) && !HudEditorScreen.isOpen()) return;
 
+        boolean deferNotificationsToScreen = mc.currentScreen instanceof WidgetScreen && !HudEditorScreen.isOpen();
+
         HudRenderer.INSTANCE.begin(event.drawContext);
 
         for (HudElement element : elements) {
             element.updatePos();
+
+            if (deferNotificationsToScreen && element instanceof EmberNotificationsHud) continue;
 
             if (element.isActive() || element.isInEditor()) {
                 element.render(HudRenderer.INSTANCE);
@@ -261,6 +265,21 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         }
 
         HudRenderer.INSTANCE.end();
+    }
+
+    /** Renders the bottom-right notifications overlay on top of open WidgetScreens (e.g. ClickGUI). */
+    public void renderNotificationsOverlay(net.minecraft.client.gui.DrawContext context) {
+        if (Utils.isLoading() || !active) return;
+
+        for (HudElement element : elements) {
+            if (element instanceof EmberNotificationsHud && element.isActive()) {
+                element.updatePos();
+                HudRenderer.INSTANCE.begin(context);
+                element.render(HudRenderer.INSTANCE);
+                HudRenderer.INSTANCE.end();
+                break;
+            }
+        }
     }
 
     private boolean shouldHideHud() {
@@ -338,6 +357,17 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
                 element.settings.registerColorSettings(null);
                 elements.add(element);
             }
+        }
+
+        boolean hasNotifications = false;
+        for (HudElement element : elements) {
+            if (element instanceof EmberNotificationsHud) {
+                hasNotifications = true;
+                break;
+            }
+        }
+        if (!hasNotifications) {
+            add(EmberNotificationsHud.INFO, -8, -8, XAnchor.Right, YAnchor.Bottom);
         }
 
         return this;

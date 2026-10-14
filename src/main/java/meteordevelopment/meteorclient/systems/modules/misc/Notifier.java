@@ -333,7 +333,7 @@ public class Notifier extends Module {
             timer++;
             while (timer >= notificationDelay.get() && !messageQueue.isEmpty()) {
                 timer = 0;
-                if (simpleNotifications.get()) {
+                if (simpleNotifications.get() && !meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud.shouldInterceptChat()) {
                     mc.player.sendMessage(messageQueue.removeFirst(), false);
                 } else {
                     ChatUtils.sendMsg(messageQueue.removeFirst());

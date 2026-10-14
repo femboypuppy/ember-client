@@ -133,14 +133,14 @@ public class StashFinder extends Module {
 
         foundStashes.add(centerPos);
 
-        if (notify.get()) {
+        if (notify.get() && !EmberNotificationsHud.shouldInterceptChat()) {
             info("Potential stash found! %d chests at %d, %d, %d",
                 chestCount, centerPos.getX(), centerPos.getY(), centerPos.getZ());
         }
         if (saveFinds.get()) FindsStorage.add(FindsStorage.context(), FIND_TYPE, centerPos, chestCount + " chests");
         if (autoWaypoint.get()) FindsStorage.waypoint("Stash", centerPos);
 
-        EmberNotificationsHud.push("Stash found", chestCount + " chests at " + centerPos.getX() + ", " + centerPos.getZ(), EmberNotificationsHud.GOOD);
+        EmberNotificationsHud.push("Stash found", chestCount + " chests at " + centerPos.getX() + ", " + centerPos.getY() + ", " + centerPos.getZ(), EmberNotificationsHud.GOOD);
     }
 
     /** The first chest found shifts as you move, so treat anything close to a known stash as the same one. */

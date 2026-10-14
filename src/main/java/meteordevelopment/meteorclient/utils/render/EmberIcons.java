@@ -41,6 +41,16 @@ public final class EmberIcons {
         TPS,
         /** A key, for keybinds. */
         KEY,
+        /** A checkmark, for enabled modules and success notifications. */
+        CHECK,
+        /** A cross mark, for disabled modules and errors. */
+        CROSS,
+        /** An info mark, for general client notifications. */
+        INFO,
+        /** An exclamation mark, for warnings and alerts. */
+        WARNING,
+        /** A notification bell. */
+        BELL,
         /** Draws nothing and takes no room. */
         NONE
     }
@@ -63,6 +73,11 @@ public final class EmberIcons {
             case SPEED -> speed(r, x, y, size, color);
             case TPS -> tps(r, x, y, size, color);
             case KEY -> key(r, x, y, size, color, bg);
+            case CHECK -> check(r, x, y, size, color);
+            case CROSS -> cross(r, x, y, size, color);
+            case INFO -> info(r, x, y, size, color, bg);
+            case WARNING -> warning(r, x, y, size, color, bg);
+            case BELL -> bell(r, x, y, size, color);
             case NONE -> {
             }
         }
@@ -171,5 +186,45 @@ public final class EmberIcons {
         circle(r, x + s * 0.18, y + s * 0.36, s * 0.28, bg);
         r.quad(x + s * 0.56, y + s * 0.42, s * 0.44, s * 0.14, c);
         r.quad(x + s * 0.84, y + s * 0.42, s * 0.13, s * 0.30, c);
+    }
+
+    private static void stroke(HudRenderer r, double x1, double y1, double x2, double y2, double thickness, Color c) {
+        double dx = x2 - x1;
+        double dy = y2 - y1;
+        double dist = Math.hypot(dx, dy);
+        int steps = Math.max(2, (int) Math.ceil(dist / Math.max(0.5, thickness * 0.32)));
+        for (int i = 0; i <= steps; i++) {
+            double t = (double) i / steps;
+            circle(r, x1 + dx * t - thickness / 2, y1 + dy * t - thickness / 2, thickness, c);
+        }
+    }
+
+    private static void check(HudRenderer r, double x, double y, double s, Color c) {
+        double t = s * 0.17;
+        stroke(r, x + s * 0.18, y + s * 0.54, x + s * 0.41, y + s * 0.76, t, c);
+        stroke(r, x + s * 0.41, y + s * 0.76, x + s * 0.84, y + s * 0.26, t, c);
+    }
+
+    private static void cross(HudRenderer r, double x, double y, double s, Color c) {
+        double t = s * 0.17;
+        stroke(r, x + s * 0.22, y + s * 0.22, x + s * 0.78, y + s * 0.78, t, c);
+        stroke(r, x + s * 0.78, y + s * 0.22, x + s * 0.22, y + s * 0.78, t, c);
+    }
+
+    private static void info(HudRenderer r, double x, double y, double s, Color c, Color bg) {
+        circle(r, x + s * 0.41, y + s * 0.12, s * 0.18, c);
+        r.roundedQuad(x + s * 0.41, y + s * 0.38, s * 0.18, s * 0.50, s * 0.09, c);
+    }
+
+    private static void warning(HudRenderer r, double x, double y, double s, Color c, Color bg) {
+        r.roundedQuad(x + s * 0.41, y + s * 0.12, s * 0.18, s * 0.50, s * 0.09, c);
+        circle(r, x + s * 0.41, y + s * 0.70, s * 0.18, c);
+    }
+
+    private static void bell(HudRenderer r, double x, double y, double s, Color c) {
+        circle(r, x + s * 0.20, y + s * 0.10, s * 0.60, c);
+        r.roundedQuad(x + s * 0.20, y + s * 0.36, s * 0.60, s * 0.36, s * 0.08, c);
+        r.roundedQuad(x + s * 0.08, y + s * 0.62, s * 0.84, s * 0.14, s * 0.07, c);
+        circle(r, x + s * 0.40, y + s * 0.80, s * 0.20, c);
     }
 }

@@ -288,6 +288,11 @@ public abstract class WidgetScreen extends Screen {
             if (tooltip) DEBUG_RENDERER.render(RENDERER.tooltipWidget);
         }
 
+        if (!(this instanceof meteordevelopment.meteorclient.systems.hud.screens.HudEditorScreen)) {
+            meteordevelopment.meteorclient.systems.hud.Hud hud = meteordevelopment.meteorclient.systems.hud.Hud.get();
+            if (hud != null) hud.renderNotificationsOverlay(context);
+        }
+
         Utils.scaledProjection();
 
         runAfterRenderTasks();
