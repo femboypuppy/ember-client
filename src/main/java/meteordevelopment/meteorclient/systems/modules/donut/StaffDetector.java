@@ -2,23 +2,49 @@ package meteordevelopment.meteorclient.systems.modules.donut;
 
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.hud.Hud;
+import meteordevelopment.meteorclient.systems.hud.HudElement;
+import meteordevelopment.meteorclient.systems.hud.XAnchor;
+import meteordevelopment.meteorclient.systems.hud.YAnchor;
 import meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud;
+import meteordevelopment.meteorclient.systems.hud.elements.EmberStaffHud;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.PlayerListEntry;
-import net.minecraft.sound.SoundEvents;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.scoreboard.Team;
+import net.minecraft.sound.SoundEvents;
+import net.minecraft.util.Identifier;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Pattern;
 
 public class StaffDetector extends Module {
+    public static final class StaffEntry {
+        public final String name;
+        public String rank;
+        public Identifier skin;
+        public int ping;
+        public boolean online;
+        public boolean nearby;
+        public double distance;
+        public long joinedAt;
+        public long leftAt;
+        public float anim;
+        public float pulse;
+
+        public StaffEntry(String name, String rank, Identifier skin, int ping, long now) {
+            this.name = name;
+            this.rank = rank;
+            this.skin = skin;
+            this.ping = ping;
+            this.online = true;
+            this.joinedAt = now;
+            this.pulse = 1f;
+        }
+    }
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAlerts = settings.createGroup("Alerts");
 
@@ -38,121 +64,260 @@ public class StaffDetector extends Module {
     private final Setting<List<String>> rankWords = sgGeneral.add(new StringListSetting.Builder()
         .name("rank-words")
         .description("Rank tags that mark staff, matched as whole words.")
-        .defaultValue("Owner", "Admin", "Manager", "Mod", "Moderator", "Helper", "Staff", "Developer")
+        .defaultValue("Owner", "Admin", "Manager", "Mod", "Moderator", "Helper", "Staff", "Developer", "SrMod", "JrMod", "Trial")
         .visible(checkRanks::get)
+        .build()
+    );
+
+    public final Setting<Boolean> showEmpty = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-when-empty")
+        .description("Keep the on-screen Staff Detector UI visible even when 0 moderators are online.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Double> leaveHoldSeconds = sgGeneral.add(new DoubleSetting.Builder()
+        .name("leave-display-seconds")
+        .description("How long a moderator stays shown as LEFT on the UI before disappearing.")
+        .defaultValue(4.0)
+        .min(0.5)
+        .max(15.0)
+        .sliderRange(0.5, 15.0)
         .build()
     );
 
     private final Setting<Boolean> alertNearby = sgAlerts.add(new BoolSetting.Builder()
         .name("alert-nearby")
-        .description("Alert when a staff member comes into render distance.")
+        .description("Highlight when a staff member comes into render distance.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> alertLeave = sgAlerts.add(new BoolSetting.Builder()
         .name("alert-leave")
-        .description("Alert when a staff member leaves the server.")
+        .description("Track when a staff member leaves the server.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> chat = sgAlerts.add(new BoolSetting.Builder()
         .name("chat")
-        .description("Post alerts in chat.")
-        .defaultValue(true)
+        .description("Also post alerts in chat.")
+        .defaultValue(false)
         .build()
     );
 
     private final Setting<Boolean> notification = sgAlerts.add(new BoolSetting.Builder()
         .name("notification")
-        .description("Show alerts in the Ember notifications widget.")
-        .defaultValue(true)
+        .description("Also show alerts in the bottom-right notifications widget.")
+        .defaultValue(false)
         .build()
     );
 
     private final Setting<Boolean> sound = sgAlerts.add(new BoolSetting.Builder()
         .name("sound")
-        .description("Play a sound on alerts.")
+        .description("Play a sound when staff join, leave, or come near you.")
         .defaultValue(true)
         .build()
     );
 
-    /** Staff currently online, name to the rank that matched. */
-    private final Map<String, String> online = new HashMap<>();
-    private final Set<String> nearby = new HashSet<>();
+    /** Staff currently online or recently left (keyed by lowercase name). */
+    private final Map<String, StaffEntry> tracked = new LinkedHashMap<>();
+    private final Set<String> nearbySet = new HashSet<>();
     private boolean primed;
-    private int timer;
+    private long lastScanMs;
 
     public StaffDetector() {
-        super(Categories.Donut, "staff-detector", "Alerts you when staff are online or near you.");
+        super(Categories.Donut, "staff-detector", "Displays an on-screen UI of online moderators that updates as they join or leave.");
     }
 
     @Override
     public void onActivate() {
-        online.clear();
-        nearby.clear();
+        tracked.clear();
+        nearbySet.clear();
         primed = false;
-        timer = 0;
+        lastScanMs = 0;
+
+        ensureHudElementActive();
+    }
+
+    private void ensureHudElementActive() {
+        Hud hud = Hud.get();
+        if (hud == null) return;
+
+        EmberStaffHud found = null;
+        for (HudElement el : hud) {
+            if (el instanceof EmberStaffHud staffHud) {
+                found = staffHud;
+                break;
+            }
+        }
+
+        if (found == null) {
+            hud.add(EmberStaffHud.INFO, 8, 168, XAnchor.Left, YAnchor.Top);
+            for (HudElement el : hud) {
+                if (el instanceof EmberStaffHud staffHud) {
+                    found = staffHud;
+                    break;
+                }
+            }
+        }
+
+        if (found != null && !found.isActive()) {
+            found.toggle();
+        }
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.getNetworkHandler() == null || mc.world == null || mc.player == null) return;
-        if (timer-- > 0) return;
-        timer = 20;
+        scanNow();
+    }
+
+    /**
+     * Scans the tab list and nearby players for staff members and updates join/leave state.
+     * Safe to call from both tick and HUD render.
+     */
+    public List<StaffEntry> getTrackedEntries() {
+        scanNow();
+        return new ArrayList<>(tracked.values());
+    }
+
+    public int getOnlineCount() {
+        int count = 0;
+        for (StaffEntry entry : tracked.values()) {
+            if (entry.online) count++;
+        }
+        return count;
+    }
+
+    public void scanNow() {
+        if (mc.getNetworkHandler() == null || mc.world == null || mc.player == null) {
+            tracked.clear();
+            nearbySet.clear();
+            primed = false;
+            return;
+        }
+
+        long nowMs = System.currentTimeMillis();
+        if (nowMs - lastScanMs < 400) return;
+        lastScanMs = nowMs;
 
         String self = mc.player.getName().getString();
-        Map<String, String> now = new HashMap<>();
+        Map<String, PlayerListEntry> currentTab = new LinkedHashMap<>();
+        Map<String, String> currentRanks = new LinkedHashMap<>();
 
         for (PlayerListEntry info : mc.getNetworkHandler().getPlayerList()) {
             String name = info.getProfile().name();
             if (name == null || name.equalsIgnoreCase(self)) continue;
 
             String rank = staffRank(info, name);
-            if (rank != null) now.put(name, rank);
+            if (rank != null) {
+                String key = name.toLowerCase(Locale.ROOT);
+                currentTab.put(key, info);
+                currentRanks.put(key, rank);
+            }
+        }
+
+        // Check for newly joined or still-online staff
+        for (Map.Entry<String, PlayerListEntry> e : currentTab.entrySet()) {
+            String key = e.getKey();
+            PlayerListEntry info = e.getValue();
+            String name = info.getProfile().name();
+            String rank = currentRanks.get(key);
+            Identifier skin = info.getSkinTextures() != null && info.getSkinTextures().body() != null
+                ? info.getSkinTextures().body().texturePath()
+                : null;
+            int ping = info.getLatency();
+
+            StaffEntry existing = tracked.get(key);
+            if (existing == null) {
+                StaffEntry created = new StaffEntry(name, rank, skin, ping, nowMs);
+                tracked.put(key, created);
+                if (primed) {
+                    alert(name + " joined", rank);
+                }
+            } else {
+                boolean wasOffline = !existing.online;
+                existing.online = true;
+                existing.rank = rank;
+                if (skin != null) existing.skin = skin;
+                existing.ping = ping;
+                existing.leftAt = 0;
+                if (wasOffline) {
+                    existing.joinedAt = nowMs;
+                    existing.pulse = 1f;
+                    if (primed) {
+                        alert(name + " joined", rank);
+                    }
+                }
+            }
+        }
+
+        // Check for staff who left
+        for (StaffEntry entry : tracked.values()) {
+            String key = entry.name.toLowerCase(Locale.ROOT);
+            if (entry.online && !currentTab.containsKey(key)) {
+                entry.online = false;
+                entry.nearby = false;
+                entry.leftAt = nowMs;
+                entry.pulse = 1f;
+                if (primed && alertLeave.get()) {
+                    alert(entry.name + " left", entry.rank);
+                }
+            }
         }
 
         if (!primed) {
-            // First scan after joining: one summary instead of a "joined" alert per staff member.
             primed = true;
-            if (!now.isEmpty()) alert("Staff online", String.join(", ", now.keySet()));
-        } else {
-            for (Map.Entry<String, String> entry : now.entrySet()) {
-                if (!online.containsKey(entry.getKey())) alert(entry.getKey() + " joined", entry.getValue());
-            }
-            if (alertLeave.get()) {
-                for (Map.Entry<String, String> entry : online.entrySet()) {
-                    if (!now.containsKey(entry.getKey())) alert(entry.getKey() + " left", entry.getValue());
-                }
+            if (!currentTab.isEmpty()) {
+                List<String> names = new ArrayList<>();
+                for (StaffEntry se : tracked.values()) if (se.online) names.add(se.name);
+                if (!names.isEmpty()) alert("Staff online", String.join(", ", names));
             }
         }
 
-        online.clear();
-        online.putAll(now);
-
-        if (alertNearby.get()) {
-            Set<String> seen = new HashSet<>();
-
-            for (PlayerEntity player : mc.world.getPlayers()) {
-                if (player == mc.player) continue;
-
-                String name = player.getName().getString();
-                if (!online.containsKey(name)) continue;
-
-                seen.add(name);
-                if (nearby.add(name)) {
-                    alert(name + " is near you", String.format("%.0f blocks away", mc.player.distanceTo(player)));
-                }
-            }
-
-            nearby.retainAll(seen);
+        // Check nearby players in world
+        Map<String, PlayerEntity> nearbyPlayers = new HashMap<>();
+        for (PlayerEntity player : mc.world.getPlayers()) {
+            if (player == mc.player) continue;
+            String pName = player.getName().getString();
+            if (pName != null) nearbyPlayers.put(pName.toLowerCase(Locale.ROOT), player);
         }
+
+        Set<String> seenNearby = new HashSet<>();
+        for (StaffEntry entry : tracked.values()) {
+            if (!entry.online) {
+                entry.nearby = false;
+                continue;
+            }
+            String key = entry.name.toLowerCase(Locale.ROOT);
+            PlayerEntity entity = nearbyPlayers.get(key);
+            if (entity != null) {
+                entry.nearby = true;
+                entry.distance = mc.player.distanceTo(entity);
+                seenNearby.add(key);
+                if (nearbySet.add(key) && alertNearby.get()) {
+                    entry.pulse = 1f;
+                    alert(entry.name + " is near you", String.format("%.0f blocks away", entry.distance));
+                }
+            } else {
+                entry.nearby = false;
+                entry.distance = 0;
+            }
+        }
+        nearbySet.retainAll(seenNearby);
+
+        // Expire left entries after hold duration and anim fade out
+        long holdMs = Math.round(leaveHoldSeconds.get() * 1000.0);
+        tracked.entrySet().removeIf(en -> {
+            StaffEntry se = en.getValue();
+            return !se.online && (nowMs - se.leftAt > holdMs) && se.anim <= 0.02f;
+        });
     }
 
     private String staffRank(PlayerListEntry info, String name) {
         for (String listed : staffNames.get()) {
-            if (listed.trim().equalsIgnoreCase(name)) return "Listed staff";
+            if (listed.trim().equalsIgnoreCase(name)) return "STAFF";
         }
 
         if (!checkRanks.get()) return null;
@@ -165,15 +330,18 @@ public class StaffDetector extends Module {
             text.append(team.getPrefix().getString()).append(' ').append(team.getSuffix().getString());
         }
 
+        // Strip Minecraft formatting codes (§x) before matching rank words
+        String clean = text.toString().replaceAll("(?i)\\u00a7[0-9A-FK-ORX]", "");
+
         // A username can itself contain a rank word ("mod_steve"), so only the decoration around it is checked.
-        String decoration = text.toString().replace(name, " ");
+        String decoration = clean.replace(name, " ");
 
         for (String word : rankWords.get()) {
             String trimmed = word.trim();
             if (trimmed.isEmpty()) continue;
 
             Pattern pattern = Pattern.compile("(?i)(?<![A-Za-z])" + Pattern.quote(trimmed) + "(?![A-Za-z])");
-            if (pattern.matcher(decoration).find()) return trimmed;
+            if (pattern.matcher(decoration).find()) return trimmed.toUpperCase(Locale.ROOT);
         }
 
         return null;
@@ -186,6 +354,8 @@ public class StaffDetector extends Module {
         } else if (chat.get()) {
             info("%s (%s)", title, subtitle);
         }
-        if (sound.get() && mc.player != null) mc.player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_PLING.value(), 1f, 2f);
+        if (sound.get() && mc.player != null) {
+            mc.player.playSound(SoundEvents.ENTITY_EXPERIENCE_ORB_PICKUP, 0.85f, 1.1f);
+        }
     }
 }

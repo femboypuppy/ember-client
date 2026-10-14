@@ -16,6 +16,8 @@ import meteordevelopment.meteorclient.utils.render.EmberIcons;
 import meteordevelopment.meteorclient.utils.render.EmberStrip;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
+import net.minecraft.client.sound.PositionedSoundInstance;
+import net.minecraft.sound.SoundEvents;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -23,6 +25,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
+
+import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class EmberNotificationsHud extends HudElement {
     public static final HudElementInfo<EmberNotificationsHud> INFO = new HudElementInfo<>(
@@ -70,7 +74,7 @@ public class EmberNotificationsHud extends HudElement {
     private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
         .name("scale")
         .description("Size of the notifications.")
-        .defaultValue(1.0)
+        .defaultValue(1.15)
         .min(0.5)
         .max(3.0)
         .sliderRange(0.5, 3.0)
@@ -80,7 +84,7 @@ public class EmberNotificationsHud extends HudElement {
     private final Setting<Double> duration = sgGeneral.add(new DoubleSetting.Builder()
         .name("duration")
         .description("Seconds each notification stays on screen.")
-        .defaultValue(3.0)
+        .defaultValue(3.5)
         .min(0.5)
         .sliderRange(0.5, 10)
         .build()
@@ -116,9 +120,39 @@ public class EmberNotificationsHud extends HudElement {
         .build()
     );
 
+    private final Setting<Boolean> sound = sgGeneral.add(new BoolSetting.Builder()
+        .name("sound")
+        .description("Play an XP orb sound effect when a notification appears.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Double> soundVolume = sgGeneral.add(new DoubleSetting.Builder()
+        .name("sound-volume")
+        .description("Volume of the notification XP sound.")
+        .defaultValue(0.9)
+        .min(0.1)
+        .max(2.0)
+        .sliderRange(0.1, 2.0)
+        .visible(sound::get)
+        .build()
+    );
+
+    private final Setting<Double> soundPitch = sgGeneral.add(new DoubleSetting.Builder()
+        .name("sound-pitch")
+        .description("Base pitch of the notification XP sound.")
+        .defaultValue(1.0)
+        .min(0.5)
+        .max(2.0)
+        .sliderRange(0.5, 2.0)
+        .visible(sound::get)
+        .build()
+    );
+
     private final List<Toast> toasts = new ArrayList<>();
     private final EmberAnim.Clock clock = new EmberAnim.Clock();
     private Set<Module> lastActive;
+    private long lastSoundMs;
 
     public EmberNotificationsHud() {
         super(INFO);
@@ -197,11 +231,30 @@ public class EmberNotificationsHud extends HudElement {
             this.subtitle = subtitle;
             this.kind = kind;
             this.customColor = customColor;
+            this.pulse = 1f;
         }
 
         Color color() {
             return kind.resolveColor(customColor);
         }
+    }
+
+    private void playNotificationSound(Kind kind) {
+        if (!sound.get() || mc == null || mc.getSoundManager() == null) return;
+        long now = System.currentTimeMillis();
+        if (now - lastSoundMs < 45) return;
+        lastSoundMs = now;
+
+        float basePitch = soundPitch.get().floatValue();
+        float pitch = switch (kind) {
+            case TOGGLE_ON, SUCCESS -> basePitch * 1.08f;
+            case TOGGLE_OFF -> basePitch * 0.84f;
+            case WARNING, ERROR -> basePitch * 0.94f;
+            case INFO -> basePitch;
+        };
+        float volume = soundVolume.get().floatValue();
+
+        mc.getSoundManager().play(PositionedSoundInstance.master(SoundEvents.ENTITY_EXPERIENCE_ORB_PICKUP, pitch, volume));
     }
 
     private void drainIncoming() {
@@ -254,8 +307,11 @@ public class EmberNotificationsHud extends HudElement {
             }
 
             if (!merged) {
+                incoming.pulse = 1f;
                 toasts.add(incoming);
             }
+
+            playNotificationSound(incoming.kind);
         }
     }
 
@@ -279,20 +335,20 @@ public class EmberNotificationsHud extends HudElement {
         }
 
         double s = scale.get();
-        double titleScale = 0.88 * s;
-        double subScale = 0.74 * s;
-        double badgeScale = 0.62 * s;
+        double titleScale = 1.18 * s;
+        double subScale = 0.96 * s;
+        double badgeScale = 0.80 * s;
         double titleH = renderer.textHeight(true, titleScale);
         double subH = renderer.textHeight(true, subScale);
 
-        double minW = 195 * s;
-        double maxW = 305 * s;
-        double padX = 10 * s;
-        double padY = 8.5 * s;
-        double chipSize = 22 * s;
-        double chipGap = 8.5 * s;
-        double gap = 6 * s;
-        double baseRowH = Math.max(chipSize + padY * 2, padY * 2 + titleH + subH + 3 * s) + 3 * s;
+        double minW = 275 * s;
+        double maxW = 410 * s;
+        double padX = 14 * s;
+        double padY = 12 * s;
+        double chipSize = 31 * s;
+        double chipGap = 11.5 * s;
+        double gap = 8.5 * s;
+        double baseRowH = Math.max(chipSize + padY * 2, padY * 2 + titleH + subH + 4 * s) + 4.5 * s;
         double boxH = maxShown.get() * (baseRowH + gap);
 
         setSize(maxW, boxH);
@@ -301,7 +357,7 @@ public class EmberNotificationsHud extends HudElement {
             toast.age += dt;
             float target = toast.age < maxLife ? 1f : 0f;
             toast.anim = EmberAnim.approach(toast.anim, target, dt, target > 0.5f ? 0.065 : 0.08);
-            toast.pulse = EmberAnim.approach(toast.pulse, 0f, dt, 0.12);
+            toast.pulse = EmberAnim.approach(toast.pulse, 0f, dt, 0.16);
         }
         toasts.removeIf(toast -> toast.age >= maxLife && toast.anim <= 0.01f);
 
@@ -323,14 +379,14 @@ public class EmberNotificationsHud extends HudElement {
 
             targetY -= (layout.h + gap) * Math.min(1f, toast.anim * 1.15f);
             if (Double.isNaN(toast.renderY)) {
-                toast.renderY = targetY + 10 * s;
+                toast.renderY = targetY + 14 * s;
             } else {
                 toast.renderY = EmberAnim.approach(toast.renderY, targetY, dt, 0.055);
             }
 
             boolean entering = toast.age < maxLife;
             double eased = entering ? EmberAnim.backOut(Math.min(1.0, toast.anim)) : EmberAnim.easeOut(toast.anim);
-            double slide = (1.0 - eased) * 52 * s;
+            double slide = (1.0 - eased) * 68 * s;
             double cardX = x + maxW - layout.w + slide;
             double progress = Math.max(0, Math.min(1, 1.0 - toast.age / maxLife));
 
@@ -344,9 +400,9 @@ public class EmberNotificationsHud extends HudElement {
                                    double padX, double padY, double chipSize, double chipGap,
                                    double titleScale, double subScale, double badgeScale, double titleH, double subH) {
         String badgeText = toast.repeatCount > 1 ? "x" + toast.repeatCount : toast.kind.badge;
-        double badgeW = badgeText != null ? renderer.textWidth(badgeText, true, badgeScale) + 10 * s : 0;
+        double badgeW = badgeText != null ? renderer.textWidth(badgeText, true, badgeScale) + 12 * s : 0;
 
-        double leftContentOffset = padX + 4 * s + chipSize + chipGap;
+        double leftContentOffset = padX + 5.5 * s + chipSize + chipGap;
         double maxTextW = maxW - leftContentOffset - padX;
 
         List<String> lines = wrapSubtitle(renderer, toast.subtitle, maxTextW, subScale);
@@ -355,13 +411,13 @@ public class EmberNotificationsHud extends HudElement {
             longestSubW = Math.max(longestSubW, renderer.textWidth(line, true, subScale));
         }
 
-        double titleRowW = renderer.textWidth(toast.title, true, titleScale) + (badgeW > 0 ? badgeW + 8 * s : 0);
+        double titleRowW = renderer.textWidth(toast.title, true, titleScale) + (badgeW > 0 ? badgeW + 10 * s : 0);
         double contentW = Math.max(titleRowW, longestSubW);
         double w = Math.max(minW, Math.min(maxW, leftContentOffset + contentW + padX));
 
         int lineCount = Math.max(1, lines.size());
-        double textBlockH = titleH + 2.5 * s + lineCount * subH + (lineCount - 1) * (1.5 * s);
-        double h = Math.max(chipSize + padY * 2, padY * 2 + textBlockH) + 3.5 * s;
+        double textBlockH = titleH + 3.5 * s + lineCount * subH + (lineCount - 1) * (2.0 * s);
+        double h = Math.max(chipSize + padY * 2, padY * 2 + textBlockH) + 5.0 * s;
 
         return new CardLayout(w, h, lines, badgeText, badgeW);
     }
@@ -419,42 +475,53 @@ public class EmberNotificationsHud extends HudElement {
 
         double w = layout.w;
         double h = layout.h;
-        double padX = 10 * s;
-        double padY = 8.5 * s;
-        double chipSize = 22 * s;
-        double chipGap = 8.5 * s;
-        double radius = 8 * s;
+        double padX = 14 * s;
+        double padY = 12 * s;
+        double chipSize = 31 * s;
+        double chipGap = 11.5 * s;
+        double radius = 10 * s;
 
         Color color = toast.color();
         Color bright = new Color(255, 255, 255, (int) (255 * a));
-        Color dim = new Color(165, 165, 178, (int) (245 * a));
+        Color dim = new Color(185, 185, 198, (int) (250 * a));
         Color bg = EmberStrip.background();
 
         if (glow.get()) {
-            int glowAlpha = (int) ((135 + 60 * toast.pulse) * a);
-            renderer.softGlow(tx, ty, w, h, radius, 9 * s, withAlpha(color, glowAlpha));
+            int glowAlpha = (int) ((165 + 75 * toast.pulse) * a);
+            renderer.softGlow(tx, ty, w, h, radius, 14 * s, withAlpha(color, glowAlpha));
         }
 
-        renderer.dropShadow(tx, ty, w, h, radius, 20 * s, a);
+        renderer.dropShadow(tx, ty, w, h, radius, 26 * s, a);
+
+        // High-visibility colored rim around the card
+        double rimPad = 1.4 * s;
+        int rimAlpha = (int) ((105 + 120 * toast.pulse) * a);
+        renderer.roundedQuad(tx - rimPad, ty - rimPad, w + rimPad * 2, h + rimPad * 2, radius + rimPad, withAlpha(color, rimAlpha));
+
         EmberStrip.panel(renderer, tx, ty, w, h, radius, a);
 
-        // Left vertical accent bar
-        double barH = h - 14 * s;
-        renderer.roundedQuad(tx + 3.5 * s, ty + 6 * s, 2.5 * s, barH, 1.25 * s, withAlpha(color, (int) (245 * a)));
+        // Entrance flash tint so newly arrived notifications immediately catch the eye
+        if (toast.pulse > 0.01f) {
+            renderer.roundedQuad(tx, ty, w, h, radius, withAlpha(color, (int) (42 * toast.pulse * a)));
+        }
+
+        // Bold left vertical accent bar
+        double barH = h - 16 * s;
+        renderer.roundedQuad(tx + 4.5 * s, ty + 7 * s, 3.8 * s, barH, 1.9 * s, withAlpha(color, (int) (255 * a)));
 
         // Rounded icon chip with tinted background and procedural glyph
-        double chipX = tx + padX + 2 * s;
-        double chipY = ty + (h - 3 * s - chipSize) / 2;
-        double chipRadius = 6 * s;
-        renderer.roundedQuad(chipX - 0.8 * s, chipY - 0.8 * s, chipSize + 1.6 * s, chipSize + 1.6 * s, chipRadius + 0.8 * s, withAlpha(color, (int) (75 * a)));
+        double chipX = tx + padX + 3 * s;
+        double chipY = ty + (h - 4 * s - chipSize) / 2;
+        double chipRadius = 8 * s;
+        renderer.roundedQuad(chipX - 1.1 * s, chipY - 1.1 * s, chipSize + 2.2 * s, chipSize + 2.2 * s, chipRadius + 1.1 * s, withAlpha(color, (int) (95 * a)));
         renderer.roundedQuad(chipX, chipY, chipSize, chipSize, chipRadius, new Color(
-            (bg.r * 4 + color.r) / 5,
-            (bg.g * 4 + color.g) / 5,
-            (bg.b * 4 + color.b) / 5,
-            (int) (235 * a)
+            (bg.r * 3 + color.r) / 4,
+            (bg.g * 3 + color.g) / 4,
+            (bg.b * 3 + color.b) / 4,
+            (int) (242 * a)
         ));
 
-        double iconSize = 11.5 * s;
+        double iconSize = 16.0 * s;
         EmberIcons.draw(
             renderer,
             toast.kind.glyph,
@@ -471,41 +538,41 @@ public class EmberNotificationsHud extends HudElement {
         renderer.text(toast.title, textX, textTopY, bright, true, titleScale);
 
         if (layout.badgeText != null) {
-            double badgeH = renderer.textHeight(true, badgeScale) + 3.5 * s;
+            double badgeH = renderer.textHeight(true, badgeScale) + 5.0 * s;
             double badgeX = tx + w - padX - layout.badgeW;
             double badgeY = textTopY + (titleH - badgeH) / 2;
-            renderer.roundedQuad(badgeX, badgeY, layout.badgeW, badgeH, badgeH / 2, withAlpha(color, (int) (42 * a)));
+            renderer.roundedQuad(badgeX, badgeY, layout.badgeW, badgeH, badgeH / 2, withAlpha(color, (int) (55 * a)));
             double btW = renderer.textWidth(layout.badgeText, true, badgeScale);
             double btH = renderer.textHeight(true, badgeScale);
             renderer.text(
                 layout.badgeText,
                 badgeX + (layout.badgeW - btW) / 2,
                 badgeY + (badgeH - btH) / 2,
-                withAlpha(color, (int) (245 * a)),
+                withAlpha(color, (int) (255 * a)),
                 true,
                 badgeScale
             );
         }
 
         // Subtitle lines
-        double subY = textTopY + titleH + 2.5 * s;
+        double subY = textTopY + titleH + 3.5 * s;
         for (String line : layout.lines) {
             if (!line.isEmpty()) {
                 renderer.text(line, textX, subY, dim, true, subScale);
             }
-            subY += subH + 1.5 * s;
+            subY += subH + 2.0 * s;
         }
 
         // Recessed bottom progress track + smooth draining bar
-        double trackX = tx + 8 * s;
-        double trackW = w - 16 * s;
-        double trackY = ty + h - 4.2 * s;
-        double trackH = 2.0 * s;
-        renderer.roundedQuad(trackX, trackY, trackW, trackH, trackH / 2, new Color(0, 0, 0, (int) (130 * a)));
+        double trackX = tx + 10 * s;
+        double trackW = w - 20 * s;
+        double trackY = ty + h - 5.5 * s;
+        double trackH = 3.0 * s;
+        renderer.roundedQuad(trackX, trackY, trackW, trackH, trackH / 2, new Color(0, 0, 0, (int) (145 * a)));
 
         double barW = trackW * progress;
         if (barW > 1.5) {
-            renderer.roundedQuad(trackX, trackY, barW, trackH, trackH / 2, withAlpha(color, (int) (210 * a)));
+            renderer.roundedQuad(trackX, trackY, barW, trackH, trackH / 2, withAlpha(color, (int) (235 * a)));
         }
     }
 

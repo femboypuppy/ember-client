@@ -136,6 +136,7 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberBubblesHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberStatusBarHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberKeybindsHud.INFO);
+        register(meteordevelopment.meteorclient.systems.hud.elements.EmberStaffHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberArmorHud.INFO);
         register(meteordevelopment.meteorclient.systems.hud.elements.EmberTargetHud.INFO);
         register(ItemHud.INFO);
@@ -218,6 +219,7 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         add(meteordevelopment.meteorclient.systems.hud.elements.EmberStatusBarHud.INFO, 8, 8, XAnchor.Left, YAnchor.Top);
         add(meteordevelopment.meteorclient.systems.hud.elements.SpotifyHud.INFO, 8, 56, XAnchor.Left, YAnchor.Top);
         add(meteordevelopment.meteorclient.systems.hud.elements.EmberKeybindsHud.INFO, 8, 112, XAnchor.Left, YAnchor.Top);
+        add(meteordevelopment.meteorclient.systems.hud.elements.EmberStaffHud.INFO, 8, 168, XAnchor.Left, YAnchor.Top);
         add(meteordevelopment.meteorclient.systems.hud.elements.EmberArmorHud.INFO, 8, -48, XAnchor.Left, YAnchor.Bottom);
         add(meteordevelopment.meteorclient.systems.hud.elements.EmberBubblesHud.INFO, 8, -8, XAnchor.Left, YAnchor.Bottom);
         add(meteordevelopment.meteorclient.systems.hud.elements.EmberTargetHud.INFO, 0, -52, XAnchor.Center, YAnchor.Bottom);
@@ -360,14 +362,16 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
         }
 
         boolean hasNotifications = false;
+        boolean hasStaff = false;
         for (HudElement element : elements) {
-            if (element instanceof EmberNotificationsHud) {
-                hasNotifications = true;
-                break;
-            }
+            if (element instanceof EmberNotificationsHud) hasNotifications = true;
+            if (element instanceof EmberStaffHud) hasStaff = true;
         }
         if (!hasNotifications) {
             add(EmberNotificationsHud.INFO, -8, -8, XAnchor.Right, YAnchor.Bottom);
+        }
+        if (!hasStaff) {
+            add(EmberStaffHud.INFO, 8, 168, XAnchor.Left, YAnchor.Top);
         }
 
         return this;

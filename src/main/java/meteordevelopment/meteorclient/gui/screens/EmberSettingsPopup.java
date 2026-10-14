@@ -110,10 +110,12 @@ public class EmberSettingsPopup {
     private boolean anchorValid;
     /** {x, y, w, h} of the open list, or null - used to cull text drawn behind it. */
     private double[] dropdownRect;
+    private final EmberSubEditor subEditor;
 
 
     public EmberSettingsPopup(GuiTheme theme) {
         this.theme = theme;
+        this.subEditor = new EmberSubEditor(theme, () -> {}, this::close);
     }
 
     /** Flat near-black, matching the ClickGUI. Only the accent tracks the chosen colour. */
@@ -138,9 +140,11 @@ public class EmberSettingsPopup {
         expandedColors.clear();
         stopEditing(false);
         capturing = null;
+        subEditor.close();
     }
 
     public void close() {
+        subEditor.close();
         stopEditing(true);
         capturing = null;
         dragRow = null;
@@ -245,6 +249,11 @@ public class EmberSettingsPopup {
 
         float fade = 1f - (1f - openAnim) * (1f - openAnim) * (1f - openAnim);
 
+        if (subEditor.isOpen()) {
+            subEditor.render(r, mouseX, mouseY, fade, dt);
+            return;
+        }
+
         if (dragRow != null && mouseDown) applySlider(dragRow, dragHit, mx);
 
         List<Row> rows = buildRows();
@@ -281,7 +290,7 @@ public class EmberSettingsPopup {
 
         // Footer
         r.quad(x + PAD, bodyBottom, w - PAD * 2, 1, alpha(DIVIDER, fade));
-        text("Right-click a setting to reset it   Â·   Esc to close", x + w / 2, bodyBottom + (FOOTER_H - 9) / 2,
+        text("Right-click a setting to reset it   ·   Esc to close", x + w / 2, bodyBottom + (FOOTER_H - 9) / 2,
             alpha(TEXT_FAINT, fade), SMALL_SCALE, 2, 0);
 
     }
@@ -293,6 +302,10 @@ public class EmberSettingsPopup {
      */
     public void renderText(DrawContext graphics) {
         if (target == null) return;
+        if (subEditor.isOpen()) {
+            subEditor.renderText(graphics);
+            return;
+        }
         flushText(graphics);
     }
 
@@ -386,7 +399,7 @@ public class EmberSettingsPopup {
                 boolean bHover = over(ctrlX, by, CTRL_W, bh);
                 float ba = anim(row + "btn", bHover, dt);
                 r.roundedRect(ctrlX, by, CTRL_W, bh, 8, alpha(lerp(CONTROL_BG, CONTROL_HOVER, ba), fade));
-                text("Open editor", ctrlX + CTRL_W / 2, by + (bh - 9) / 2, alpha(accent(), fade), LABEL_SCALE, 2, 0);
+                text(EmberSubEditor.summaryText(row.setting()), ctrlX + CTRL_W / 2, by + (bh - 9) / 2, alpha(accent(), fade), LABEL_SCALE, 2, CTRL_W - 16);
                 hits.add(new Hit(ctrlX, by, CTRL_W, bh, row, "editor"));
             }
             default -> {
@@ -747,6 +760,7 @@ public class EmberSettingsPopup {
 
     public boolean mouseClicked(double cx, double cy, int button) {
         if (target == null || closing) return true;
+        if (subEditor.isOpen()) return subEditor.mouseClicked(cx, cy, button);
 
         mouseDown = true;
 
@@ -864,9 +878,11 @@ public class EmberSettingsPopup {
                 }
             }
             case "editor" -> {
-                Runnable openEditor = target.openNativeEditor();
-                close();
-                if (openEditor != null) openEditor.run();
+                if (button == 1) {
+                    reset(row);
+                } else if (row != null && row.setting() != null) {
+                    subEditor.open(row.setting());
+                }
             }
             default -> {
             }
@@ -876,6 +892,7 @@ public class EmberSettingsPopup {
     }
 
     public void mouseReleased() {
+        subEditor.mouseReleased();
         mouseDown = false;
         dragRow = null;
         dragHit = null;
@@ -883,6 +900,7 @@ public class EmberSettingsPopup {
 
     public boolean mouseScrolled(double amount) {
         if (target == null) return false;
+        if (subEditor.isOpen()) return subEditor.mouseScrolled(amount);
         // Its anchor belongs to a row that is about to move, so dismiss rather than drift.
         dropdownRow = null;
         scroll = MathHelper.clamp(scroll - amount * ROW_H * 0.8, 0, maxScroll);
@@ -891,6 +909,7 @@ public class EmberSettingsPopup {
 
     public boolean keyPressed(KeyInput input) {
         if (target == null) return false;
+        if (subEditor.isOpen()) return subEditor.keyPressed(input);
         int key = input.key();
 
         if (capturing != null) {
@@ -925,6 +944,7 @@ public class EmberSettingsPopup {
 
     public boolean charTyped(CharInput input) {
         if (target == null) return false;
+        if (subEditor.isOpen()) return subEditor.charTyped(input);
         if (editing == null && editingNumber == null) return true;
 
         char c = (char) input.codepoint();

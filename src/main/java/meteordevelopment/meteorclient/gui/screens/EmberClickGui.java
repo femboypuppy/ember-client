@@ -49,6 +49,8 @@ public class EmberClickGui extends TabScreen {
 
     private final List<Panel> panels = new ArrayList<>();
     private Panel dragging = null;
+    private HudElement draggingHud = null;
+    private int hudDragLastX, hudDragLastY;
     private double dragOX, dragOY;
     private double mx, my;
     private double rawMx, rawMy;
@@ -105,7 +107,7 @@ public class EmberClickGui extends TabScreen {
             cp.icon = new ItemStack(Items.ENDER_EYE);
             List<ClientEntry> entries = new ArrayList<>();
 
-            String[] wanted = {"ember-status-bar", "ember-bubbles", "ember-keybinds", "ember-armor",
+            String[] wanted = {"ember-status-bar", "ember-bubbles", "ember-keybinds", "ember-staff", "ember-armor",
                 "ember-target", "ember-module-list", "ember-notifications", "spotify"};
 
             for (String wName : wanted) {
@@ -121,6 +123,7 @@ public class EmberClickGui extends TabScreen {
                             case "ember-notifications" -> Hud.get().add(info, -8, -8, XAnchor.Right, YAnchor.Bottom);
                             case "ember-status-bar" -> Hud.get().add(info, 8, 8, XAnchor.Left, YAnchor.Top);
                             case "ember-keybinds" -> Hud.get().add(info, 8, 112, XAnchor.Left, YAnchor.Top);
+                            case "ember-staff" -> Hud.get().add(info, 8, 168, XAnchor.Left, YAnchor.Top);
                             case "ember-armor" -> Hud.get().add(info, 8, -48, XAnchor.Left, YAnchor.Bottom);
                             case "ember-bubbles" -> Hud.get().add(info, 8, -8, XAnchor.Left, YAnchor.Bottom);
                             case "ember-target" -> Hud.get().add(info, 0, -52, XAnchor.Center, YAnchor.Bottom);
@@ -224,6 +227,15 @@ public class EmberClickGui extends TabScreen {
         if (dragging != null) {
             dragging.x = rawMx - dragOX;
             dragging.y = rawMy - dragOY;
+        }
+        if (draggingHud != null) {
+            int dx = (int) rawMx - hudDragLastX;
+            int dy = (int) rawMy - hudDragLastY;
+            if (dx != 0 || dy != 0) {
+                draggingHud.move(dx, dy);
+                hudDragLastX = (int) rawMx;
+                hudDragLastY = (int) rawMy;
+            }
         }
 
         openElapsed += frameDt;
@@ -692,12 +704,31 @@ public class EmberClickGui extends TabScreen {
                 rowY += MH;
             }
         }
+
+        // Allow dragging the Staff Detector HUD widget directly on screen while ClickGUI is open
+        for (HudElement el : Hud.get()) {
+            if (el instanceof meteordevelopment.meteorclient.systems.hud.elements.EmberStaffHud && el.getWidth() > 0 && el.getHeight() > 0) {
+                if (cx >= el.x && cx <= el.x + el.getWidth() && cy >= el.y && cy <= el.y + el.getHeight()) {
+                    if (btn == 0) {
+                        draggingHud = el;
+                        hudDragLastX = (int) cx;
+                        hudDragLastY = (int) cy;
+                        return true;
+                    } else if (btn == 1) {
+                        openHudSettings(el);
+                        return true;
+                    }
+                }
+            }
+        }
+
         return super.mouseClicked(click, doubled);
     }
 
     @Override
     public boolean mouseReleased(Click click) {
         popup.mouseReleased();
+        draggingHud = null;
 
         if (dragging != null) {
             saved.put(dragging.name, new double[]{dragging.x, dragging.y, dragging.collapsed ? 1 : 0});

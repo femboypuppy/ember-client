@@ -205,7 +205,7 @@ public abstract class GameRendererMixin implements IGameRenderer {
         Freecam freecam = Modules.get().get(Freecam.class);
         boolean highwayBuilder = Modules.get().isActive(HighwayBuilder.class);
 
-        if ((freecam.isActive() || highwayBuilder) && client.getCameraEntity() != null && !freecamSet) {
+        if ((freecam.interactFromCamera() || highwayBuilder) && client.getCameraEntity() != null && !freecamSet) {
             info.cancel();
             Entity cameraE = client.getCameraEntity();
 

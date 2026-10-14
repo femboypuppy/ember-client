@@ -99,11 +99,6 @@ public class MeteorToast implements Toast {
     public void update(ToastManager manager, long time) {
         if (start == -1) start = time;
 
-        if (!playedSound) {
-            if (customSound != null) mc.getSoundManager().play(customSound);
-            playedSound = true;
-        }
-
         if (meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud.shouldInterceptChat()) {
             String sub = text != null ? text.getString() : "";
             meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud.push(
@@ -111,8 +106,14 @@ public class MeteorToast implements Toast {
                 sub,
                 meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud.Kind.INFO
             );
+            playedSound = true;
             visibility = Visibility.HIDE;
             return;
+        }
+
+        if (!playedSound) {
+            if (customSound != null) mc.getSoundManager().play(customSound);
+            playedSound = true;
         }
 
         visibility = time - start >= duration ? Visibility.HIDE : Visibility.SHOW;

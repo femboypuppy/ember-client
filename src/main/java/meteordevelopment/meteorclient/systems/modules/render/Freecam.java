@@ -113,10 +113,18 @@ public class Freecam extends Module {
         .build()
     );
 
+    private final Setting<Boolean> cameraInteraction = sgGeneral.add(new BoolSetting.Builder()
+        .name("camera-interaction")
+        .description("Raycast and break/interact from the freecam camera instead of where your character is looking.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder()
         .name("rotate")
         .description("Rotates to the block or entity you are looking at.")
         .defaultValue(false)
+        .visible(cameraInteraction::get)
         .build()
     );
 
@@ -244,16 +252,16 @@ public class Freecam extends Module {
         double velY = 0;
         double velZ = 0;
 
-        if (rotate.get()) {
+        if (cameraInteraction.get() && rotate.get() && mc.crosshairTarget != null) {
             BlockPos crossHairPos;
             Vec3d crossHairPosition;
 
             if (mc.crosshairTarget instanceof EntityHitResult) {
                 crossHairPos = ((EntityHitResult) mc.crosshairTarget).getEntity().getBlockPos();
                 Rotations.rotate(Rotations.getYaw(crossHairPos), Rotations.getPitch(crossHairPos), 0, null);
-            } else {
+            } else if (mc.crosshairTarget instanceof BlockHitResult bhr) {
                 crossHairPosition = mc.crosshairTarget.getPos();
-                crossHairPos = ((BlockHitResult) mc.crosshairTarget).getBlockPos();
+                crossHairPos = bhr.getBlockPos();
 
                 if (!mc.world.getBlockState(crossHairPos).isAir()) {
                     Rotations.rotate(Rotations.getYaw(crossHairPosition), Rotations.getPitch(crossHairPosition), 0, null);
@@ -472,6 +480,10 @@ public class Freecam extends Module {
         pitch += (float) deltaY;
 
         pitch = MathHelper.clamp(pitch, -90, 90);
+    }
+
+    public boolean interactFromCamera() {
+        return isActive() && cameraInteraction.get();
     }
 
     public boolean renderHands() {
