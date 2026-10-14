@@ -268,6 +268,10 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
             }
         }
 
+        if (!deferNotificationsToScreen) {
+            meteordevelopment.meteorclient.systems.modules.donut.StaffWatchingEffect.get().render(HudRenderer.INSTANCE);
+        }
+
         HudRenderer.INSTANCE.end();
     }
 
@@ -275,15 +279,16 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
     public void renderNotificationsOverlay(net.minecraft.client.gui.DrawContext context) {
         if (Utils.isLoading() || !active) return;
 
+        HudRenderer.INSTANCE.begin(context);
         for (HudElement element : elements) {
             if (element instanceof EmberNotificationsHud && element.isActive()) {
                 element.updatePos();
-                HudRenderer.INSTANCE.begin(context);
                 element.render(HudRenderer.INSTANCE);
-                HudRenderer.INSTANCE.end();
                 break;
             }
         }
+        meteordevelopment.meteorclient.systems.modules.donut.StaffWatchingEffect.get().render(HudRenderer.INSTANCE);
+        HudRenderer.INSTANCE.end();
     }
 
     private boolean shouldHideHud() {

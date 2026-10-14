@@ -189,6 +189,25 @@ public class StaffDetector extends Module {
         .build()
     );
 
+    private final Setting<Boolean> elderAnimation = sgAlerts.add(new BoolSetting.Builder()
+        .name("elder-guardian-animation")
+        .description("Play the Elder Guardian staff-head curse animation and siren when staff spectate, vanish, or enter your region.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> testAnimation = sgAlerts.add(new BoolSetting.Builder()
+        .name("test-elder-animation")
+        .description("Click to immediately preview the Elder Guardian staff-head curse animation and siren.")
+        .defaultValue(false)
+        .onChanged(v -> {
+            if (v) {
+                triggerTestAnimation();
+            }
+        })
+        .build()
+    );
+
     /** Staff currently online or recently left (keyed by lowercase name). */
     private final Map<String, StaffEntry> tracked = new LinkedHashMap<>();
     private final Set<String> learnedStarredNames = new HashSet<>();
@@ -202,6 +221,35 @@ public class StaffDetector extends Module {
         super(Categories.Donut, "staff-detector", "Displays an on-screen UI of online moderators that updates as they join or leave.");
     }
 
+    private void triggerTestAnimation() {
+        String sampleName = "DrDonutt";
+        for (StaffEntry entry : tracked.values()) {
+            if (entry.online && entry.name != null && !entry.name.isBlank()) {
+                sampleName = entry.name;
+                break;
+            }
+        }
+        StaffWatchingEffect.get().play(null, sampleName, "ELDER GUARDIAN STAFF CURSE PREVIEW", 0);
+        testAnimation.set(false);
+    }
+
+    public boolean isWatchingOrInRegion(String name) {
+        if (name == null || name.isBlank()) return false;
+        StaffEntry entry = tracked.get(name.trim().toLowerCase(Locale.ROOT));
+        return entry != null && entry.online && (entry.inRegion || entry.nearby || entry.spectator || entry.vanished);
+    }
+
+    public boolean isTrackedStaffName(String name) {
+        if (name == null || name.isBlank()) return false;
+        String lower = name.trim().toLowerCase(Locale.ROOT);
+        if (useDonutRoster.get() && DEFAULT_STAFF_LOWER.contains(lower)) return true;
+        if (learnedStarredNames.contains(lower) || tracked.containsKey(lower)) return true;
+        for (String listed : staffNames.get()) {
+            if (listed != null && listed.trim().equalsIgnoreCase(name.trim())) return true;
+        }
+        return false;
+    }
+
     @Override
     public void onActivate() {
         tracked.clear();
@@ -211,6 +259,10 @@ public class StaffDetector extends Module {
         listedState.clear();
         primed = false;
         lastScanMs = 0;
+
+        for (String staff : DEFAULT_DONUT_STAFF) {
+            StaffFaceSkins.preload(staff);
+        }
 
         ensureHudElementActive();
     }
@@ -343,7 +395,7 @@ public class StaffDetector extends Module {
             String rank = currentRanks.get(key);
             Identifier skin = info.getSkinTextures() != null && info.getSkinTextures().body() != null
                 ? info.getSkinTextures().body().texturePath()
-                : null;
+                : StaffFaceSkins.getOrFetch(uuid, name);
             int ping = info.getLatency();
             boolean isSpectator = info.getGameMode() == GameMode.SPECTATOR;
             boolean isVanished = uuid != null && Boolean.FALSE.equals(listedState.get(uuid));
@@ -360,6 +412,9 @@ public class StaffDetector extends Module {
                 tracked.put(key, created);
                 if (primed) {
                     alert(name + " joined", statusSummary(created));
+                    if (elderAnimation.get() && (isSpectator || isVanished || inRegion)) {
+                        StaffWatchingEffect.get().play(uuid, name, statusSummary(created) + " IN YOUR REGION", 0);
+                    }
                 }
             } else {
                 boolean wasOffline = !existing.online;
@@ -387,12 +442,21 @@ public class StaffDetector extends Module {
                     if (!wasSpectator && isSpectator) {
                         existing.pulse = 1f;
                         alert(name + " entered Spectator", rank);
+                        if (elderAnimation.get()) {
+                            StaffWatchingEffect.get().play(uuid, name, "SWITCHED TO SPECTATOR MODE", 0);
+                        }
                     } else if (!wasVanished && isVanished) {
                         existing.pulse = 1f;
                         alert(name + " vanished", rank);
+                        if (elderAnimation.get()) {
+                            StaffWatchingEffect.get().play(uuid, name, "HIDDEN FROM TAB (VANISHED)", 0);
+                        }
                     } else if (!wasInRegion && inRegion && alertNearby.get()) {
                         existing.pulse = 1f;
                         alert(name + " is in your region!", rank);
+                        if (elderAnimation.get()) {
+                            StaffWatchingEffect.get().play(uuid, name, "ACTIVE ON YOUR REGION SHARD", 0);
+                        }
                     }
                 }
             }
@@ -417,7 +481,12 @@ public class StaffDetector extends Module {
                     if (!entry.vanished) {
                         entry.vanished = true;
                         entry.pulse = 1f;
-                        if (primed) alert(entry.name + " vanished nearby!", entry.rank);
+                        if (primed) {
+                            alert(entry.name + " vanished nearby!", entry.rank);
+                            if (elderAnimation.get()) {
+                                StaffWatchingEffect.get().play(null, entry.name, "VANISHED NEARBY IN WORLD", 0);
+                            }
+                        }
                     }
                 } else {
                     entry.online = false;
@@ -459,6 +528,9 @@ public class StaffDetector extends Module {
                 if (nearbySet.add(key) && alertNearby.get()) {
                     entry.pulse = 1f;
                     alert(entry.name + " is near you", String.format("%.0f blocks away", entry.distance));
+                    if (elderAnimation.get()) {
+                        StaffWatchingEffect.get().play(entity.getUuid(), entry.name, String.format("NEARBY (%.0f BLOCKS AWAY)", entry.distance), 0);
+                    }
                 }
             } else {
                 entry.nearby = false;

@@ -396,6 +396,7 @@ public class Modules extends System<Modules> {
         add(new meteordevelopment.meteorclient.systems.modules.donut.AdvancedStashFinder());
         add(new meteordevelopment.meteorclient.systems.modules.donut.AHSell());
         add(new meteordevelopment.meteorclient.systems.modules.donut.AnchorMacro());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AntiVanish());
         add(new meteordevelopment.meteorclient.systems.modules.donut.AutoHome());
         add(new meteordevelopment.meteorclient.systems.modules.donut.AutoInvTotem());
         add(new meteordevelopment.meteorclient.systems.modules.donut.AutoPearlChain());
