@@ -117,6 +117,7 @@ public class AntiVanish extends Module {
     private final Map<String, HiddenSpell> hiddenSpells = new LinkedHashMap<>();
     private final Deque<RecentMessage> recentMessages = new ArrayDeque<>();
     private final Map<UUID, Long> listedSinceMs = new HashMap<>();
+    private final Map<UUID, Long> regionProvenMs = new ConcurrentHashMap<>();
     private final Set<Integer> completionRequestIds = ConcurrentHashMap.newKeySet();
     private final Set<String> learnedStaffNames = ConcurrentHashMap.newKeySet();
 
@@ -129,7 +130,12 @@ public class AntiVanish extends Module {
     private long lastCriticalMs;
     private long criticalUntilMs;
     private String criticalWatcher = "";
-    private Vec3d lastPlayerPos;
+
+    // Exact DonutSMP Goliath shard state tracking
+    private net.minecraft.client.world.ClientWorld trackedWorld;
+    private net.minecraft.client.network.ClientPlayerEntity trackedSelf;
+    private String trackedBrand;
+    private int trackedRegion = -1;
 
     public AntiVanish() {
         super(Categories.Donut, "anti-vanish", "Detects vanished staff teleporting to or spectating you and plays the Elder Guardian staff-head curse animation.");
@@ -194,6 +200,41 @@ public class AntiVanish extends Module {
         return false;
     }
 
+    private boolean checkShardMoved() {
+        var nowWorld = mc.world;
+        var nowSelf = mc.player;
+        if (nowWorld == null || nowSelf == null) {
+            clearShardTracker();
+            return false;
+        }
+
+        String nowBrand = mc.getNetworkHandler() != null ? mc.getNetworkHandler().getBrand() : null;
+        RegionMap.RegionCell cell = nowWorld.getRegistryKey() == net.minecraft.world.World.OVERWORLD
+            ? RegionMap.getRegionAt(nowSelf.getBlockX(), nowSelf.getBlockZ())
+            : null;
+        int nowRegion = cell != null ? cell.id() : -1;
+
+        boolean moved = trackedWorld != null && (
+            nowWorld != trackedWorld
+            || (nowSelf != trackedSelf && !trackedSelf.isDead())
+            || nowRegion != trackedRegion
+            || (nowBrand != null && trackedBrand != null && !nowBrand.equals(trackedBrand))
+        );
+
+        trackedWorld = nowWorld;
+        trackedSelf = nowSelf;
+        trackedBrand = nowBrand;
+        trackedRegion = nowRegion;
+        return moved;
+    }
+
+    private void clearShardTracker() {
+        trackedWorld = null;
+        trackedSelf = null;
+        trackedBrand = null;
+        trackedRegion = -1;
+    }
+
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null || mc.getNetworkHandler() == null) {
@@ -201,12 +242,9 @@ public class AntiVanish extends Module {
             return;
         }
 
-        // Detect shard/teleport jumps (> 128 blocks in a single tick) to reset stale local state
-        Vec3d pos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
-        if (lastPlayerPos != null && pos.squaredDistanceTo(lastPlayerPos) > 128.0 * 128.0) {
+        if (checkShardMoved()) {
             resetRuntime();
         }
-        lastPlayerPos = pos;
 
         tickCounter++;
 
@@ -706,6 +744,13 @@ public class AntiVanish extends Module {
             }
         }
 
+        if (uuid != null) {
+            Long provenAt = regionProvenMs.get(uuid);
+            if (provenAt != null && System.currentTimeMillis() - provenAt < 600_000L) {
+                return new RegionProof(uuid, -1);
+            }
+        }
+
         StaffDetector detector = Modules.get() != null ? Modules.get().get(StaffDetector.class) : null;
         if (detector != null && detector.isWatchingOrInRegion(name)) {
             return new RegionProof(uuid, -1);
@@ -746,15 +791,20 @@ public class AntiVanish extends Module {
     private void announceGamemode(UUID uuid, String gameMode) {
         if (uuid == null || (mc.player != null && mc.player.getUuid().equals(uuid))) return;
 
-        KnownPlayer known = knownPlayers.get(uuid);
-        if (known == null || !isKnownStaffName(known.name)) return;
+        String name = knownName(uuid);
+        if (name == null || !isKnownStaffName(name)) return;
+
+        long now = System.currentTimeMillis();
+        regionProvenMs.put(uuid, now);
 
         if (GameMode.SPECTATOR.asString().equalsIgnoreCase(gameMode)) {
-            if (credibleSubject(uuid, known.name)) {
-                reportHidden(uuid, known.name, true, "Vanish Event: switched to spectator", "Spectator Mode", 100);
-            }
+            reportHidden(uuid, name, true, "Vanish Event: switched to spectator", "Spectator Mode", 100);
+            watchingYou(name, new RegionProof(uuid, -1), "SWITCHED TO SPECTATOR IN YOUR REGION");
         } else {
-            endSpell(known.name, true, 0L);
+            endSpell(name, true, 0L);
+            if (now - lastCriticalMs >= CRITICAL_COOLDOWN_MS) {
+                watchingYou(name, new RegionProof(uuid, -1), "TELEPORTED / ACTIVE IN YOUR REGION");
+            }
         }
     }
 
@@ -1128,6 +1178,7 @@ public class AntiVanish extends Module {
         hiddenSpells.clear();
         recentMessages.clear();
         listedSinceMs.clear();
+        regionProvenMs.clear();
         completionRequestIds.clear();
 
         pendingCompletionNames = null;
@@ -1139,7 +1190,6 @@ public class AntiVanish extends Module {
         lastCriticalMs = 0L;
         criticalUntilMs = 0L;
         criticalWatcher = "";
-        lastPlayerPos = null;
     }
 
     private record Observation(ObservationType type, UUID profileId, int entityId, double x, double y, double z, String detail) {
