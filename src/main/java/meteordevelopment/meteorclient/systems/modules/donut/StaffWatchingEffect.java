@@ -4,20 +4,20 @@ import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
-import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.util.Identifier;
 
+import java.util.Locale;
 import java.util.UUID;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 /**
- * Renders the Elder Guardian curse-style sweeping Staff Head jump-scare animation,
- * crimson screen flash/heartbeat pulse, and top-center "<Staff> is watching you" banner.
+ * Renders the 10-second Elder Guardian curse-style sweeping Staff Head animation,
+ * crimson screen flash/heartbeat pulse, and top-center "<Staff> is in your region" banner.
  */
 public final class StaffWatchingEffect {
     private static final StaffWatchingEffect INSTANCE = new StaffWatchingEffect();
@@ -28,10 +28,9 @@ public final class StaffWatchingEffect {
     private static final float ELDER_SWEEP_SECONDS = 2.65f;
     private static final float CARD_START_SECONDS = 0.35f;
     private static final float POP_SECONDS = 0.28f;
-    private static final float END_SECONDS = 5.0f;
+    private static final float END_SECONDS = 10.0f;
 
     private static final int BEAT_TICKS = 24;
-    private static final int GONE_TICKS = 60;
     private static final float PULSE_BASE = 0.045f;
     private static final float PULSE_THUMP = 0.125f;
 
@@ -42,12 +41,8 @@ public final class StaffWatchingEffect {
     private StaffFaceSkins.Skin skin;
     private long startNanos;
     private boolean active;
-    private boolean looping;
     private int beatTicks;
-    private int absentTicks;
     private long lastBeatNanos;
-    private long lastFrameNanos;
-    private float level;
 
     private StaffWatchingEffect() {
         MeteorClient.EVENT_BUS.subscribe(this);
@@ -65,18 +60,17 @@ public final class StaffWatchingEffect {
 
         watcherId = id;
         watcherName = cleanName;
-        titleText = (extraWatchers > 0 ? cleanName + " +" + extraWatchers : cleanName) + " is watching you";
-        subtitleText = (subtitle == null || subtitle.isBlank()) ? "VANISHED STAFF DETECTED NEARBY" : subtitle;
+
+        String who = extraWatchers > 0 ? cleanName + " +" + extraWatchers : cleanName;
+        boolean physicallyNear = subtitle != null && subtitle.toUpperCase(Locale.ROOT).contains("NEARBY");
+        titleText = physicallyNear ? who + " is near you" : who + " is in your region";
+        subtitleText = (subtitle == null || subtitle.isBlank()) ? "STAFF DETECTED IN YOUR REGION" : subtitle;
         skin = StaffFaceSkins.get(id, cleanName);
 
         long now = System.nanoTime();
         startNanos = now;
         lastBeatNanos = now;
-        lastFrameNanos = now;
         beatTicks = 0;
-        absentTicks = 0;
-        level = 1.0f;
-        looping = true;
         active = true;
 
         playCurseSiren();
@@ -84,7 +78,6 @@ public final class StaffWatchingEffect {
 
     public void cancel() {
         active = false;
-        looping = false;
     }
 
     public boolean isActive() {
@@ -112,56 +105,39 @@ public final class StaffWatchingEffect {
     private void onTick(TickEvent.Post event) {
         if (mc == null || mc.world == null || mc.player == null) {
             active = false;
-            looping = false;
             return;
         }
 
         if (!active) return;
 
-        if (looping) {
-            if (isWatcherStillPresent()) {
-                absentTicks = 0;
-            } else if (++absentTicks > GONE_TICKS) {
-                looping = false;
-            }
-
-            if (looping && ++beatTicks >= BEAT_TICKS) {
-                beatTicks = 0;
-                lastBeatNanos = System.nanoTime();
-                playHeartbeat();
-            }
-        }
-
-        if (!looping && level <= 0.01f && elapsedSeconds() >= END_SECONDS) {
+        float elapsed = elapsedSeconds();
+        if (elapsed >= END_SECONDS) {
             active = false;
-        }
-    }
-
-    private boolean isWatcherStillPresent() {
-        if (Modules.get() == null) return false;
-
-        AntiVanish antiVanish = Modules.get().get(AntiVanish.class);
-        if (antiVanish != null && antiVanish.isActive() && antiVanish.isWatchingNow(watcherName)) {
-            return true;
+            return;
         }
 
-        StaffDetector detector = Modules.get().get(StaffDetector.class);
-        if (detector != null && detector.isActive() && detector.isWatchingOrInRegion(watcherName)) {
-            return true;
+        // Play heartbeat sound only during the 10-second animation window
+        if (++beatTicks >= BEAT_TICKS) {
+            beatTicks = 0;
+            lastBeatNanos = System.nanoTime();
+            playHeartbeat();
         }
-
-        return false;
     }
 
     public void render(HudRenderer renderer) {
         if (!active || mc == null) return;
 
         float seconds = elapsedSeconds();
-        long now = System.nanoTime();
-        float dt = Math.min(0.1f, (now - lastFrameNanos) / 1.0E9f);
-        lastFrameNanos = now;
+        if (seconds >= END_SECONDS) {
+            active = false;
+            return;
+        }
 
-        level = looping ? Math.min(1f, level + dt * 3f) : Math.max(0f, level - dt * 2f);
+        long now = System.nanoTime();
+
+        // Smooth fade-out envelope over the last 1.0 second of the 10-second duration
+        float remaining = END_SECONDS - seconds;
+        float level = clamp(remaining);
 
         if (skin == null || skin.pending()) {
             skin = StaffFaceSkins.get(watcherId, watcherName);
@@ -171,11 +147,11 @@ public final class StaffWatchingEffect {
         double sh = Utils.getWindowHeight();
         if (sw <= 0 || sh <= 0) return;
 
-        // 1. Full-screen crimson flash / Warden heartbeat pulse
+        // 1. Full-screen crimson flash / Warden heartbeat pulse (strictly bounded to 10s)
         if (seconds < FLASH_SECONDS) {
             drawFlash(renderer, sw, sh, seconds);
         } else if (level > 0f) {
-            drawPulse(renderer, sw, sh, now);
+            drawPulse(renderer, sw, sh, now, level);
         }
 
         // 2. Elder Guardian Curse sweeping Staff Head apparition across the center of the screen
@@ -183,7 +159,7 @@ public final class StaffWatchingEffect {
             drawElderGuardianHead(renderer, sw, sh, seconds / ELDER_SWEEP_SECONDS);
         }
 
-        // 3. Top-center "<Staff> is watching you" alert card
+        // 3. Top-center "<Staff> is in your region" notification card (visible for the 10s duration)
         if (seconds >= CARD_START_SECONDS && seconds < END_SECONDS) {
             drawWatchingCard(renderer, sw, sh, seconds - CARD_START_SECONDS);
         }
@@ -199,7 +175,7 @@ public final class StaffWatchingEffect {
         }
     }
 
-    private void drawPulse(HudRenderer renderer, double w, double h, long now) {
+    private void drawPulse(HudRenderer renderer, double w, double h, long now, float level) {
         float phase = (now - lastBeatNanos) / (BEAT_TICKS * 5.0E7f);
         float thump = Math.max(0f, 1f - phase * 2.5f);
         float a = (PULSE_BASE + PULSE_THUMP * thump * thump) * level;
@@ -311,7 +287,7 @@ public final class StaffWatchingEffect {
 
     private void drawWatchingCard(HudRenderer renderer, double sw, double sh, float cardSeconds) {
         float remaining = END_SECONDS - CARD_START_SECONDS - cardSeconds;
-        float fadeOut = remaining < 0.5f ? remaining / 0.5f : 1f;
+        float fadeOut = remaining < 0.6f ? remaining / 0.6f : 1f;
         float alpha = clamp(Math.min(fadeOut, cardSeconds / 0.10f));
         if (alpha <= 0.01f) return;
 

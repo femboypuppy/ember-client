@@ -118,6 +118,7 @@ public class AntiVanish extends Module {
     private final Deque<RecentMessage> recentMessages = new ArrayDeque<>();
     private final Map<UUID, Long> listedSinceMs = new HashMap<>();
     private final Map<UUID, Long> regionProvenMs = new ConcurrentHashMap<>();
+    private final Map<String, Long> regionAlertCooldowns = new ConcurrentHashMap<>();
     private final Set<Integer> completionRequestIds = ConcurrentHashMap.newKeySet();
     private final Set<String> learnedStaffNames = ConcurrentHashMap.newKeySet();
 
@@ -138,7 +139,7 @@ public class AntiVanish extends Module {
     private int trackedRegion = -1;
 
     public AntiVanish() {
-        super(Categories.Donut, "anti-vanish", "Detects vanished staff teleporting to or spectating you and plays the Elder Guardian staff-head curse animation.");
+        super(Categories.Donut, "anti-vanish", "Detects vanished staff in your region or near you and plays a 10-second Elder Guardian staff-head alert.");
     }
 
     private void triggerTestAnimation() {
@@ -155,9 +156,9 @@ public class AntiVanish extends Module {
             }
         }
 
-        StaffWatchingEffect.get().play(sampleId, sampleStaff, "ELDER GUARDIAN STAFF CURSE PREVIEW", 0);
+        StaffWatchingEffect.get().play(sampleId, sampleStaff, "STAFF DETECTED IN YOUR REGION", 0);
         if (notifications.get()) {
-            EmberNotificationsHud.push(sampleStaff + " is watching you!", "Vanished staff detected nearby", EmberNotificationsHud.BAD);
+            EmberNotificationsHud.push(sampleStaff + " is in your region", "Staff detected on your shard", EmberNotificationsHud.BAD);
         }
         testAnimation.set(false);
     }
@@ -712,7 +713,7 @@ public class AntiVanish extends Module {
             if (proof != null) {
                 spell.told = true;
                 spell.watched = true;
-                watchingYou(spell.name, proof, spell.spectator ? "SPECTATING YOU IN REGION" : "VANISHED IN YOUR REGION");
+                watchingYou(spell.name, proof, spell.spectator ? "SPECTATOR MODE IN YOUR REGION" : "VANISHED IN YOUR REGION");
                 continue;
             }
 
@@ -761,8 +762,15 @@ public class AntiVanish extends Module {
 
     private void watchingYou(String name, RegionProof proof, String subtitle) {
         long now = System.currentTimeMillis();
+        String key = name == null ? "" : name.trim().toLowerCase(Locale.ROOT);
+        Long lastForStaff = regionAlertCooldowns.get(key);
+        if (lastForStaff != null && now - lastForStaff < 300_000L) {
+            return;
+        }
+        regionAlertCooldowns.put(key, now);
+
         lastCriticalMs = now;
-        criticalUntilMs = now + 7000L;
+        criticalUntilMs = now + 10_000L;
         criticalWatcher = name;
 
         UUID id = proof != null ? proof.id() : knownUuid(name);
@@ -771,10 +779,10 @@ public class AntiVanish extends Module {
             StaffWatchingEffect.get().play(id, name, subtitle, 0);
         }
         if (notifications.get()) {
-            EmberNotificationsHud.push(name + " is watching you!", subtitle, EmberNotificationsHud.BAD);
+            EmberNotificationsHud.push(name + " is in your region", subtitle, EmberNotificationsHud.BAD);
         }
         if (chatNotify.get()) {
-            info("%s%s%s is watching you! (%s)", Formatting.RED, name, Formatting.GRAY, subtitle);
+            info("%s%s%s is in your region (%s)", Formatting.RED, name, Formatting.GRAY, subtitle);
         }
     }
 
@@ -799,11 +807,11 @@ public class AntiVanish extends Module {
 
         if (GameMode.SPECTATOR.asString().equalsIgnoreCase(gameMode)) {
             reportHidden(uuid, name, true, "Vanish Event: switched to spectator", "Spectator Mode", 100);
-            watchingYou(name, new RegionProof(uuid, -1), "SWITCHED TO SPECTATOR IN YOUR REGION");
+            watchingYou(name, new RegionProof(uuid, -1), "SPECTATOR MODE IN YOUR REGION");
         } else {
             endSpell(name, true, 0L);
             if (now - lastCriticalMs >= CRITICAL_COOLDOWN_MS) {
-                watchingYou(name, new RegionProof(uuid, -1), "TELEPORTED / ACTIVE IN YOUR REGION");
+                watchingYou(name, new RegionProof(uuid, -1), "ACTIVE IN YOUR REGION");
             }
         }
     }
@@ -1179,6 +1187,7 @@ public class AntiVanish extends Module {
         recentMessages.clear();
         listedSinceMs.clear();
         regionProvenMs.clear();
+        regionAlertCooldowns.clear();
         completionRequestIds.clear();
 
         pendingCompletionNames = null;
