@@ -12,6 +12,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import meteordevelopment.meteorclient.MixinPlugin;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.render.GetFovEvent;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.render.RenderAfterWorldEvent;
 import meteordevelopment.meteorclient.gui.WidgetScreen;
@@ -162,13 +163,31 @@ public abstract class GameRendererMixin implements IGameRenderer {
         MeteorClient.EVENT_BUS.post(RenderAfterWorldEvent.get());
     }
 
-    @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/render/GuiRenderer;render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V"))
-    private void beforeRenderGui(RenderTickCounter tickCounter, boolean tick, CallbackInfo info) {
-        meteor$clearGuiDepth();
+    @Unique
+    private boolean meteor$renderHud;
+
+    @Inject(method = "render", at = @At("HEAD"))
+    private void beforeRender(RenderTickCounter tickCounter, boolean tick, CallbackInfo info) {
+        meteor$renderHud = false;
     }
 
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/render/GuiRenderer;render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V", shift = At.Shift.AFTER))
     private void onRenderGui(RenderTickCounter tickCounter, boolean tick, CallbackInfo info) {
+        if (meteor$renderHud) {
+            meteor$renderHud = false;
+            var context = new DrawContext(client, guiState, (int) client.mouse.getScaledX(client.getWindow()), (int) client.mouse.getScaledY(client.getWindow()));
+
+            Profilers.get().push(MeteorClient.MOD_ID + "_render_2d");
+            Utils.unscaledProjection();
+            try {
+                MeteorClient.EVENT_BUS.post(Render2DEvent.get(context, context.getScaledWindowWidth(), context.getScaledWindowHeight(), tickCounter.getTickProgress(true)));
+                meteor$flushGuiState();
+            } finally {
+                Utils.scaledProjection();
+                Profilers.get().pop();
+            }
+        }
+
         if (client.currentScreen instanceof WidgetScreen widgetScreen) {
             guiState.clear();
             var mouseX = (int) client.mouse.getScaledX(client.getWindow());
@@ -261,10 +280,16 @@ public abstract class GameRendererMixin implements IGameRenderer {
     }
 
     @Override
+    public void meteor$markHudForRendering() {
+        meteor$renderHud = true;
+    }
+
+    @Override
     public void meteor$flushGuiState() {
         meteor$clearGuiDepth();
         guiRenderer.render(fogRenderer.getFogBuffer(FogRenderer.FogType.NONE));
-        guiRenderer.incrementFrame();
+        // Vanilla advances the GUI frame once after its render call. Extra
+        // flushes belong to that same frame and must not advance its caches.
     }
 
     @Unique

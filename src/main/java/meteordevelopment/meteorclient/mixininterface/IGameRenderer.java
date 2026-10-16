@@ -6,5 +6,7 @@
 package meteordevelopment.meteorclient.mixininterface;
 
 public interface IGameRenderer {
+    void meteor$markHudForRendering();
+
     void meteor$flushGuiState();
 }
