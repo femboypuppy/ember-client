@@ -1,6 +1,5 @@
 package meteordevelopment.meteorclient.systems.modules.donut;
 
-import com.mojang.brigadier.suggestion.Suggestion;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
@@ -36,7 +35,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class AntiVanish extends Module {
-    private static final String PROBE_COMMAND = "minecraft:msg";
     private static final long SIGNAL_WINDOW_MS = 15000L;
     private static final long DETECTION_TTL_MS = 20000L;
     private static final long CRITICAL_COOLDOWN_MS = 12000L;
@@ -56,7 +54,7 @@ public class AntiVanish extends Module {
 
     private final Setting<Boolean> completionProbe = sgGeneral.add(new BoolSetting.Builder()
         .name("completion-probe")
-        .description("Polls /minecraft:msg suggestions every few seconds to catch vanished staff who are hidden from Tab.")
+        .description("Every 5 seconds, silently asks your region's server which players it hosts (/minecraft:msg tab completion). Finds staff on your shard, including ones hidden from tab.")
         .defaultValue(true)
         .build()
     );
@@ -134,19 +132,15 @@ public class AntiVanish extends Module {
     private final Deque<RecentMessage> recentMessages = new ArrayDeque<>();
     private final Map<UUID, Long> listedSinceMs = new HashMap<>();
     private final Set<UUID> staffIds = new HashSet<>();
-    private final Set<Integer> completionRequestIds = ConcurrentHashMap.newKeySet();
 
-    private volatile List<String> pendingCompletionNames;
     private volatile long lastLocalActionMs;
     private boolean serverSendsLeaveMessages;
-    private int nextCompletionId = 30000;
     private int tickCounter;
     private long lastContainerActivityMs;
     private long lastCriticalMs;
     private long criticalUntilMs;
     private String criticalWatcher = "";
-    private int probesSent;
-    private int probesAnswered;
+    private int seenProbeSeq;
     private int trackedShard = Integer.MIN_VALUE;
 
     public AntiVanish() {
@@ -203,6 +197,10 @@ public class AntiVanish extends Module {
         StaffIntel.get().debug = false;
     }
 
+    public boolean probeEnabled() {
+        return completionProbe.get();
+    }
+
     public boolean isWatchingNow(String name) {
         if (name == null || name.isBlank()) return false;
         long now = System.currentTimeMillis();
@@ -244,10 +242,12 @@ public class AntiVanish extends Module {
 
         drainObservations();
         processPendingVanishes();
-        processCompletionProbe();
 
-        if (completionProbe.get() && tickCounter % 100 == 0) {
-            sendCompletionProbe();
+        // StaffIntel sends the shard probe; read each new answer once.
+        StaffIntel intel = StaffIntel.get();
+        if (completionProbe.get() && intel.probeSeq() != seenProbeSeq) {
+            seenProbeSeq = intel.probeSeq();
+            processCompletionProbe(intel.lastProbeNames());
         }
 
         if (tickCounter % 10 == 0) {
@@ -372,15 +372,6 @@ public class AntiVanish extends Module {
 
             String departedName = departedPlayerName(chat.content());
             if (!departedName.isBlank()) observations.offer(Observation.playerLeft(departedName));
-        } else if (packet instanceof CommandSuggestionsS2CPacket suggestions && completionRequestIds.remove(suggestions.id())) {
-            List<String> names = new ArrayList<>();
-            for (Suggestion suggestion : suggestions.getSuggestions().getList()) {
-                String text = suggestion.getText();
-                if (text == null || text.isBlank()) continue;
-                names.add(text.trim());
-            }
-            pendingCompletionNames = names;
-            return true;
         } else if (soundAndParticleSensors.get()) {
             if (packet instanceof EntityTrackerUpdateS2CPacket metadata) {
                 observations.offer(Observation.entityMetadata(metadata.id()));
@@ -598,35 +589,12 @@ public class AntiVanish extends Module {
         return false;
     }
 
-    private void sendCompletionProbe() {
-        if (mc.getNetworkHandler() == null) return;
-
-        int id = nextCompletionId++;
-        if (nextCompletionId > 40000) nextCompletionId = 30000;
-
-        completionRequestIds.add(id);
-        while (completionRequestIds.size() > 8) completionRequestIds.remove(completionRequestIds.iterator().next());
-
-        try {
-            mc.getNetworkHandler().sendPacket(new RequestCommandCompletionsC2SPacket(id, PROBE_COMMAND + " "));
-            probesSent++;
-        } catch (Throwable ignored) {}
-
-        // Every ~5 minutes, report whether the server actually answers the probe at all.
-        if (probesSent % 60 == 0) {
-            StaffIntel.get().log("completion probe: %d sent, %d answered", probesSent, probesAnswered);
-        }
-    }
-
-    private void processCompletionProbe() {
-        List<String> current = pendingCompletionNames;
-        if (current == null) return;
-        pendingCompletionNames = null;
-        probesAnswered++;
-
-        if (mc.getNetworkHandler() == null || mc.player == null) return;
-        if (probesAnswered == 1) StaffIntel.get().log("first completion probe answer: %d names %s", current.size(),
-            current.subList(0, Math.min(8, current.size())));
+    /**
+     * The shard probe lists the players your region's backend hosts. Staff in it are on your shard; staff in it but
+     * missing from the tab list are hidden there.
+     */
+    private void processCompletionProbe(List<String> current) {
+        if (mc.getNetworkHandler() == null || mc.player == null || current.isEmpty()) return;
 
         Set<String> tabNames = new HashSet<>();
         for (PlayerListEntry info : mc.getNetworkHandler().getPlayerList()) {
@@ -641,8 +609,13 @@ public class AntiVanish extends Module {
             if (!isKnownStaffName(name)
                 || !isPlausiblePlayerName(name)
                 || name.equalsIgnoreCase(self)
-                || tabNames.contains(name.toLowerCase(Locale.ROOT))
                 || recentMessageNames(name)) continue;
+
+            if (tabNames.contains(name.toLowerCase(Locale.ROOT))) {
+                watchingYou(name, regionProof(null, name), StaffIntel.AlertKind.REGION,
+                    "ON YOUR SHARD (" + StaffIntel.get().currentShardLabel() + ")");
+                continue;
+            }
 
             hidden.add(name);
         }
@@ -1169,12 +1142,9 @@ public class AntiVanish extends Module {
         recentMessages.clear();
         listedSinceMs.clear();
         staffIds.clear();
-        completionRequestIds.clear();
 
-        pendingCompletionNames = null;
         lastLocalActionMs = 0L;
         serverSendsLeaveMessages = false;
-        nextCompletionId = 30000;
         tickCounter = 0;
         lastContainerActivityMs = 0L;
         lastCriticalMs = 0L;

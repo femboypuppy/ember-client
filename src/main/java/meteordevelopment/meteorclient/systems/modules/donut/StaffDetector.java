@@ -119,6 +119,13 @@ public class StaffDetector extends Module {
         .build()
     );
 
+    private final Setting<Boolean> shardProbe = sgGeneral.add(new BoolSetting.Builder()
+        .name("shard-probe")
+        .description("Every 5 seconds, silently asks your region's server which players it hosts, so staff on your shard are marked IN REGION.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> useDonutRoster = sgGeneral.add(new BoolSetting.Builder()
         .name("donut-staff-roster")
         .description("Also include the built-in DonutSMP staff username roster.")
@@ -254,6 +261,10 @@ public class StaffDetector extends Module {
         testAnimation.set(false);
     }
 
+    public boolean probeEnabled() {
+        return shardProbe.get();
+    }
+
     public int teamThreshold() {
         return isActive() && !detectByTeam.get() ? -1 : teamWeight.get();
     }
@@ -382,9 +393,9 @@ public class StaffDetector extends Module {
 
         if (nowMs - lastScanMs < 400) return;
         lastScanMs = nowMs;
-        boolean settling = nowMs < settleUntil;
-
         StaffIntel intel = StaffIntel.get();
+        // Switching shard re-sends the whole tab list, so give it a moment before treating gaps as leaves.
+        boolean settling = nowMs < settleUntil || intel.msOnShard() < 4000L;
         String self = mc.player.getName().getString();
 
         Map<String, PlayerListEntry> currentTab = new LinkedHashMap<>();
@@ -418,7 +429,7 @@ public class StaffDetector extends Module {
                 : StaffFaceSkins.getOrFetch(uuid, name);
 
             PlayerEntity body = intel.entity(uuid);
-            boolean onShard = intel.isOnYourShard(uuid);
+            boolean onShard = intel.isOnYourShard(uuid, name);
             GameMode shardMode = intel.shardGameMode(uuid);
             boolean spectator = shardMode == GameMode.SPECTATOR || (shardMode == null && info.getGameMode() == GameMode.SPECTATOR);
             // Only a listed -> unlisted change counts as vanish; some servers never list part of the tab.

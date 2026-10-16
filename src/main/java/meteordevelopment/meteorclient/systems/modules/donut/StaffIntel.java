@@ -1,11 +1,14 @@
 package meteordevelopment.meteorclient.systems.modules.donut;
 
+import com.mojang.brigadier.suggestion.Suggestion;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.network.packet.c2s.play.RequestCommandCompletionsC2SPacket;
+import net.minecraft.network.packet.s2c.play.CommandSuggestionsS2CPacket;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.packet.s2c.play.PlayerListS2CPacket;
@@ -27,9 +30,11 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  * <ul>
  *     <li>Who is staff. DonutSMP sorts the tab list with scoreboard teams named {@code NN-<name>-<flag>}, where NN
  *     is the rank weight. Regular players (Donut+ included) are 09, staff are 08 and below.</li>
- *     <li>Which goliath (backend shard) you are on, and which staff have been proven to be on it. Proof is a game
- *     mode update that arrives without ADD_PLAYER (the backend you are on only reports game mode changes of its own
- *     players) or the staff member's entity being loaded. Proofs are dropped whenever you change shard.</li>
+ *     <li>Which goliath (backend shard) you are on, and which staff are on it. The main source is the shard probe: a
+ *     silent {@code /minecraft:msg } tab completion, which the backend answers with the names of the players it hosts
+ *     (about 200 on DonutSMP, while the tab list only shows ~90 people network-wide). A staff name in that answer means
+ *     they are on your shard. A loaded entity or a game mode update without ADD_PLAYER also counts. Everything is
+ *     dropped whenever you change shard.</li>
  *     <li>One alert gate so a single event never plays the staff alert twice, and the same staff member only
  *     re-alerts when the situation gets worse (region, then spectator/vanish, then physically near you).</li>
  * </ul>
@@ -40,6 +45,10 @@ public final class StaffIntel {
     private static final Pattern TEAM_PATTERN = Pattern.compile("^(\\d{1,3})-([A-Za-z0-9_.]{1,17})-(\\w+)$");
     private static final long PROOF_TTL_MS = 10 * 60_000L;
     private static final long ALERT_COOLDOWN_MS = 5 * 60_000L;
+    private static final String PROBE_COMMAND = "minecraft:msg ";
+    private static final int PROBE_INTERVAL_TICKS = 100;
+    // A name stays "on your shard" through one missed probe answer.
+    private static final long PROBE_TTL_MS = 12_000L;
 
     public enum AlertKind {
         REGION(1),
@@ -64,6 +73,17 @@ public final class StaffIntel {
     private final Map<String, AlertRecord> alerts = new HashMap<>();
     private final Set<String> loggedTeams = new HashSet<>();
     private final Set<String> starred = ConcurrentHashMap.newKeySet();
+
+    private final Set<Integer> probeIds = ConcurrentHashMap.newKeySet();
+    private final Map<String, Long> probeSeen = new HashMap<>();
+    private volatile List<String> pendingProbe;
+    private List<String> lastProbeNames = List.of();
+    private Set<String> lastStaffOnShard = Set.of();
+    private int probeSeq;
+    private int nextProbeId = 30000;
+    private int ticksToProbe;
+    private int probesSent;
+    private int probesAnswered;
 
     private ClientPlayNetworkHandler connection;
     private Object trackedWorld;
@@ -169,12 +189,46 @@ public final class StaffIntel {
         return DonutShards.label(shard);
     }
 
-    /** True if the player is proven to be on the goliath you are on right now. */
-    public boolean isOnYourShard(UUID id) {
+    /** True if the player is on the goliath you are on right now (shard probe, loaded entity or game mode leak). */
+    public boolean isOnYourShard(UUID id, String name) {
+        long now = System.currentTimeMillis();
+
+        if (name != null) {
+            Long seen = probeSeen.get(name.trim().toLowerCase(Locale.ROOT));
+            if (seen != null && now - seen < PROBE_TTL_MS) return true;
+        }
+
         if (id == null) return false;
         Long at = provenAt.get(id);
-        if (at != null && System.currentTimeMillis() - at < PROOF_TTL_MS) return true;
+        if (at != null && now - at < PROOF_TTL_MS) return true;
         return entity(id) != null;
+    }
+
+    public boolean isOnYourShard(UUID id) {
+        String name = null;
+        if (id != null && mc.getNetworkHandler() != null) {
+            PlayerListEntry entry = mc.getNetworkHandler().getPlayerListEntry(id);
+            if (entry != null && entry.getProfile() != null) name = entry.getProfile().name();
+        }
+        return isOnYourShard(id, name);
+    }
+
+    /** Increments every time a shard probe answer arrives. */
+    public int probeSeq() {
+        return probeSeq;
+    }
+
+    /** Every player name the backend reported in the last shard probe answer. */
+    public List<String> lastProbeNames() {
+        return lastProbeNames;
+    }
+
+    private boolean probeEnabled() {
+        if (Modules.get() == null) return false;
+        AntiVanish antiVanish = Modules.get().get(AntiVanish.class);
+        StaffDetector detector = detector();
+        return (antiVanish != null && antiVanish.isActive() && antiVanish.probeEnabled())
+            || (detector != null && detector.isActive() && detector.probeEnabled());
     }
 
     /** Last game mode the current goliath reported for this player, if any. */
@@ -218,6 +272,18 @@ public final class StaffIntel {
 
     @EventHandler
     private void onPacket(PacketEvent.Receive event) {
+        if (event.packet instanceof CommandSuggestionsS2CPacket suggestions && probeIds.remove(suggestions.id())) {
+            List<String> names = new ArrayList<>();
+            for (Suggestion suggestion : suggestions.getSuggestions().getList()) {
+                String text = suggestion.getText();
+                if (text != null && !text.isBlank()) names.add(text.trim());
+            }
+            pendingProbe = names;
+            // Our own probe; never let it reach the chat box.
+            event.cancel();
+            return;
+        }
+
         if (event.packet instanceof PlayerListS2CPacket packet) {
             EnumSet<PlayerListS2CPacket.Action> actions = packet.getActions();
             boolean add = actions.contains(PlayerListS2CPacket.Action.ADD_PLAYER);
@@ -281,6 +347,10 @@ public final class StaffIntel {
             if (!provenAt.isEmpty()) log("shard changed, dropping %d region proofs", provenAt.size());
             provenAt.clear();
             shardGameModes.clear();
+            probeSeen.clear();
+            lastStaffOnShard = Set.of();
+            // Ask the new backend who is there shortly after arriving.
+            ticksToProbe = Math.min(ticksToProbe, 30);
             log("now on %s (%s, %d %d)", currentShardLabel(), mc.world.getRegistryKey().getValue(),
                 mc.player.getBlockX(), mc.player.getBlockZ());
         }
@@ -304,6 +374,12 @@ public final class StaffIntel {
             }
         }
 
+        if (probeEnabled() && --ticksToProbe <= 0) {
+            ticksToProbe = PROBE_INTERVAL_TICKS;
+            sendProbe(conn);
+        }
+        processProbe();
+
         UUID removed;
         while ((removed = pendingRemovals.poll()) != null) {
             Long proof = provenAt.get(removed);
@@ -313,6 +389,47 @@ public final class StaffIntel {
         for (PlayerEntity player : mc.world.getPlayers()) {
             if (player != mc.player) provenAt.put(player.getUuid(), System.currentTimeMillis());
         }
+    }
+
+    private void sendProbe(ClientPlayNetworkHandler conn) {
+        int id = nextProbeId++;
+        if (nextProbeId > 40000) nextProbeId = 30000;
+
+        probeIds.add(id);
+        while (probeIds.size() > 8) probeIds.remove(probeIds.iterator().next());
+
+        try {
+            conn.sendPacket(new RequestCommandCompletionsC2SPacket(id, PROBE_COMMAND));
+            probesSent++;
+        } catch (Throwable ignored) {}
+
+        if (probesSent % 60 == 0) log("shard probe: %d sent, %d answered", probesSent, probesAnswered);
+    }
+
+    private void processProbe() {
+        List<String> names = pendingProbe;
+        if (names == null || mc.player == null) return;
+        pendingProbe = null;
+        probesAnswered++;
+
+        long now = System.currentTimeMillis();
+        String self = mc.player.getName().getString();
+        Set<String> staff = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+
+        for (String name : names) {
+            if (name.equalsIgnoreCase(self) || !isStaffName(name)) continue;
+            staff.add(name);
+            probeSeen.put(name.toLowerCase(Locale.ROOT), now);
+        }
+
+        if (probesAnswered == 1) log("first shard probe answer: %d players on %s", names.size(), currentShardLabel());
+        if (!staff.equals(lastStaffOnShard)) {
+            log("staff on %s by shard probe: %s (%d players)", currentShardLabel(), staff, names.size());
+            lastStaffOnShard = staff;
+        }
+
+        lastProbeNames = List.copyOf(names);
+        probeSeq++;
     }
 
     /**
@@ -328,6 +445,12 @@ public final class StaffIntel {
         provenAt.clear();
         shardGameModes.clear();
         loggedTeams.clear();
+        probeIds.clear();
+        probeSeen.clear();
+        pendingProbe = null;
+        lastProbeNames = List.of();
+        lastStaffOnShard = Set.of();
+        ticksToProbe = 40;
 
         long now = System.currentTimeMillis();
         alerts.values().removeIf(record -> now - record.at >= ALERT_COOLDOWN_MS);
