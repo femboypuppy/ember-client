@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.render.ArmRenderEvent;
 import meteordevelopment.meteorclient.events.render.HeldItemRendererEvent;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.render.Animations;
 import meteordevelopment.meteorclient.systems.modules.render.HandView;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.client.render.command.OrderedRenderCommandQueue;
@@ -98,6 +99,13 @@ public abstract class HeldItemRendererMixin {
     @Inject(method = "renderFirstPersonItem", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/item/HeldItemRenderer;renderArmHoldingItem(Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/command/OrderedRenderCommandQueue;IFFLnet/minecraft/util/Arm;)V"))
     private void onRenderArm(AbstractClientPlayerEntity player, float tickProgress, float pitch, Hand hand, float swingProgress, ItemStack item, float equipProgress, MatrixStack matrices, OrderedRenderCommandQueue orderedRenderCommandQueue, int light, CallbackInfo ci) {
         MeteorClient.EVENT_BUS.post(ArmRenderEvent.get(hand, matrices));
+    }
+
+    @Inject(method = "swingArm", at = @At("HEAD"), cancellable = true)
+    private void onSwingArm(float swingProgress, MatrixStack matrices, int side, Arm arm, CallbackInfo ci) {
+        if (mc.player == null) return;
+        ItemStack stack = arm == mc.player.getMainArm() ? mainHand : offHand;
+        if (Modules.get().get(Animations.class).transformSwing(matrices, arm, swingProgress, stack)) ci.cancel();
     }
 
     @Inject(method = "applyEatOrDrinkTransformation", at = @At(value = "INVOKE", target = "Ljava/lang/Math;pow(DD)D", shift = At.Shift.BEFORE), cancellable = true)

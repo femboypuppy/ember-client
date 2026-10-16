@@ -17,6 +17,7 @@ import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.ElytraF
 import meteordevelopment.meteorclient.systems.modules.movement.elytrafly.modes.Bounce;
 import meteordevelopment.meteorclient.systems.modules.player.NoStatusEffects;
 import meteordevelopment.meteorclient.systems.modules.player.OffhandCrash;
+import meteordevelopment.meteorclient.systems.modules.render.Animations;
 import meteordevelopment.meteorclient.systems.modules.render.HandView;
 import meteordevelopment.meteorclient.systems.modules.render.NoRender;
 import net.minecraft.component.DataComponentTypes;
@@ -84,7 +85,9 @@ public abstract class LivingEntityMixin extends Entity {
     private int getHandSwingDuration(int original) {
         if ((Object) this != mc.player) return original;
 
-        return Modules.get().get(HandView.class).isActive() && mc.options.getPerspective().isFirstPerson() ? Modules.get().get(HandView.class).swingSpeed.get() : original;
+        boolean firstPerson = mc.options.getPerspective().isFirstPerson();
+        int duration = Modules.get().get(HandView.class).isActive() && firstPerson ? Modules.get().get(HandView.class).swingSpeed.get() : original;
+        return Modules.get().get(Animations.class).swingDuration(duration, firstPerson);
     }
 
     @ModifyReturnValue(method = "isGliding", at = @At("RETURN"))
