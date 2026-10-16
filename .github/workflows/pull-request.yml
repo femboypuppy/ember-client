@@ -1,6 +1,11 @@
-name: Build Pull Request
+name: Build Client
 
-on: [ pull_request ]
+on:
+  pull_request:
+  push:
+    branches:
+      - dev-1.21.11
+  workflow_dispatch:
 
 jobs:
   build:
@@ -27,5 +32,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pull-request-build
+          name: client-build
           path: build/libs/

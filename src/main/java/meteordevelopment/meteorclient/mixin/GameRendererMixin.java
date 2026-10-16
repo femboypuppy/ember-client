@@ -162,6 +162,11 @@ public abstract class GameRendererMixin implements IGameRenderer {
         MeteorClient.EVENT_BUS.post(RenderAfterWorldEvent.get());
     }
 
+    @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/render/GuiRenderer;render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V"))
+    private void beforeRenderGui(RenderTickCounter tickCounter, boolean tick, CallbackInfo info) {
+        meteor$clearGuiDepth();
+    }
+
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/render/GuiRenderer;render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V", shift = At.Shift.AFTER))
     private void onRenderGui(RenderTickCounter tickCounter, boolean tick, CallbackInfo info) {
         if (client.currentScreen instanceof WidgetScreen widgetScreen) {
@@ -173,7 +178,6 @@ public abstract class GameRendererMixin implements IGameRenderer {
 
             widgetScreen.renderCustom(context, mouseX, mouseY, tickCounter.getDynamicDeltaTicks());
 
-            RenderSystem.getDevice().createCommandEncoder().clearDepthTexture(client.getFramebuffer().getDepthAttachment(), 1.0);
             meteor$flushGuiState();
         }
     }
@@ -258,7 +262,15 @@ public abstract class GameRendererMixin implements IGameRenderer {
 
     @Override
     public void meteor$flushGuiState() {
+        meteor$clearGuiDepth();
         guiRenderer.render(fogRenderer.getFogBuffer(FogRenderer.FogType.NONE));
         guiRenderer.incrementFrame();
+    }
+
+    @Unique
+    private void meteor$clearGuiDepth() {
+        // Each GUI flush restarts its layer depths. Keep the color from earlier
+        // passes, but discard their depth so equal-depth layers cannot fight.
+        RenderSystem.getDevice().createCommandEncoder().clearDepthTexture(client.getFramebuffer().getDepthAttachment(), 1.0);
     }
 }
