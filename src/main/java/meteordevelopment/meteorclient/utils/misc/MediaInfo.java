@@ -36,7 +36,7 @@ public class MediaInfo {
     private static final Pattern SEP = Pattern.compile("");
 
     /** Bump when SOURCE changes so a stale compiled helper is replaced. */
-    private static final String VERSION = "v2";
+    private static final String VERSION = "v3-lyrics";
 
     private static volatile String title = "";
     private static volatile String artist = "";
@@ -44,8 +44,7 @@ public class MediaInfo {
     private static volatile boolean available = false;
     private static volatile int duration = 0;
 
-    private static volatile int polledPosition = 0;
-    private static volatile long polledAt = 0;
+    private static volatile PlaybackClock playbackClock = new PlaybackClock(0, 0, false, 0);
 
     private static volatile int artFlag = 0;
     private static int loadedArtFlag = -1;
@@ -68,11 +67,11 @@ public class MediaInfo {
     public static boolean hasArt() { return artReady; }
 
     public static int getPosition() {
-        if (!available) return 0;
-        int pos = polledPosition;
-        if (playing) pos += (int) ((System.currentTimeMillis() - polledAt) / 1000);
-        if (duration > 0) pos = Math.min(pos, duration);
-        return Math.max(0, pos);
+        return (int) (getPositionMillis() / 1000);
+    }
+
+    public static long getPositionMillis() {
+        return available ? playbackClock.positionAt(System.nanoTime()) : 0;
     }
 
     public static void start() {
@@ -178,10 +177,11 @@ public class MediaInfo {
 
         title = t;
         artist = parts[1].trim();
-        polledPosition = parseInt(parts[2]);
-        duration = parseInt(parts[3]);
-        polledAt = System.currentTimeMillis();
+        long positionMs = parseLong(parts[2]);
+        long durationMs = parseLong(parts[3]);
+        duration = (int) (durationMs / 1000);
         playing = parts[4].equalsIgnoreCase("Playing");
+        playbackClock = new PlaybackClock(positionMs, durationMs, playing, System.nanoTime());
         available = !t.isEmpty();
 
         int flag = parseInt(parts[5]);
@@ -209,6 +209,11 @@ public class MediaInfo {
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    private static long parseLong(String text) {
+        try { return Long.parseLong(text.trim()); }
+        catch (NumberFormatException ignored) { return 0; }
     }
 
     public static String formatTime(int seconds) {
@@ -382,7 +387,7 @@ public class MediaInfo {
                     if (TryWriteArt(p, artPath)) artFlag++;
                 }
 
-                Write(title, artist, (int)pos, (int)dur, status);
+                Write(title, artist, (long)(pos * 1000), (long)(dur * 1000), status);
             }
 
             static bool TryWriteArt(GlobalSystemMediaTransportControlsSessionMediaProperties p, string artPath) {
@@ -408,7 +413,7 @@ public class MediaInfo {
                 }
             }
 
-            static void Write(string title, string artist, int pos, int dur, string status) {
+            static void Write(string title, string artist, long pos, long dur, string status) {
                 var sb = new StringBuilder();
                 sb.Append(Clean(title)).Append(SEP);
                 sb.Append(Clean(artist)).Append(SEP);

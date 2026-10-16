@@ -30,6 +30,24 @@ public class Config extends System<Config> {
     private final SettingGroup sgModules = settings.createGroup("Modules");
     private final SettingGroup sgChat = settings.createGroup("Chat");
     private final SettingGroup sgMisc = settings.createGroup("Misc");
+    public final SettingGroup sgLyrics = settings.createGroup("Lyrics");
+
+    public final Setting<Boolean> lyricsEnabled = sgLyrics.add(new BoolSetting.Builder()
+        .name("lyrics-pill")
+        .description("Show timed Spotify lyrics beside the main status pill.")
+        .defaultValue(true).build());
+    public final Setting<String> spicyLyricsKey = sgLyrics.add(new StringSetting.Builder()
+        .name("spicy-lyrics-client-key")
+        .description("Your publishable sl_pk_ key, configured to allow native clients without an Origin header.")
+        .defaultValue("").build());
+    public final Setting<String> spotifyClientId = sgLyrics.add(new StringSetting.Builder()
+        .name("spotify-client-id")
+        .description("Public Spotify app client ID. Redirect URI: http://127.0.0.1:18527/callback. No client secret is needed.")
+        .defaultValue("").build());
+    public final Setting<Double> lyricsOffset = sgLyrics.add(new DoubleSetting.Builder()
+        .name("lyrics-offset-ms")
+        .description("Adjust lyric timing for speaker or Bluetooth delay. Positive values advance the lyrics.")
+        .defaultValue(0).range(-3000, 3000).sliderRange(-1500, 1500).build());
 
     // Visual
 

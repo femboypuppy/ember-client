@@ -102,7 +102,20 @@ sourceSets {
             srcDir("src/launcher/java")
         }
     }
+    val lyricsChecks by creating {
+        compileClasspath += sourceSets["main"].output + sourceSets["main"].compileClasspath
+        runtimeClasspath += sourceSets["main"].runtimeClasspath
+    }
 }
+
+val checkLyrics by tasks.registering(JavaExec::class) {
+    dependsOn(tasks.named("lyricsChecksClasses"))
+    classpath = sourceSets["lyricsChecks"].runtimeClasspath
+    mainClass.set("meteordevelopment.meteorclient.utils.misc.LyricsTimingChecks")
+    enableAssertions = true
+}
+
+tasks.named("check") { dependsOn(checkLyrics) }
 
 java {
     sourceCompatibility = JavaVersion.VERSION_21

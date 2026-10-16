@@ -240,6 +240,12 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         // own HUD tab, the .toggle command or a keybind, none of which live in Ember's UI.
         y = toggleRow(r, dt, x, y, w, "HUD enabled", Hud.get().active,
             () -> Hud.get().active = !Hud.get().active);
+        y = toggleRow(r, dt, x, y, w, "Lyrics pill", Config.get().lyricsEnabled.get(),
+            () -> Config.get().lyricsEnabled.set(!Config.get().lyricsEnabled.get()));
+        r.roundedRect(x, y, w, ROW_H, 7, ROW_BG);
+        texts.add(new Label("Spotify / Lyrics setup", x + 12, y + ROW_H / 2, TEXT_WHITE, 0.86));
+        hits.add(new Hit(x, y, w, ROW_H, () -> mc.setScreen(new EmberLyricsSettingsScreen(theme))));
+        y += ROW_H + 8;
 
         boolean custom = Config.get().customFont.get();
         y = toggleRow(r, dt, x, y, w, "Custom font", custom,

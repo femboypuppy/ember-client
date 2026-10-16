@@ -232,6 +232,11 @@ public class EmberStatusBarHud extends HudElement {
         EmberStrip.draw(renderer, x, y, w, h, radius, segments, s, textScale);
 
         if (avatar) drawBadge(renderer, x + w - 11 * s - badge, y + (h - badge) / 2, badge, accent);
+        if (meteordevelopment.meteorclient.systems.config.Config.get().lyricsEnabled.get()) {
+            var lyrics = meteordevelopment.meteorclient.utils.render.LyricsPill.render(renderer, x + w + 6 * s, y, h, s, 1,
+                mc.getWindow().getFramebufferWidth() - x - w - 16 * s);
+            if (lyrics.width() > 0) setSize(w + 6 * s + lyrics.width(), Math.max(h, lyrics.height()));
+        }
     }
 
     /** Your actual skin face, falling back to a lettered chip before the skin has loaded. */
@@ -276,7 +281,12 @@ public class EmberStatusBarHud extends HudElement {
             cx += mw;
         } else cx -= gap;
 
-        if (mediaPill.get()) {
+        double lyricHeight = h;
+        if (meteordevelopment.meteorclient.systems.config.Config.get().lyricsEnabled.get()) {
+            var lyrics = meteordevelopment.meteorclient.utils.render.LyricsPill.render(renderer, cx + gap, by, h, s, glassIntro,
+                mc.getWindow().getFramebufferWidth() - cx - gap - 10 * s);
+            if (lyrics.width() > 0) { cx += gap + lyrics.width(); lyricHeight = Math.max(h, lyrics.height()); }
+        } else if (mediaPill.get()) {
             meteordevelopment.meteorclient.utils.misc.MediaInfo.start();
             if (meteordevelopment.meteorclient.utils.misc.MediaInfo.isAvailable()) {
                 String song = meteordevelopment.meteorclient.utils.misc.MediaInfo.getTitle();
@@ -301,7 +311,7 @@ public class EmberStatusBarHud extends HudElement {
 
         double target = cx - x;
         glassWidth = glassWidth == 0 ? target : EmberAnim.approach(glassWidth, target, dt, motion == 0 ? 0 : 0.1 / motion);
-        setSize(Math.max(target, glassWidth), h);
+        setSize(Math.max(target, glassWidth), lyricHeight);
     }
 
     private void drawBadge(HudRenderer renderer, double bx, double by, double size, Color accent) {
