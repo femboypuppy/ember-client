@@ -1,6 +1,5 @@
 package meteordevelopment.meteorclient.systems.modules.donut;
 
-import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -27,6 +26,7 @@ import net.minecraft.state.property.Properties;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.ChunkSection;
 import net.minecraft.world.chunk.ChunkStatus;
@@ -34,46 +34,43 @@ import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.dimension.DimensionType;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.LongConsumer;
+import java.util.regex.Pattern;
 
 /**
- * Finds chunks showing signs of a player, for base hunting. Three kinds of evidence:
+ * Flags chunks with evidence of a player, for base hunting. Every signal is something world generation cannot
+ * produce, so a flag means someone built there or kept the area loaded for a long time:
  * <ul>
- *     <li>Growth that only happens while a player keeps the area loaded: amethyst geodes with every bud grown into a
- *     cluster, kelp grown to the surface, long vines and cave vines, tall bamboo, ripe cocoa, bee nests with honey.</li>
- *     <li>Blocks that only come from players: sideways deepslate, cobbled deepslate below Y 0, storage deep
- *     underground, beehives.</li>
- *     <li>Mined geodes: plenty of bare budding amethyst with every crystal broken off.</li>
+ *     <li>Player blocks: blocks that never generate (hoppers, observers, beacons, ender chests, shulkers...),
+ *     sideways deepslate, cobbled deepslate and torches below Y 0, storage deep underground.</li>
+ *     <li>Growth: kelp taller than the 11 blocks worldgen allows, or with a tip older than worldgen gives it; bee
+ *     nests holding honey; cocoa all ripe.</li>
+ *     <li>Amethyst: geode slices where every bud has finished growing.</li>
+ *     <li>Mined geodes (optional): plenty of bare budding amethyst with every crystal broken off.</li>
  * </ul>
- * Growth happens everywhere within the server's simulation distance of a player, so by default it is added up over
- * that radius around each chunk and only the chunk where the total peaks is marked: the spot a player would stand
- * on to keep all of it growing. A geode in range that is still growing rules a spot out, because a player standing
- * there for long would have finished it.
  */
 public class SusChunkFinder extends Module {
     private static final String FIND_TYPE = "sus-chunk";
     private static final String MINED_TYPE = "mined-geode";
-    // A hotspot has to hold this long before it is announced, so it does not jump around while chunks load.
-    private static final int SETTLE_TICKS = 40;
     private static final int GEODE_MAX_Y = 47;
+    // Worldgen kelp: at most 11 blocks, tip age 20-23. Growing pushes past both.
+    private static final int NATURAL_KELP_HEIGHT = 11;
+    private static final int NATURAL_KELP_AGE = 23;
+    // Old saved finds from checks that turned out to fire on natural terrain; they are no longer shown.
+    private static final Pattern DISCREDITED = Pattern.compile(
+        "kelp grown to (the )?surface|vines|bamboo|growth center|\\d+/\\d+ grown (amethyst|cocoa)");
 
     public enum Sensitivity {
-        Low(1.5, 10),
-        Medium(1.0, 6),
-        High(0.6, 3);
+        Low(1.5),
+        Medium(1.0),
+        High(0.6);
 
-        /** Multiplier for every count threshold (higher = stricter). */
         final double scale;
-        /** Combined growth needed around a chunk to call it a base. */
-        final int heat;
 
-        Sensitivity(double scale, int heat) {
+        Sensitivity(double scale) {
             this.scale = scale;
-            this.heat = heat;
         }
 
         int count(int base) {
@@ -89,31 +86,31 @@ public class SusChunkFinder extends Module {
 
     private final Setting<Sensitivity> sensitivity = sgGeneral.add(new EnumSetting.Builder<Sensitivity>()
         .name("sensitivity")
-        .description("High finds more chunks but also more false alarms. Low only flags strong evidence.")
+        .description("How much evidence a chunk needs. High finds more, Low only flags plenty of it.")
         .defaultValue(Sensitivity.Medium)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Boolean> amethyst = sgGeneral.add(new BoolSetting.Builder()
-        .name("amethyst")
-        .description("Geodes where the buds have grown into full clusters, which only happens while a player keeps the area loaded.")
-        .defaultValue(true)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Boolean> plants = sgGeneral.add(new BoolSetting.Builder()
-        .name("plant-growth")
-        .description("Kelp grown to the surface, long vines and cave vines, tall bamboo, ripe cocoa and bee nests filled with honey.")
-        .defaultValue(true)
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
 
     private final Setting<Boolean> playerBlocks = sgGeneral.add(new BoolSetting.Builder()
         .name("player-blocks")
-        .description("Sideways deepslate, cobbled deepslate below Y 0, storage deep underground and beehives. These mark the exact chunk.")
+        .description("Blocks that never generate (hoppers, observers, beacons, ender chests, shulkers, beehives...), sideways deepslate, cobbled deepslate and torches below Y 0, storage deep underground.")
+        .defaultValue(true)
+        .onChanged(v -> rescanLoadedChunks())
+        .build()
+    );
+
+    private final Setting<Boolean> growth = sgGeneral.add(new BoolSetting.Builder()
+        .name("growth")
+        .description("Kelp grown past its natural height, bee nests holding honey, cocoa all ripe. These only happen while a player keeps the area loaded.")
+        .defaultValue(true)
+        .onChanged(v -> rescanLoadedChunks())
+        .build()
+    );
+
+    private final Setting<Boolean> amethyst = sgGeneral.add(new BoolSetting.Builder()
+        .name("amethyst")
+        .description("Geodes where every bud has grown into a full cluster.")
         .defaultValue(true)
         .onChanged(v -> rescanLoadedChunks())
         .build()
@@ -124,25 +121,6 @@ public class SusChunkFinder extends Module {
         .description("Geodes with lots of bare budding amethyst and every crystal broken off: someone farmed them.")
         .defaultValue(false)
         .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Boolean> pinpoint = sgGeneral.add(new BoolSetting.Builder()
-        .name("find-base-center")
-        .description("Add up growth around each chunk and only mark the chunk at the center, where a player would stand. Off marks every chunk with enough growth.")
-        .defaultValue(true)
-        .onChanged(v -> rebuildFields())
-        .build()
-    );
-
-    private final Setting<Integer> simulationDistance = sgGeneral.add(new IntSetting.Builder()
-        .name("simulation-distance")
-        .description("The server's simulation distance in chunks. Things only grow this close to a player.")
-        .defaultValue(5)
-        .range(2, 12)
-        .sliderRange(2, 12)
-        .visible(pinpoint::get)
-        .onChanged(v -> rebuildFields())
         .build()
     );
 
@@ -207,21 +185,9 @@ public class SusChunkFinder extends Module {
         .build()
     );
 
-    /** What one chunk scan found. Growth is spread over the area by the main thread. */
-    private record Report(int amethystGrowth, int plantGrowth, boolean stillGrowing, String growthWhy, String directWhy, String minedWhy) {
-        boolean growthQualifies() {
-            return growthWhy != null;
-        }
-    }
+    private record Result(String susWhy, String minedWhy) {}
 
-    // Main thread only from here on.
-    private final Long2ObjectOpenHashMap<Report> reports = new Long2ObjectOpenHashMap<>();
-    private final Long2IntOpenHashMap amethystHeat = new Long2IntOpenHashMap();
-    private final Long2IntOpenHashMap plantHeat = new Long2IntOpenHashMap();
-    private final Long2IntOpenHashMap vetoes = new Long2IntOpenHashMap();
-    private final Long2IntOpenHashMap candidateSince = new Long2IntOpenHashMap();
-    private int appliedRadius = -1;
-
+    // Main thread only.
     private final Long2ObjectOpenHashMap<String> flagged = new Long2ObjectOpenHashMap<>();
     private final Long2ObjectOpenHashMap<String> mined = new Long2ObjectOpenHashMap<>();
     private final LongSet saved = new LongOpenHashSet();
@@ -237,8 +203,6 @@ public class SusChunkFinder extends Module {
 
     private DimensionType lastDimension;
     private FindsStorage.Context context = new FindsStorage.Context("", "");
-    private boolean dirty;
-    private int ticks;
     private int rescanTimer;
     private int generation;
 
@@ -254,10 +218,21 @@ public class SusChunkFinder extends Module {
         lastDimension = mc.world.getDimension();
         context = FindsStorage.context();
 
-        for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) saved.add(ChunkPos.toLong(find.x >> 4, find.z >> 4));
+        for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) {
+            if (stillCredible(find.note)) saved.add(ChunkPos.toLong(find.x >> 4, find.z >> 4));
+        }
         for (FindsStorage.Find find : FindsStorage.get(context, MINED_TYPE)) savedMined.add(ChunkPos.toLong(find.x >> 4, find.z >> 4));
 
         rescanLoadedChunks();
+    }
+
+    /** True if at least one reason in a saved note comes from a check that is still trusted. */
+    private static boolean stillCredible(String note) {
+        if (note == null || note.isBlank()) return true;
+        for (String part : note.split(", ")) {
+            if (!DISCREDITED.matcher(part).find()) return true;
+        }
+        return false;
     }
 
     @Override
@@ -267,23 +242,12 @@ public class SusChunkFinder extends Module {
 
     private void clear() {
         generation++;
-        reports.clear();
-        amethystHeat.clear();
-        plantHeat.clear();
-        vetoes.clear();
-        candidateSince.clear();
         flagged.clear();
         mined.clear();
         saved.clear();
         savedMined.clear();
         announced.clear();
         pendingRescan.clear();
-        appliedRadius = radius();
-        dirty = false;
-    }
-
-    private int radius() {
-        return pinpoint.get() ? simulationDistance.get() : 0;
     }
 
     private void rescanLoadedChunks() {
@@ -291,18 +255,6 @@ public class SusChunkFinder extends Module {
         for (Chunk chunk : Utils.chunks()) {
             if (chunk instanceof WorldChunk levelChunk) queueScan(levelChunk);
         }
-    }
-
-    /** Re-spreads every stored report, after the radius or mode changed. */
-    private void rebuildFields() {
-        if (!isActive()) return;
-        amethystHeat.clear();
-        plantHeat.clear();
-        vetoes.clear();
-        candidateSince.clear();
-        appliedRadius = radius();
-        for (var entry : reports.long2ObjectEntrySet()) spread(entry.getLongKey(), entry.getValue(), 1);
-        dirty = true;
     }
 
     @EventHandler
@@ -323,189 +275,50 @@ public class SusChunkFinder extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.world == null || mc.player == null) return;
+        if (mc.world == null) return;
 
         if (mc.world.getDimension() != lastDimension) {
             onActivate();
             return;
         }
 
-        ticks++;
-        if (++rescanTimer >= 20) {
-            rescanTimer = 0;
-            for (long key : pendingRescan) {
-                Chunk chunk = mc.world.getChunk(ChunkPos.getPackedX(key), ChunkPos.getPackedZ(key), ChunkStatus.FULL, false);
-                if (chunk instanceof WorldChunk levelChunk) queueScan(levelChunk);
-            }
-            pendingRescan.clear();
-            pruneFarReports();
-            dirty = true;
-        }
+        if (++rescanTimer < 20) return;
+        rescanTimer = 0;
 
-        if (dirty && ticks % 5 == 0) {
-            dirty = false;
-            recompute();
+        for (long key : pendingRescan) {
+            Chunk chunk = mc.world.getChunk(ChunkPos.getPackedX(key), ChunkPos.getPackedZ(key), ChunkStatus.FULL, false);
+            if (chunk instanceof WorldChunk levelChunk) queueScan(levelChunk);
         }
+        pendingRescan.clear();
     }
 
     private void queueScan(WorldChunk chunk) {
         int gen = generation;
         Sensitivity sens = sensitivity.get();
+        boolean end = mc.world != null && mc.world.getRegistryKey() == World.END;
 
         worker.submit(() -> {
             if (!isActive()) return;
-            Report report = scan(chunk, sens);
+            Result result = scan(chunk, sens, end);
             long key = chunk.getPos().toLong();
             mc.execute(() -> {
-                if (gen == generation && isActive()) apply(key, report);
+                if (gen == generation && isActive()) apply(key, result);
             });
         });
     }
 
-    private void apply(long key, Report report) {
-        Report old = reports.put(key, report);
-        if (old != null) spread(key, old, -1);
-        spread(key, report, 1);
-        dirty = true;
-    }
+    private void apply(long key, Result result) {
+        if (result.susWhy == null) flagged.remove(key);
+        else if (flagged.put(key, result.susWhy) == null) announce(key, result.susWhy, false);
 
-    /** Adds (sign 1) or removes (sign -1) a chunk's growth and veto over the area around it. */
-    private void spread(long key, Report report, int sign) {
-        int r = appliedRadius;
-        int amethystPoints = report.stillGrowing ? 0 : report.amethystGrowth;
-        int plantPoints = report.plantGrowth;
-        if (amethystPoints == 0 && plantPoints == 0 && !report.stillGrowing) return;
-
-        int cx = ChunkPos.getPackedX(key), cz = ChunkPos.getPackedZ(key);
-        forArea(cx, cz, r, area -> {
-            if (amethystPoints > 0) add(amethystHeat, area, sign * amethystPoints);
-            if (plantPoints > 0) add(plantHeat, area, sign * plantPoints);
-            if (report.stillGrowing) add(vetoes, area, sign);
-        });
-    }
-
-    private static void forArea(int cx, int cz, int r, LongConsumer action) {
-        for (int dx = -r; dx <= r; dx++) {
-            for (int dz = -r; dz <= r; dz++) action.accept(ChunkPos.toLong(cx + dx, cz + dz));
-        }
-    }
-
-    private static void add(Long2IntOpenHashMap map, long key, int amount) {
-        int value = map.get(key) + amount;
-        if (value > 0) map.put(key, value);
-        else map.remove(key);
-    }
-
-    /** Forget scans far outside the loaded area so a long flight does not keep growing memory. */
-    private void pruneFarReports() {
-        int limit = mc.options.getViewDistance().getValue() + appliedRadius + 8;
-        ChunkPos at = mc.player.getChunkPos();
-        var it = reports.long2ObjectEntrySet().iterator();
-        boolean removed = false;
-        while (it.hasNext()) {
-            var entry = it.next();
-            long key = entry.getLongKey();
-            if (Math.max(Math.abs(ChunkPos.getPackedX(key) - at.x), Math.abs(ChunkPos.getPackedZ(key) - at.z)) <= limit) continue;
-            spread(key, entry.getValue(), -1);
-            it.remove();
-            removed = true;
-        }
-        if (removed) candidateSince.keySet().removeIf(key -> !reports.containsKey(key));
-    }
-
-    private void recompute() {
-        Long2ObjectOpenHashMap<String> nowFlagged = new Long2ObjectOpenHashMap<>();
-        Long2ObjectOpenHashMap<String> nowMined = new Long2ObjectOpenHashMap<>();
-
-        for (var entry : reports.long2ObjectEntrySet()) {
-            long key = entry.getLongKey();
-            Report report = entry.getValue();
-            if (report.directWhy != null) nowFlagged.put(key, report.directWhy);
-            if (report.minedWhy != null) nowMined.put(key, report.minedWhy);
-            if (!pinpoint.get() && report.growthQualifies() && !nowFlagged.containsKey(key)) {
-                nowFlagged.put(key, report.growthWhy);
-            }
-        }
-
-        if (pinpoint.get()) findCenters(nowFlagged);
-
-        flagged.clear();
-        flagged.putAll(nowFlagged);
-        mined.clear();
-        mined.putAll(nowMined);
-
-        for (var entry : flagged.long2ObjectEntrySet()) announce(entry.getLongKey(), entry.getValue(), false);
-        for (var entry : mined.long2ObjectEntrySet()) announce(entry.getLongKey(), entry.getValue(), true);
-    }
-
-    /** Marks chunks where the growth around them peaks, once enough of their surroundings has been scanned. */
-    private void findCenters(Long2ObjectOpenHashMap<String> out) {
-        int r = appliedRadius;
-        int threshold = sensitivity.get().heat;
-        Long2IntOpenHashMap score = new Long2IntOpenHashMap();
-
-        LongOpenHashSet keys = new LongOpenHashSet(amethystHeat.keySet());
-        keys.addAll(plantHeat.keySet());
-        for (long key : keys) {
-            int value = (vetoes.containsKey(key) ? 0 : amethystHeat.get(key)) + plantHeat.get(key);
-            if (value >= threshold && loaded(key) && mostlyScanned(key, r)) score.put(key, value);
-        }
-
-        LongOpenHashSet live = new LongOpenHashSet();
-        for (var entry : score.long2IntEntrySet()) {
-            long key = entry.getLongKey();
-            int value = entry.getIntValue();
-            if (!isPeak(score, key, value, r)) continue;
-
-            live.add(key);
-            int since = candidateSince.containsKey(key) ? candidateSince.get(key) : ticks;
-            candidateSince.put(key, since);
-            if (ticks - since < SETTLE_TICKS) continue;
-
-            int am = vetoes.containsKey(key) ? 0 : amethystHeat.get(key);
-            int pl = plantHeat.get(key);
-            List<String> parts = new ArrayList<>(2);
-            if (am > 0) parts.add(am + " grown amethyst");
-            if (pl > 0) parts.add(pl + " plant growth");
-            out.putIfAbsent(key, "growth center (" + String.join(", ", parts) + " within " + r + " chunks)");
-        }
-        candidateSince.keySet().retainAll(live);
-    }
-
-    private static boolean isPeak(Long2IntOpenHashMap field, long key, int value, int reach) {
-        int cx = ChunkPos.getPackedX(key), cz = ChunkPos.getPackedZ(key);
-        for (int dx = -reach; dx <= reach; dx++) {
-            for (int dz = -reach; dz <= reach; dz++) {
-                if (dx == 0 && dz == 0) continue;
-                long other = ChunkPos.toLong(cx + dx, cz + dz);
-                int v = field.get(other);
-                // Ties go to the lower key so a flat plateau gives one mark, not a cluster.
-                if (v > value || (v == value && other < key)) return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean loaded(long key) {
-        return mc.world != null && mc.world.getChunkManager().isChunkLoaded(ChunkPos.getPackedX(key), ChunkPos.getPackedZ(key));
-    }
-
-    /** Most of the surrounding area has been scanned, so the total is not missing half its evidence. */
-    private boolean mostlyScanned(long key, int r) {
-        int cx = ChunkPos.getPackedX(key), cz = ChunkPos.getPackedZ(key);
-        int scanned = 0, total = 0;
-        for (int dx = -r; dx <= r; dx++) {
-            for (int dz = -r; dz <= r; dz++) {
-                total++;
-                if (reports.containsKey(ChunkPos.toLong(cx + dx, cz + dz))) scanned++;
-            }
-        }
-        return scanned * 10 >= total * 8;
+        if (result.minedWhy == null) mined.remove(key);
+        else if (mined.put(key, result.minedWhy) == null) announce(key, result.minedWhy, true);
     }
 
     private void announce(long key, String reason, boolean isMined) {
         LongSet savedSet = isMined ? savedMined : saved;
         long announceKey = isMined ? ~key : key;
+        // Chunks remembered from earlier sessions were already announced back then.
         if (savedSet.contains(key) || !announced.add(announceKey)) return;
 
         int blockX = ChunkPos.getPackedX(key) * 16 + 8;
@@ -526,7 +339,7 @@ public class SusChunkFinder extends Module {
 
     // Scanning (worker thread)
 
-    private Report scan(WorldChunk chunk, Sensitivity sens) {
+    private Result scan(WorldChunk chunk, Sensitivity sens, boolean end) {
         ChunkSection[] sections = chunk.getSectionArray();
         int minY = chunk.getBottomY();
         int topY = minY + chunk.getHeight() - 1;
@@ -534,24 +347,16 @@ public class SusChunkFinder extends Module {
         int startZ = chunk.getPos().getStartZ();
         BlockPos.Mutable probe = new BlockPos.Mutable();
 
-        boolean wantAmethyst = amethyst.get() || minedGeodes.get();
-        boolean wantPlants = plants.get();
-        boolean wantBlocks = playerBlocks.get();
-
-        int rotated = 0, cobbled = 0, storage = 0, beehives = 0;
-        boolean ancientCity = false;
+        int rotated = 0, cobbled = 0, storage = 0, deepTorches = 0;
+        int artificial = 0;
+        String artificialName = null;
+        boolean ancientCity = false, stronghold = false, trialChamber = false;
 
         int grownAmethyst = 0, growingAmethyst = 0, exposedBudding = 0;
-
-        int[] kelpBottom = new int[256], kelpTop = new int[256];
-        int[] bambooBottom = new int[256], bambooTop = new int[256];
-        Arrays.fill(kelpBottom, Integer.MAX_VALUE);
-        Arrays.fill(kelpTop, Integer.MIN_VALUE);
-        Arrays.fill(bambooBottom, Integer.MAX_VALUE);
-        Arrays.fill(bambooTop, Integer.MIN_VALUE);
-        boolean anyKelp = false, anyBamboo = false;
-        List<BlockPos> caveVineTips = new ArrayList<>();
-        List<BlockPos> vines = new ArrayList<>();
+        int[] kelpBottom = new int[256], kelpTop = new int[256], kelpTipAge = new int[256];
+        java.util.Arrays.fill(kelpBottom, Integer.MAX_VALUE);
+        java.util.Arrays.fill(kelpTop, Integer.MIN_VALUE);
+        boolean anyKelp = false;
         int cocoa = 0, ripeCocoa = 0, honeyNests = 0;
 
         for (int i = 0; i < sections.length; i++) {
@@ -565,7 +370,6 @@ public class SusChunkFinder extends Module {
                     for (int lz = 0; lz < 16; lz++) {
                         BlockState state = section.getBlockState(lx, ly, lz);
                         Block block = state.getBlock();
-                        int column = (lx << 4) | lz;
 
                         if (block == Blocks.DEEPSLATE) {
                             if (state.get(Properties.AXIS) != Direction.Axis.Y) rotated++;
@@ -573,10 +377,17 @@ public class SusChunkFinder extends Module {
                             if (y < 0) cobbled++;
                         } else if (block == Blocks.REINFORCED_DEEPSLATE || block == Blocks.SCULK_SHRIEKER) {
                             ancientCity = true;
+                        } else if (block == Blocks.END_PORTAL_FRAME || block == Blocks.MOSSY_STONE_BRICKS || block == Blocks.CRACKED_STONE_BRICKS) {
+                            stronghold = true;
+                        } else if (block == Blocks.TRIAL_SPAWNER || block == Blocks.VAULT) {
+                            trialChamber = true;
+                        } else if (block == Blocks.TORCH || block == Blocks.WALL_TORCH) {
+                            if (y < 0) deepTorches++;
+                        } else if (isArtificial(block, end)) {
+                            artificial++;
+                            if (artificialName == null) artificialName = block.getName().getString().toLowerCase(java.util.Locale.ROOT);
                         } else if (y <= 20 && isStorage(block)) {
                             storage++;
-                        } else if (block == Blocks.BEEHIVE) {
-                            beehives++;
                         } else if (block == Blocks.AMETHYST_CLUSTER) {
                             grownAmethyst++;
                         } else if (isBud(block)) {
@@ -584,86 +395,69 @@ public class SusChunkFinder extends Module {
                             Direction facing = state.get(Properties.FACING);
                             int sx = lx - facing.getOffsetX(), sy = y - facing.getOffsetY(), sz = lz - facing.getOffsetZ();
                             if (sx < 0 || sx > 15 || sz < 0 || sz > 15 || sy < minY || sy > topY) continue;
-                            probe.set(startX + sx, sy, startZ + sz);
-                            if (chunk.getBlockState(probe).isOf(Blocks.BUDDING_AMETHYST)) growingAmethyst++;
+                            if (chunk.getBlockState(probe.set(startX + sx, sy, startZ + sz)).isOf(Blocks.BUDDING_AMETHYST)) growingAmethyst++;
                             else grownAmethyst++;
                         } else if (block == Blocks.BUDDING_AMETHYST) {
                             if (y <= GEODE_MAX_Y && exposed(chunk, startX + lx, y, startZ + lz, probe, minY, topY)) exposedBudding++;
                         } else if (block == Blocks.KELP || block == Blocks.KELP_PLANT) {
+                            int column = (lx << 4) | lz;
                             kelpBottom[column] = Math.min(kelpBottom[column], y);
-                            kelpTop[column] = Math.max(kelpTop[column], y);
+                            if (y > kelpTop[column]) {
+                                kelpTop[column] = y;
+                                kelpTipAge[column] = block == Blocks.KELP ? state.get(Properties.AGE_25) : -1;
+                            }
                             anyKelp = true;
-                        } else if (block == Blocks.BAMBOO) {
-                            bambooBottom[column] = Math.min(bambooBottom[column], y);
-                            bambooTop[column] = Math.max(bambooTop[column], y);
-                            anyBamboo = true;
-                        } else if (block == Blocks.CAVE_VINES) {
-                            if (state.getOrEmpty(Properties.AGE_25).orElse(0) >= 22) caveVineTips.add(new BlockPos(startX + lx, y, startZ + lz));
-                        } else if (block == Blocks.VINE) {
-                            vines.add(new BlockPos(startX + lx, y, startZ + lz));
                         } else if (block == Blocks.COCOA) {
                             cocoa++;
-                            if (state.getOrEmpty(Properties.AGE_2).orElse(0) >= 2) ripeCocoa++;
+                            if (state.get(Properties.AGE_2) >= 2) ripeCocoa++;
                         } else if (block == Blocks.BEE_NEST) {
-                            if (state.getOrEmpty(Properties.HONEY_LEVEL).orElse(0) >= 1) honeyNests++;
+                            if (state.get(Properties.HONEY_LEVEL) >= 1) honeyNests++;
                         }
                     }
                 }
             }
         }
 
-        // Player blocks: mark this exact chunk. Ancient cities have all of these naturally.
-        List<String> direct = new ArrayList<>(4);
-        if (wantBlocks && !ancientCity) {
-            if (rotated >= sens.count(2)) direct.add(rotated + " sideways deepslate");
-            if (cobbled >= sens.count(6)) direct.add(cobbled + " cobbled deepslate below Y 0");
-            if (storage >= sens.count(2)) direct.add(storage + " storage blocks underground");
-            if (beehives > 0) direct.add(beehives + (beehives == 1 ? " beehive" : " beehives"));
-        }
+        List<String> reasons = new ArrayList<>(6);
 
-        // Growth
-        List<String> growth = new ArrayList<>(6);
-        int amethystPoints = 0, plantPoints = 0;
-        boolean stillGrowing = amethyst.get() && growingAmethyst > 0;
-
-        if (amethyst.get() && grownAmethyst > 0 && growingAmethyst == 0) {
-            amethystPoints = grownAmethyst;
-            if (grownAmethyst >= sens.count(8)) growth.add(grownAmethyst + " grown amethyst");
-        }
-
-        if (wantPlants) {
-            int kelp = anyKelp ? kelpToSurface(chunk, kelpBottom, kelpTop, sens, probe, topY) : 0;
-            if (kelp > 0) { growth.add(kelp + " kelp grown to the surface"); plantPoints += kelp; }
-
-            int strands = longCaveVines(chunk, caveVineTips, probe, topY) ;
-            if (strands >= sens.count(3)) { growth.add(strands + " long cave vines"); plantPoints += strands; }
-
-            int vineColumns = longVines(chunk, vines, sens, probe, minY, topY);
-            if (vineColumns > 0) { growth.add(vineColumns + " long vines"); plantPoints += vineColumns; }
-
-            int bamboo = 0;
-            if (anyBamboo) {
-                for (int c = 0; c < 256; c++) {
-                    if (bambooTop[c] != Integer.MIN_VALUE && bambooTop[c] - bambooBottom[c] + 1 >= 12) bamboo++;
-                }
+        if (playerBlocks.get()) {
+            // Trial chambers, ancient cities and strongholds have redstone, storage, deepslate and torches of their own.
+            if (artificial >= 1 && !trialChamber) reasons.add(artificial == 1 ? artificialName : artificial + " player-only blocks (" + artificialName + "...)");
+            if (!ancientCity) {
+                if (rotated >= sens.count(2)) reasons.add(rotated + " sideways deepslate");
+                if (cobbled >= sens.count(6)) reasons.add(cobbled + " cobbled deepslate below Y 0");
+                if (!trialChamber && storage >= sens.count(2)) reasons.add(storage + " storage blocks underground");
+                if (!stronghold && deepTorches >= sens.count(2)) reasons.add(deepTorches + " torches below Y 0");
             }
-            if (bamboo >= sens.count(6)) { growth.add(bamboo + " tall bamboo"); plantPoints += bamboo; }
-
-            if (ripeCocoa >= sens.count(3) && ripeCocoa >= cocoa * 0.75) { growth.add(ripeCocoa + " ripe cocoa"); plantPoints += ripeCocoa; }
-
-            if (honeyNests >= sens.count(1)) { growth.add(honeyNests + " bee nests with honey"); plantPoints += honeyNests * 3; }
         }
 
-        // Mined geode: lots of bare budding amethyst and not a single crystal left.
+        if (growth.get()) {
+            int kelp = anyKelp ? grownKelp(kelpBottom, kelpTop, kelpTipAge) : 0;
+            if (kelp >= sens.count(2)) reasons.add(kelp + " kelp grown past natural height");
+            if (honeyNests >= 1) reasons.add(honeyNests + (honeyNests == 1 ? " bee nest with honey" : " bee nests with honey"));
+            if (ripeCocoa >= sens.count(8) && ripeCocoa == cocoa) reasons.add(ripeCocoa + " cocoa all ripe");
+        }
+
+        if (amethyst.get() && growingAmethyst == 0 && grownAmethyst >= sens.count(8)) {
+            reasons.add(grownAmethyst + " grown amethyst");
+        }
+
         String minedWhy = null;
         if (minedGeodes.get() && exposedBudding >= sens.count(10) && grownAmethyst == 0 && growingAmethyst == 0) {
             minedWhy = exposedBudding + " bare budding amethyst, every crystal broken off";
         }
 
-        return new Report(amethystPoints, plantPoints, stillGrowing,
-            growth.isEmpty() ? null : String.join(", ", growth),
-            direct.isEmpty() ? null : String.join(", ", direct),
-            minedWhy);
+        return new Result(reasons.isEmpty() ? null : String.join(", ", reasons), minedWhy);
+    }
+
+    /** Kelp columns that grew: taller than worldgen makes them, or with a tip older than worldgen gives. */
+    private static int grownKelp(int[] bottom, int[] top, int[] tipAge) {
+        int grown = 0;
+        for (int c = 0; c < 256; c++) {
+            if (top[c] == Integer.MIN_VALUE) continue;
+            if (top[c] - bottom[c] + 1 > NATURAL_KELP_HEIGHT || tipAge[c] > NATURAL_KELP_AGE) grown++;
+        }
+        return grown;
     }
 
     private static boolean exposed(WorldChunk chunk, int x, int y, int z, BlockPos.Mutable probe, int minY, int topY) {
@@ -675,74 +469,40 @@ public class SusChunkFinder extends Module {
         return false;
     }
 
-    /** Kelp columns grown right up to the surface: worldgen leaves most kelp short of it. */
-    private static int kelpToSurface(WorldChunk chunk, int[] bottom, int[] top, Sensitivity sens, BlockPos.Mutable probe, int topY) {
-        int tall = 0, atSurface = 0;
-        for (int c = 0; c < 256; c++) {
-            if (top[c] == Integer.MIN_VALUE || top[c] - bottom[c] + 1 < 8) continue;
-            tall++;
-            if (top[c] + 1 > topY) continue;
-            probe.set(chunk.getPos().getStartX() + (c >> 4), top[c] + 1, chunk.getPos().getStartZ() + (c & 15));
-            if (chunk.getBlockState(probe).getFluidState().isEmpty()) atSurface++;
-        }
-        if (tall < sens.count(8) || atSurface < tall * 0.6) return 0;
-        return atSurface;
-    }
-
-    private static int longCaveVines(WorldChunk chunk, List<BlockPos> tips, BlockPos.Mutable probe, int topY) {
-        int strands = 0;
-        for (BlockPos tip : tips) {
-            int length = 1;
-            for (int y = tip.getY() + 1; y <= topY; y++) {
-                Block b = chunk.getBlockState(probe.set(tip.getX(), y, tip.getZ())).getBlock();
-                if (b != Blocks.CAVE_VINES_PLANT && b != Blocks.CAVE_VINES) break;
-                length++;
-            }
-            if (length >= 10) strands++;
-        }
-        return strands;
-    }
-
-    /** Vine columns long enough to have grown down while loaded, mostly reaching the ground. */
-    private static int longVines(WorldChunk chunk, List<BlockPos> vines, Sensitivity sens, BlockPos.Mutable probe, int minY, int topY) {
-        int longColumns = 0, grounded = 0;
-        for (BlockPos pos : vines) {
-            // Measure each run once, from its lowest vine.
-            if (pos.getY() > minY && chunk.getBlockState(probe.set(pos.getX(), pos.getY() - 1, pos.getZ())).isOf(Blocks.VINE)) continue;
-
-            int length = 1;
-            for (int y = pos.getY() + 1; y <= topY && chunk.getBlockState(probe.set(pos.getX(), y, pos.getZ())).isOf(Blocks.VINE); y++) length++;
-            if (length < 12) continue;
-
-            longColumns++;
-            if (pos.getY() > minY) {
-                BlockState below = chunk.getBlockState(probe.set(pos.getX(), pos.getY() - 1, pos.getZ()));
-                if (!below.isAir()) grounded++;
-            }
-        }
-        if (longColumns < sens.count(4) || grounded < longColumns * 0.5) return 0;
-        return longColumns;
-    }
-
     private boolean isRelevant(BlockState state) {
         Block block = state.getBlock();
         return block == Blocks.DEEPSLATE
             || block == Blocks.COBBLED_DEEPSLATE
             || block == Blocks.REINFORCED_DEEPSLATE
             || block == Blocks.SCULK_SHRIEKER
-            || block == Blocks.BEEHIVE
+            || block == Blocks.END_PORTAL_FRAME
+            || block == Blocks.TRIAL_SPAWNER
+            || block == Blocks.VAULT
+            || block == Blocks.MOSSY_STONE_BRICKS
+            || block == Blocks.CRACKED_STONE_BRICKS
+            || block == Blocks.TORCH
+            || block == Blocks.WALL_TORCH
             || block == Blocks.BUDDING_AMETHYST
             || block == Blocks.AMETHYST_CLUSTER
             || isBud(block)
             || block == Blocks.KELP
             || block == Blocks.KELP_PLANT
-            || block == Blocks.BAMBOO
-            || block == Blocks.CAVE_VINES
-            || block == Blocks.CAVE_VINES_PLANT
-            || block == Blocks.VINE
             || block == Blocks.COCOA
             || block == Blocks.BEE_NEST
+            || isArtificial(block, false)
             || isStorage(block);
+    }
+
+    /** Blocks no structure or feature generates, so they were always placed by a player. */
+    private static boolean isArtificial(Block block, boolean end) {
+        if (block instanceof ShulkerBoxBlock || block == Blocks.ENDER_CHEST) return !end; // End cities have these
+        return block == Blocks.HOPPER
+            || block == Blocks.OBSERVER
+            || block == Blocks.BEACON
+            || block == Blocks.RESPAWN_ANCHOR
+            || block == Blocks.LODESTONE
+            || block == Blocks.NETHERITE_BLOCK
+            || block == Blocks.BEEHIVE;
     }
 
     private static boolean isBud(Block block) {
@@ -750,11 +510,9 @@ public class SusChunkFinder extends Module {
     }
 
     private static boolean isStorage(Block block) {
-        return block instanceof ShulkerBoxBlock
-            || block == Blocks.BARREL
+        return block == Blocks.BARREL
             || block == Blocks.FURNACE
-            || block == Blocks.CRAFTING_TABLE
-            || block == Blocks.ENDER_CHEST;
+            || block == Blocks.CRAFTING_TABLE;
     }
 
     // Rendering
