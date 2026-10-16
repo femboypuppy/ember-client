@@ -2,11 +2,14 @@ package meteordevelopment.meteorclient.systems.modules.donut;
 
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.sound.SoundEvents;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 
 import java.util.UUID;
@@ -20,23 +23,45 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  *     soft bell. They could be anywhere in a 25k block region, so this is information, not an alarm.</li>
  *     <li>{@link Level#HIDDEN}: a staff member is vanished or spectating on your region's server. Same card in amber
  *     with a lower two-note bell.</li>
- *     <li>{@link Level#WATCHING}: a staff member is near you. Their face fades in and out over the screen the way
- *     the elder guardian does, the screen edges darken, and the card turns red.</li>
+ *     <li>{@link Level#WATCHING}: a staff member's game mode leaked from your shard, or they are near you. Their 3D
+ *     head tumbles past the camera like the elder guardian curse, then a WATCHING YOU title, and the card turns
+ *     red.</li>
  * </ul>
  * A lower level never interrupts a higher one that is still on screen.
+ * <p>
+ * The tumbling head and title are ported from Anubis Client's StaffGhost (4ldenz, GPL-3.0,
+ * https://github.com/4ldenz/Anubis-client), redrawn with Meteor's renderer instead of ImGui.
  */
 public final class StaffWatchingEffect {
     private static final StaffWatchingEffect INSTANCE = new StaffWatchingEffect();
 
     private static final float SLIDE_SECONDS = 0.35f;
     private static final float FADE_OUT_SECONDS = 0.45f;
-    private static final float GHOST_SECONDS = 2.2f;
     private static final float VIGNETTE_SECONDS = 3.0f;
+
+    // Anubis StaffGhost: head geometry in camera space, the tumble lasts 1.5 s and the title follows at 1.25 s.
+    private static final float GHOST_SECONDS = 1.5f;
+    private static final float TITLE_AT_SECONDS = 1.25f;
+    private static final float HEAD_DISTANCE = 1.49f;
+    private static final float HEAD_LIFT = 0.24f;
+    private static final float HEAD_HALF = 0.45f;
+    private static final float HAT_SCALE = 1.125f;
+    private static final float NEAR_PLANE = -0.08f;
+    private static final float HALF_FOV_TAN = (float) Math.tan(Math.toRadians(35.0));
+    private static final int CELLS = 8;
+    // Per face: skin u, v of the 8x8 patch, then corners a, b, c (unit cube) and a shade.
+    private static final float[][] FACES = {
+        {8, 8, -1, 1, 1, 1, 1, 1, -1, -1, 1, 1.0f},
+        {0, 8, -1, 1, -1, -1, 1, 1, -1, -1, -1, 0.8f},
+        {16, 8, 1, 1, 1, 1, 1, -1, 1, -1, 1, 0.8f},
+        {8, 0, -1, 1, -1, 1, 1, -1, -1, 1, 1, 0.95f},
+        {16, 0, -1, -1, 1, 1, -1, 1, -1, -1, -1, 0.6f}
+    };
 
     public enum Level {
         REGION("IN REGION", new Color(110, 165, 255), 6f),
         HIDDEN("HIDDEN", new Color(255, 172, 64), 8f),
-        WATCHING("NEAR YOU", new Color(255, 84, 84), 10f);
+        WATCHING("WATCHING", new Color(255, 84, 84), 10f);
 
         final String tag;
         final Color accent;
@@ -52,7 +77,7 @@ public final class StaffWatchingEffect {
             return switch (kind) {
                 case REGION -> REGION;
                 case SPECTATOR, VANISHED -> HIDDEN;
-                case NEARBY -> WATCHING;
+                case NEARBY, WATCHING -> WATCHING;
             };
         }
     }
@@ -65,6 +90,7 @@ public final class StaffWatchingEffect {
     private StaffFaceSkins.Skin skin;
     private long startNanos;
     private boolean active;
+    private boolean titleShown;
     private int ticks;
 
     private final Color work = new Color();
@@ -91,12 +117,13 @@ public final class StaffWatchingEffect {
         this.title = switch (level) {
             case REGION -> clean + " is in your region";
             case HIDDEN -> clean + " is hidden in your region";
-            case WATCHING -> clean + " is near you";
+            case WATCHING -> clean + " is watching you";
         };
         this.subtitle = subtitle == null ? "" : subtitle;
         this.skin = StaffFaceSkins.get(id, clean);
         this.startNanos = System.nanoTime();
         this.ticks = 0;
+        this.titleShown = false;
         this.active = true;
 
         playSound(0);
@@ -137,6 +164,14 @@ public final class StaffWatchingEffect {
 
         ticks++;
         playSound(ticks);
+
+        if (level == Level.WATCHING && !titleShown && elapsed() >= TITLE_AT_SECONDS) {
+            titleShown = true;
+            mc.inGameHud.setTitleTicks(10, 40, 15);
+            mc.inGameHud.setTitle(Text.literal("WATCHING YOU").formatted(Formatting.RED, Formatting.BOLD));
+            mc.inGameHud.setSubtitle(Text.literal(watcherName).formatted(Formatting.RED, Formatting.BOLD));
+        }
+
         if (elapsed() >= level.seconds) active = false;
     }
 
@@ -157,7 +192,7 @@ public final class StaffWatchingEffect {
 
         if (level == Level.WATCHING) {
             if (t < VIGNETTE_SECONDS) drawVignette(renderer, sw, sh, t);
-            if (t < GHOST_SECONDS) drawGhost(renderer, sw, sh, t / GHOST_SECONDS);
+            if (t < GHOST_SECONDS) drawGhostHead(renderer, sw, sh, t / GHOST_SECONDS);
         }
 
         drawCard(renderer, sw, sh, t);
@@ -179,28 +214,87 @@ public final class StaffWatchingEffect {
     }
 
     /**
-     * The elder guardian curse: a large, half-transparent face that swells in, hangs for a moment while slowly
-     * drifting closer, then fades away. No trails or tints, the skin is drawn as it is.
+     * The elder guardian curse, as Anubis draws it: the staff member's head as a real cube (plus the hat layer)
+     * right in front of the camera, tipping over from above as it fades in and out. Each face is split into its 8x8
+     * skin pixels so the perspective stays correct without a 3D pipeline.
      */
-    private void drawGhost(HudRenderer r, double sw, double sh, float p) {
+    private void drawGhostHead(HudRenderer r, double sw, double sh, float p) {
         Identifier texture = skin != null ? skin.texture() : null;
         if (texture == null) return;
 
-        float alpha = (float) Math.sin(Math.PI * p);
-        alpha = alpha * alpha * 0.62f;
-        if (alpha <= 0.01f) return;
+        float alpha = 0.05f + 0.6f * (float) Math.sin(p * Math.PI);
+        double angle = Math.toRadians(60.0 - 150.0 * p);
+        float cos = (float) Math.cos(angle);
+        float sin = (float) Math.sin(angle);
+        float w = (float) sw, h = (float) sh;
+        float focal = h * 0.5f / HALF_FOV_TAN;
 
-        double size = sh * 0.42 * (0.9 + 0.16 * easeOutCubic(p));
-        double x = (sw - size) / 2.0;
-        double y = (sh - size) / 2.0 - sh * 0.04;
-        int a = Math.round(alpha * 255);
+        r.post(() -> r.texturedMesh(texture, mesh -> {
+            drawCube(mesh, HEAD_HALF, 0f, cos, sin, w, h, focal, alpha);
+            drawCube(mesh, HEAD_HALF * HAT_SCALE, 32f, cos, sin, w, h, focal, alpha);
+        }));
+    }
 
-        r.post(() -> {
-            Color tint = new Color(255, 255, 255, a);
-            r.textureRegion(texture, x, y, size, size, 0.125, 0.125, 0.25, 0.25, tint);
-            double hat = size * 1.125;
-            r.textureRegion(texture, x - (hat - size) / 2, y - (hat - size) / 2, hat, hat, 0.625, 0.125, 0.75, 0.25, tint);
-        });
+    private static void drawCube(Renderer2D mesh, float half, float uShift, float cos, float sin, float w, float h, float focal, float alpha) {
+        float[] a = new float[3], b = new float[3], c = new float[3];
+        float[] sx = new float[(CELLS + 1) * (CELLS + 1)];
+        float[] sy = new float[sx.length];
+        Color color = new Color();
+
+        for (float[] face : FACES) {
+            corner(face, 2, half, cos, sin, a);
+            corner(face, 5, half, cos, sin, b);
+            corner(face, 8, half, cos, sin, c);
+
+            float ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+            float vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+            float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+            float mx = a[0] + (ux + vx) * 0.5f, my = a[1] + (uy + vy) * 0.5f, mz = a[2] + (uz + vz) * 0.5f;
+
+            // Facing away from the camera, or poking through the near plane.
+            if (nx * mx + ny * my + nz * mz <= 0f) continue;
+            if (a[2] > NEAR_PLANE || b[2] > NEAR_PLANE || c[2] > NEAR_PLANE || c[2] + uz > NEAR_PLANE) continue;
+
+            for (int j = 0; j <= CELLS; j++) {
+                for (int i = 0; i <= CELLS; i++) {
+                    float s = (float) i / CELLS, t = (float) j / CELLS;
+                    float x = a[0] + ux * s + vx * t;
+                    float y = a[1] + uy * s + vy * t;
+                    float z = a[2] + uz * s + vz * t;
+                    sx[j * (CELLS + 1) + i] = w * 0.5f + x / -z * focal;
+                    sy[j * (CELLS + 1) + i] = h * 0.5f - y / -z * focal;
+                }
+            }
+
+            int shade = Math.round(face[11] * 255f);
+            color.set(shade, shade, shade, Math.round(clamp(alpha) * 255f));
+            float u0 = (face[0] + uShift) / 64f, v0 = face[1] / 64f, texel = 1f / 64f;
+
+            for (int j = 0; j < CELLS; j++) {
+                for (int i = 0; i < CELLS; i++) {
+                    int p0 = j * (CELLS + 1) + i;
+                    int q0 = p0 + CELLS + 1;
+                    float cu = u0 + i * texel, cv = v0 + j * texel;
+
+                    mesh.triangles.ensureQuadCapacity();
+                    int i1 = mesh.triangles.vec2(sx[p0], sy[p0]).vec2(cu, cv).color(color).next();
+                    int i2 = mesh.triangles.vec2(sx[p0 + 1], sy[p0 + 1]).vec2(cu + texel, cv).color(color).next();
+                    int i3 = mesh.triangles.vec2(sx[q0 + 1], sy[q0 + 1]).vec2(cu + texel, cv + texel).color(color).next();
+                    int i4 = mesh.triangles.vec2(sx[q0], sy[q0]).vec2(cu, cv + texel).color(color).next();
+                    mesh.triangles.quad(i1, i2, i3, i4);
+                }
+            }
+        }
+    }
+
+    /** One cube corner in camera space, tipped about the X axis by the current tumble angle. */
+    private static void corner(float[] face, int at, float half, float cos, float sin, float[] out) {
+        float x = face[at] * half;
+        float y = face[at + 1] * half + HEAD_LIFT;
+        float z = face[at + 2] * half - HEAD_DISTANCE;
+        out[0] = x;
+        out[1] = y * cos - z * sin;
+        out[2] = y * sin + z * cos;
     }
 
     private void drawCard(HudRenderer r, double sw, double sh, float t) {

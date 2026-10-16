@@ -270,6 +270,19 @@ public class HudRenderer {
     }
 
     /**
+     * Ember: free-form textured triangles for shapes the rectangle helpers cannot express, such as a projected 3D
+     * cube. {@code build} adds vertices to {@code Renderer2D.TEXTURE.triangles} (position, UV, colour). Call inside
+     * {@link #post}.
+     */
+    public void texturedMesh(Identifier id, java.util.function.Consumer<Renderer2D> build) {
+        var texture = mc.getTextureManager().getTexture(id);
+
+        Renderer2D.TEXTURE.begin();
+        build.accept(Renderer2D.TEXTURE);
+        Renderer2D.TEXTURE.render(texture.getGlTextureView(), texture.getSampler());
+    }
+
+    /**
      * Ember: a square patch of a texture with rounded corners. There is no stencil to mask
      * with and painting the corners over only works against a known flat colour, so the quad
      * is cut into horizontal strips instead, each inset to follow the corner arc with its UVs

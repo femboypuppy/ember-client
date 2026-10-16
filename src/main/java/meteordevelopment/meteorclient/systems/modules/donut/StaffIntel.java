@@ -20,6 +20,7 @@ import net.minecraft.world.World;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -33,8 +34,13 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  *     <li>Which goliath (backend shard) you are on, and which staff are on it. The main source is the shard probe: a
  *     silent {@code /minecraft:msg } tab completion, which the backend answers with the names of the players it hosts
  *     (about 200 on DonutSMP, while the tab list only shows ~90 people network-wide). A staff name in that answer means
- *     they are on your shard. A loaded entity or a game mode update without ADD_PLAYER also counts. Everything is
- *     dropped whenever you change shard.</li>
+ *     they are on your shard. A loaded entity also counts while it is loaded. Everything is dropped whenever you
+ *     change shard.</li>
+ *     <li>Game mode leaks. DonutSMP keeps staff in the network-wide tab list, and the backend you are on forwards their
+ *     game mode changes even while they are vanished (seen live: Munkerlich -> SURVIVAL while missing from the probe).
+ *     Vanished players are also missing from the probe, so a leak is followed by an immediate probe: in the answer
+ *     means visible on your shard, missing means hidden on your shard. Hidden leaks expire after a timeout because
+ *     nothing tells us when a vanished player leaves.</li>
  *     <li>One alert gate so a single event never plays the staff alert twice, and the same staff member only
  *     re-alerts when the situation gets worse (region, then spectator/vanish, then physically near you).</li>
  * </ul>
@@ -43,18 +49,49 @@ public final class StaffIntel {
     private static final StaffIntel INSTANCE = new StaffIntel();
 
     private static final Pattern TEAM_PATTERN = Pattern.compile("^(\\d{1,3})-([A-Za-z0-9_.]{1,17})-(\\w+)$");
-    private static final long PROOF_TTL_MS = 10 * 60_000L;
     private static final long ALERT_COOLDOWN_MS = 5 * 60_000L;
+    private static final long WATCHING_COOLDOWN_MS = 2 * 60_000L;
+    // Anubis shows staff as "watching" for this long after a leak.
+    private static final long WATCHING_WINDOW_MS = 10_000L;
     private static final String PROBE_COMMAND = "minecraft:msg ";
     private static final int PROBE_INTERVAL_TICKS = 100;
     // A name stays "on your shard" through one missed probe answer.
     private static final long PROBE_TTL_MS = 12_000L;
+    // A body that just unloaded (chunk edge, brief tracking gap) still counts for a moment.
+    private static final long ENTITY_GRACE_MS = 3_000L;
+    // Without a probe answer, a leak is reported as plain "in region" after this long.
+    private static final long VERDICT_FALLBACK_MS = 7_000L;
+
+    public enum Verdict {
+        PENDING,
+        VISIBLE,
+        HIDDEN,
+        UNKNOWN
+    }
+
+    /** A staff game mode change forwarded by your shard, and whether the follow-up probe saw them. */
+    public record LeakEvent(UUID id, String name, GameMode mode, Verdict verdict) {}
+
+    private static final class Leak {
+        final String name;
+        GameMode mode;
+        long at;
+        Verdict verdict = Verdict.PENDING;
+
+        Leak(String name, GameMode mode, long at) {
+            this.name = name;
+            this.mode = mode;
+            this.at = at;
+        }
+    }
 
     public enum AlertKind {
         REGION(1),
         SPECTATOR(2),
         VANISHED(2),
-        NEARBY(3);
+        NEARBY(3),
+        // A staff game mode change forwarded by your shard: what Anubis calls "watching you".
+        WATCHING(3);
 
         final int severity;
 
@@ -65,18 +102,21 @@ public final class StaffIntel {
 
     private record PendingMode(UUID id, GameMode mode) {}
     private record AlertRecord(long at, int severity) {}
+    private record ProbeAnswer(List<String> names, long sentAt) {}
 
     private final Queue<PendingMode> pendingModes = new ConcurrentLinkedQueue<>();
     private final Queue<UUID> pendingRemovals = new ConcurrentLinkedQueue<>();
-    private final Map<UUID, Long> provenAt = new ConcurrentHashMap<>();
+    private final Map<UUID, Leak> leaks = new HashMap<>();
+    private final Map<UUID, Long> entitySeenAt = new HashMap<>();
     private final Map<UUID, GameMode> shardGameModes = new ConcurrentHashMap<>();
     private final Map<String, AlertRecord> alerts = new HashMap<>();
     private final Set<String> loggedTeams = new HashSet<>();
     private final Set<String> starred = ConcurrentHashMap.newKeySet();
+    private final List<Consumer<LeakEvent>> leakListeners = new ArrayList<>();
 
-    private final Set<Integer> probeIds = ConcurrentHashMap.newKeySet();
+    private final Map<Integer, Long> probeSentAt = new ConcurrentHashMap<>();
     private final Map<String, Long> probeSeen = new HashMap<>();
-    private volatile List<String> pendingProbe;
+    private volatile ProbeAnswer pendingProbe;
     private List<String> lastProbeNames = List.of();
     private Set<String> lastStaffOnShard = Set.of();
     private int probeSeq;
@@ -191,17 +231,63 @@ public final class StaffIntel {
 
     /** True if the player is on the goliath you are on right now (shard probe, loaded entity or game mode leak). */
     public boolean isOnYourShard(UUID id, String name) {
-        long now = System.currentTimeMillis();
-
-        if (name != null) {
-            Long seen = probeSeen.get(name.trim().toLowerCase(Locale.ROOT));
-            if (seen != null && now - seen < PROBE_TTL_MS) return true;
-        }
-
+        if (inProbe(name)) return true;
         if (id == null) return false;
-        Long at = provenAt.get(id);
-        if (at != null && now - at < PROOF_TTL_MS) return true;
-        return entity(id) != null;
+        if (entity(id) != null) return true;
+
+        long now = System.currentTimeMillis();
+        Long seen = entitySeenAt.get(id);
+        if (seen != null && now - seen < ENTITY_GRACE_MS) return true;
+
+        Leak leak = leaks.get(id);
+        return leak != null && leak.verdict != Verdict.VISIBLE && now - leak.at < hiddenTimeoutMs();
+    }
+
+    /**
+     * True if a game mode leak put this player on your shard while the probe could not see them: vanished here.
+     * Stays true until they show up in the probe, you change shard, or the hidden timeout runs out.
+     */
+    public boolean isHiddenOnShard(UUID id, String name) {
+        if (id == null || inProbe(name)) return false;
+        Leak leak = leaks.get(id);
+        return leak != null && leak.verdict == Verdict.HIDDEN && System.currentTimeMillis() - leak.at < hiddenTimeoutMs();
+    }
+
+    /** True for a few seconds after this staff member's game mode leaked from your shard. */
+    public boolean isWatching(UUID id) {
+        long age = leakAgeMs(id);
+        return age >= 0 && age < WATCHING_WINDOW_MS;
+    }
+
+    /** Milliseconds since the last game mode leak for this player, or -1. */
+    public long leakAgeMs(UUID id) {
+        Leak leak = id == null ? null : leaks.get(id);
+        return leak == null ? -1 : System.currentTimeMillis() - leak.at;
+    }
+
+    /** The hidden staff member on your shard with the freshest leak, or null. */
+    public LeakEvent freshestHidden() {
+        Map.Entry<UUID, Leak> best = null;
+        for (Map.Entry<UUID, Leak> e : leaks.entrySet()) {
+            if (!isHiddenOnShard(e.getKey(), e.getValue().name)) continue;
+            if (best == null || e.getValue().at > best.getValue().at) best = e;
+        }
+        return best == null ? null : new LeakEvent(best.getKey(), best.getValue().name, best.getValue().mode, Verdict.HIDDEN);
+    }
+
+    public void onLeak(Consumer<LeakEvent> listener) {
+        leakListeners.add(listener);
+    }
+
+    private boolean inProbe(String name) {
+        if (name == null) return false;
+        Long seen = probeSeen.get(name.trim().toLowerCase(Locale.ROOT));
+        return seen != null && System.currentTimeMillis() - seen < PROBE_TTL_MS;
+    }
+
+    private long hiddenTimeoutMs() {
+        StaffDetector detector = detector();
+        return detector != null ? detector.hiddenTimeoutMs() : 3 * 60_000L;
     }
 
     public boolean isOnYourShard(UUID id) {
@@ -258,7 +344,9 @@ public final class StaffIntel {
         long now = System.currentTimeMillis();
 
         AlertRecord last = alerts.get(key);
-        if (last != null && now - last.at < ALERT_COOLDOWN_MS && kind.severity <= last.severity) {
+        // Each leak is a fresh action by the staff member, so it repeats sooner (Anubis uses 2 minutes too).
+        long cooldown = kind == AlertKind.WATCHING ? WATCHING_COOLDOWN_MS : ALERT_COOLDOWN_MS;
+        if (last != null && now - last.at < cooldown && kind.severity <= last.severity) {
             log("alert suppressed for %s (%s, cooldown)", name, kind);
             return false;
         }
@@ -268,17 +356,25 @@ public final class StaffIntel {
         return true;
     }
 
+    /** They left your shard: coming back is news again, at any level. */
+    public void noteLeft(String name) {
+        if (name == null || name.isBlank()) return;
+        alerts.remove(name.trim().toLowerCase(Locale.ROOT));
+        log("%s left %s", name, currentShardLabel());
+    }
+
     // Events
 
     @EventHandler
     private void onPacket(PacketEvent.Receive event) {
-        if (event.packet instanceof CommandSuggestionsS2CPacket suggestions && probeIds.remove(suggestions.id())) {
+        Long sentAt;
+        if (event.packet instanceof CommandSuggestionsS2CPacket suggestions && (sentAt = probeSentAt.remove(suggestions.id())) != null) {
             List<String> names = new ArrayList<>();
             for (Suggestion suggestion : suggestions.getSuggestions().getList()) {
                 String text = suggestion.getText();
                 if (text != null && !text.isBlank()) names.add(text.trim());
             }
-            pendingProbe = names;
+            pendingProbe = new ProbeAnswer(names, sentAt);
             // Our own probe; never let it reach the chat box.
             event.cancel();
             return;
@@ -296,7 +392,7 @@ public final class StaffIntel {
             }
 
             if (debug) logListPacket(packet, actions, add);
-        } else if (event.packet instanceof PlayerRemoveS2CPacket remove && debug) {
+        } else if (event.packet instanceof PlayerRemoveS2CPacket remove) {
             pendingRemovals.addAll(remove.profileIds());
         }
     }
@@ -344,8 +440,9 @@ public final class StaffIntel {
             trackedWorld = mc.world;
             shard = nowShard;
             shardSinceMs = System.currentTimeMillis();
-            if (!provenAt.isEmpty()) log("shard changed, dropping %d region proofs", provenAt.size());
-            provenAt.clear();
+            if (!leaks.isEmpty()) log("shard changed, dropping %d game mode leaks", leaks.size());
+            leaks.clear();
+            entitySeenAt.clear();
             shardGameModes.clear();
             probeSeen.clear();
             lastStaffOnShard = Set.of();
@@ -362,16 +459,27 @@ public final class StaffIntel {
             PlayerListEntry entry = conn.getPlayerListEntry(mode.id());
             String name = entry != null && entry.getProfile() != null ? entry.getProfile().name() : null;
             boolean staff = entry != null ? isStaff(entry) : isStaffName(name);
-
-            provenAt.put(mode.id(), System.currentTimeMillis());
             shardGameModes.put(mode.id(), mode.mode());
 
             if (debug) {
                 PlayerEntity body = entity(mode.id());
-                log("gamemode-only update: %s -> %s staff=%s entity=%s team=%s", name == null ? mode.id() : name, mode.mode(), staff,
+                log("gamemode-only update: %s -> %s staff=%s entity=%s team=%s inProbe=%s", name == null ? mode.id() : name, mode.mode(), staff,
                     body == null ? "no" : String.format("%.0fm", body.distanceTo(mc.player)),
-                    entry == null || entry.getScoreboardTeam() == null ? "-" : entry.getScoreboardTeam().getName());
+                    entry == null || entry.getScoreboardTeam() == null ? "-" : entry.getScoreboardTeam().getName(), inProbe(name));
             }
+
+            if (!staff || name == null) continue;
+            long now = System.currentTimeMillis();
+            Leak leak = leaks.get(mode.id());
+            if (leak == null) {
+                leaks.put(mode.id(), new Leak(name, mode.mode(), now));
+            } else {
+                leak.mode = mode.mode();
+                leak.at = now;
+                leak.verdict = Verdict.PENDING;
+            }
+            // Ask the backend right away whether it lists them; that decides visible vs hidden.
+            ticksToProbe = Math.min(ticksToProbe, 1);
         }
 
         if (probeEnabled() && --ticksToProbe <= 0) {
@@ -379,15 +487,47 @@ public final class StaffIntel {
             sendProbe(conn);
         }
         processProbe();
+        expireLeaks();
 
         UUID removed;
         while ((removed = pendingRemovals.poll()) != null) {
-            Long proof = provenAt.get(removed);
-            if (proof != null) log("tab REMOVE of a player proven on this shard: %s", removed);
+            if (leaks.containsKey(removed)) log("tab REMOVE of a staff member that leaked on this shard: %s", leaks.get(removed).name);
         }
 
+        long now = System.currentTimeMillis();
         for (PlayerEntity player : mc.world.getPlayers()) {
-            if (player != mc.player) provenAt.put(player.getUuid(), System.currentTimeMillis());
+            if (player != mc.player) entitySeenAt.put(player.getUuid(), now);
+        }
+        entitySeenAt.values().removeIf(at -> now - at > ENTITY_GRACE_MS);
+    }
+
+    private void expireLeaks() {
+        long now = System.currentTimeMillis();
+        Iterator<Map.Entry<UUID, Leak>> it = leaks.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, Leak> e = it.next();
+            Leak leak = e.getValue();
+
+            if (leak.verdict == Verdict.PENDING && now - leak.at > VERDICT_FALLBACK_MS) {
+                leak.verdict = Verdict.UNKNOWN;
+                fireLeak(e.getKey(), leak);
+            }
+            if (leak.verdict != Verdict.PENDING && now - leak.at > hiddenTimeoutMs()) {
+                log("leak for %s expired (%s)", leak.name, leak.verdict);
+                it.remove();
+            }
+        }
+    }
+
+    private void fireLeak(UUID id, Leak leak) {
+        log("leak verdict: %s %s -> %s on %s", leak.name, leak.mode, leak.verdict, currentShardLabel());
+        LeakEvent event = new LeakEvent(id, leak.name, leak.mode, leak.verdict);
+        for (Consumer<LeakEvent> listener : leakListeners) {
+            try {
+                listener.accept(event);
+            } catch (Throwable t) {
+                MeteorClient.LOG.error("[Ember StaffIntel] leak listener failed", t);
+            }
         }
     }
 
@@ -395,8 +535,8 @@ public final class StaffIntel {
         int id = nextProbeId++;
         if (nextProbeId > 40000) nextProbeId = 30000;
 
-        probeIds.add(id);
-        while (probeIds.size() > 8) probeIds.remove(probeIds.iterator().next());
+        probeSentAt.put(id, System.currentTimeMillis());
+        if (probeSentAt.size() > 8) probeSentAt.remove(Collections.min(probeSentAt.keySet()));
 
         try {
             conn.sendPacket(new RequestCommandCompletionsC2SPacket(id, PROBE_COMMAND));
@@ -407,11 +547,12 @@ public final class StaffIntel {
     }
 
     private void processProbe() {
-        List<String> names = pendingProbe;
-        if (names == null || mc.player == null) return;
+        ProbeAnswer answer = pendingProbe;
+        if (answer == null || mc.player == null) return;
         pendingProbe = null;
         probesAnswered++;
 
+        List<String> names = answer.names();
         long now = System.currentTimeMillis();
         String self = mc.player.getName().getString();
         Set<String> staff = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
@@ -428,6 +569,28 @@ public final class StaffIntel {
             lastStaffOnShard = staff;
         }
 
+        // An empty answer means the probe failed, not that the shard is empty.
+        if (names.isEmpty()) return;
+        Iterator<Map.Entry<UUID, Leak>> it = leaks.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, Leak> e = it.next();
+            Leak leak = e.getValue();
+            boolean listed = staff.contains(leak.name);
+
+            if (leak.verdict == Verdict.PENDING) {
+                // Only an answer to a probe sent after the leak can judge it.
+                if (answer.sentAt() < leak.at) continue;
+                leak.verdict = listed ? Verdict.VISIBLE : Verdict.HIDDEN;
+                fireLeak(e.getKey(), leak);
+            } else if (leak.verdict == Verdict.VISIBLE && !listed) {
+                // Visible staff dropping out of the probe left (or vanished; the probe cannot tell those apart).
+                it.remove();
+            } else if (leak.verdict != Verdict.VISIBLE && listed) {
+                log("%s is now listed on %s (unvanished)", leak.name, currentShardLabel());
+                leak.verdict = Verdict.VISIBLE;
+            }
+        }
+
         lastProbeNames = List.copyOf(names);
         probeSeq++;
     }
@@ -442,10 +605,11 @@ public final class StaffIntel {
         shard = Integer.MIN_VALUE;
         pendingModes.clear();
         pendingRemovals.clear();
-        provenAt.clear();
+        leaks.clear();
+        entitySeenAt.clear();
         shardGameModes.clear();
         loggedTeams.clear();
-        probeIds.clear();
+        probeSentAt.clear();
         probeSeen.clear();
         pendingProbe = null;
         lastProbeNames = List.of();

@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.donut.StaffDetector;
 import meteordevelopment.meteorclient.systems.modules.donut.StaffDetector.StaffEntry;
+import meteordevelopment.meteorclient.systems.modules.donut.StaffIntel;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.EmberIcons;
 import meteordevelopment.meteorclient.utils.render.EmberStrip;
@@ -299,7 +300,16 @@ public class EmberStaffHud extends HudElement {
     private String secondaryBadge(StaffEntry entry, long nowMs) {
         if (!entry.online) return null;
         if (entry.nearby) return String.format("NEAR %.0fm", entry.distance);
-        if (entry.inRegion) return "IN REGION";
+        if (StaffIntel.get().isWatching(entry.uuid)) return "WATCHING";
+        if (entry.inRegion) {
+            // Hidden staff only show up through a game mode leak, so say how old that proof is.
+            long leakAge = StaffIntel.get().leakAgeMs(entry.uuid);
+            if (entry.vanished && leakAge >= 0) {
+                long s = leakAge / 1000;
+                return "IN REGION · " + (s < 60 ? s + "s" : (s / 60) + "m") + " AGO";
+            }
+            return "IN REGION";
+        }
         if (nowMs - entry.joinedAt < 4500) return "JOINED";
         return null;
     }

@@ -54,7 +54,9 @@ public class StaffDetector extends Module {
         "Frwost",
         "bautiedgar",
         "Itszdeath",
-        "Dough4"
+        "Dough4",
+        // From Anubis Client's roster.
+        "Bloodspulse"
     );
 
     /**
@@ -123,6 +125,16 @@ public class StaffDetector extends Module {
         .name("shard-probe")
         .description("Every 5 seconds, silently asks your region's server which players it hosts, so staff on your shard are marked IN REGION.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Double> hiddenTimeout = sgGeneral.add(new DoubleSetting.Builder()
+        .name("hidden-timeout")
+        .description("Minutes a staff member stays marked HIDDEN on your shard after their game mode leaks. Nothing tells us when a vanished player leaves, so this is a guess.")
+        .defaultValue(3.0)
+        .min(0.5)
+        .max(30.0)
+        .sliderRange(0.5, 10.0)
         .build()
     );
 
@@ -246,7 +258,19 @@ public class StaffDetector extends Module {
 
     public StaffDetector() {
         super(Categories.Donut, "staff-detector", "Displays an on-screen UI of online moderators that updates as they join or leave.");
-        StaffIntel.get();
+        StaffIntel.get().onLeak(this::onLeakVerdict);
+    }
+
+    /** A staff game mode change forwarded by your shard: Anubis's "watching you" (see AntiVanish#onLeakVerdict). */
+    private void onLeakVerdict(StaffIntel.LeakEvent leak) {
+        if (!isActive() || !alertNearby.get() || mc.player == null) return;
+        String mode = leak.mode() == null ? "?" : leak.mode().asString().toUpperCase(Locale.ROOT);
+        String state = leak.verdict() == StaffIntel.Verdict.HIDDEN ? "Vanished"
+            : leak.verdict() == StaffIntel.Verdict.VISIBLE ? "Visible" : "On this server";
+
+        StaffEntry entry = tracked.get(leak.name().toLowerCase(Locale.ROOT));
+        if (entry != null) entry.pulse = 1f;
+        big(leak.id(), leak.name(), StaffIntel.AlertKind.WATCHING, state + ", switched to " + mode + " · " + StaffIntel.get().currentShardLabel());
     }
 
     private void triggerTestAnimation() {
@@ -263,6 +287,10 @@ public class StaffDetector extends Module {
 
     public boolean probeEnabled() {
         return shardProbe.get();
+    }
+
+    public long hiddenTimeoutMs() {
+        return Math.round(hiddenTimeout.get() * 60_000.0);
     }
 
     public int teamThreshold() {
@@ -433,7 +461,10 @@ public class StaffDetector extends Module {
             GameMode shardMode = intel.shardGameMode(uuid);
             boolean spectator = shardMode == GameMode.SPECTATOR || (shardMode == null && info.getGameMode() == GameMode.SPECTATOR);
             // Only a listed -> unlisted change counts as vanish; some servers never list part of the tab.
-            boolean vanished = uuid != null && seenListed.contains(uuid) && Boolean.FALSE.equals(listedState.get(uuid));
+            boolean unlisted = uuid != null && seenListed.contains(uuid) && Boolean.FALSE.equals(listedState.get(uuid));
+            // Their game mode leaked from your shard but the backend does not list them: vanished here.
+            boolean hiddenHere = intel.isHiddenOnShard(uuid, name);
+            boolean vanished = unlisted || hiddenHere;
 
             StaffEntry entry = tracked.get(key);
             boolean fresh = entry == null;
@@ -462,6 +493,13 @@ public class StaffDetector extends Module {
 
             if (!primed) continue;
 
+            // You changing shard clears everyone; only their own departure is news.
+            if (wasOnShard && !onShard && !settling) {
+                intel.noteLeft(name);
+                nearbySet.remove(key);
+                if (alertNearby.get()) small(name + " left your region", wasVanished ? "or the hidden timeout ran out" : intel.currentShardLabel());
+            }
+
             if (fresh || wasOffline) {
                 entry.joinedAt = nowMs;
                 entry.pulse = 1f;
@@ -486,7 +524,8 @@ public class StaffDetector extends Module {
                 big(uuid, name, StaffIntel.AlertKind.SPECTATOR, "Spectator mode \u00B7 " + intel.currentShardLabel());
             } else if (onShard && vanished && !wasVanished) {
                 entry.pulse = 1f;
-                big(uuid, name, StaffIntel.AlertKind.VANISHED, "Vanished \u00B7 " + intel.currentShardLabel());
+                big(uuid, name, StaffIntel.AlertKind.VANISHED,
+                    (hiddenHere ? "Game mode leaked, not in the player list" : "Hidden from tab") + " \u00B7 " + intel.currentShardLabel());
             } else if (onShard && !wasOnShard) {
                 entry.pulse = 1f;
                 big(uuid, name, StaffIntel.AlertKind.REGION, intel.currentShardLabel());
@@ -627,7 +666,7 @@ public class StaffDetector extends Module {
         String title = switch (level) {
             case REGION -> name + " is in your region";
             case HIDDEN -> name + " is hidden in your region";
-            case WATCHING -> name + " is near you";
+            case WATCHING -> name + " is watching you";
         };
 
         if (elderAnimation.get()) {

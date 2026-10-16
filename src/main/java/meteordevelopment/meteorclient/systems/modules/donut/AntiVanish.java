@@ -10,7 +10,11 @@ import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.ChestBlock;
+import net.minecraft.block.EnderChestBlock;
+import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
@@ -145,7 +149,7 @@ public class AntiVanish extends Module {
 
     public AntiVanish() {
         super(Categories.Donut, "anti-vanish", "Detects staff on your region's server, hidden staff, and staff near you.");
-        StaffIntel.get();
+        StaffIntel.get().onLeak(this::onLeakVerdict);
     }
 
     private void triggerTestAnimation() {
@@ -384,6 +388,13 @@ public class AntiVanish extends Module {
             } else if (packet instanceof PlaySoundS2CPacket sound) {
                 Identifier id = sound.getSound().value().id();
                 observations.offer(Observation.position(ObservationType.POSITIONAL_SOUND, sound.getX(), sound.getY(), sound.getZ(), id == null ? "" : id.toString()));
+            } else if (packet instanceof BlockEventS2CPacket blockEvent && blockEvent.getType() == 1
+                && isLidContainer(blockEvent.getBlock())) {
+                // Chest/shulker lid moving (data = viewer count). Vanish plugins hide the player but not always this:
+                // DonutVanish hides the opening yet still sends the closing.
+                BlockPos pos = blockEvent.getPos();
+                observations.offer(Observation.position(ObservationType.CONTAINER_OPEN, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
+                    Registries.BLOCK.getId(blockEvent.getBlock()).toString()));
             }
         }
 
@@ -411,6 +422,7 @@ public class AntiVanish extends Module {
             case POSITIONAL_SOUND -> inspectPositionalSound(observation);
             case ENTITY_SOUND -> inspectEntitySound(observation);
             case PARTICLE -> inspectParticle(observation);
+            case CONTAINER_OPEN -> inspectContainerOpen(observation);
             case EXPLOSION -> rememberExplosion(observation);
             case GAMEMODE -> announceGamemode(observation.profileId, observation.detail);
         }
@@ -724,7 +736,7 @@ public class AntiVanish extends Module {
         String title = switch (level) {
             case REGION -> name + " is in your region";
             case HIDDEN -> name + " is hidden in your region";
-            case WATCHING -> name + " is near you";
+            case WATCHING -> name + " is watching you";
         };
         if (proof != null && proof.distance() >= 0) subtitle = proof.distance() + " blocks away \u00B7 " + subtitle;
 
@@ -751,7 +763,8 @@ public class AntiVanish extends Module {
 
     /**
      * A game mode update without ADD_PLAYER only comes from the goliath you are on, so it proves the staff member is
-     * on your shard (StaffIntel records the proof). Spectator gets its own, stronger alert.
+     * on your shard. Like Anubis, the switch is posted straight away ("X switched to SURVIVAL"); the WATCHING alert
+     * waits for StaffIntel's follow-up probe so it can say whether they are hidden (see {@link #onLeakVerdict}).
      */
     private void announceGamemode(UUID uuid, String gameMode) {
         if (uuid == null || (mc.player != null && mc.player.getUuid().equals(uuid))) return;
@@ -759,13 +772,32 @@ public class AntiVanish extends Module {
         String name = knownName(uuid);
         if (name == null || !(staffIds.contains(uuid) || isKnownStaffName(name))) return;
 
+        notifyVanishEvent(name, "switched to " + gameMode.toUpperCase(Locale.ROOT), StaffIntel.get().currentShardLabel());
         if (GameMode.SPECTATOR.asString().equalsIgnoreCase(gameMode)) {
             reportHidden(uuid, name, true, "Vanish Event: switched to spectator", "Spectator Mode", 100);
-            watchingYou(name, new RegionProof(uuid, -1), StaffIntel.AlertKind.SPECTATOR, "Spectator mode \u00B7 " + StaffIntel.get().currentShardLabel());
         } else {
             endSpell(name, true, 0L);
-            watchingYou(name, regionProof(uuid, name), StaffIntel.AlertKind.REGION, StaffIntel.get().currentShardLabel());
         }
+    }
+
+    /**
+     * Anubis Client's trigger for "watching you" (4ldenz, GPL-3.0): any staff game mode change forwarded by your
+     * shard. Staff switch modes when they start or stop spectating someone, and on DonutSMP the switch reaches the
+     * shard even while they are vanished.
+     */
+    private void onLeakVerdict(StaffIntel.LeakEvent leak) {
+        if (!isActive() || mc.player == null) return;
+        String shard = StaffIntel.get().currentShardLabel();
+        String mode = leak.mode() == null ? "?" : leak.mode().asString().toUpperCase(Locale.ROOT);
+        boolean hidden = leak.verdict() == StaffIntel.Verdict.HIDDEN;
+
+        if (hidden) {
+            upsertDetection(detectionKey(leak.id(), leak.name()), leak.name(), "Vanish Event: game mode leaked while unlisted", 100,
+                System.currentTimeMillis() + DETECTION_TTL_MS);
+        }
+        watchingYou(leak.name(), regionProof(leak.id(), leak.name()), StaffIntel.AlertKind.WATCHING,
+            (hidden ? "Vanished" : leak.verdict() == StaffIntel.Verdict.VISIBLE ? "Visible" : "On this server")
+                + ", switched to " + mode + " \u00B7 " + shard);
     }
 
     private void scanInvisiblePlayers() {
@@ -809,6 +841,40 @@ public class AntiVanish extends Module {
             || (selfContainerActive() && isContainerSignal(observation.detail))) return;
 
         triggerSensor(SignalType.SOUND, locatedSubject(source), "Suspicious Sound: " + shortPath(observation.detail), 18, 3000L);
+        escalateHiddenStaff(source, "Unexplained " + shortPath(observation.detail));
+    }
+
+    private void inspectContainerOpen(Observation observation) {
+        Vec3d source = observation.position();
+        long now = System.currentTimeMillis();
+        StaffIntel.get().log("lid event: %s at %s (visible cause=%s)", shortPath(observation.detail), locatedSubject(source), hasVisibleCause(source));
+
+        if (!nearPlayer(source)
+            || hasVisibleCause(source)
+            || now - lastLocalActionMs < 1000L
+            || selfContainerActive()
+            || recentlySelfPlaced(source)) return;
+
+        String what = shortPath(observation.detail).replace('_', ' ');
+        triggerSensor(SignalType.CONTAINER, locatedSubject(source), "Used by nobody visible: " + what, 30, 5000L);
+        escalateHiddenStaff(source, "A " + what + " was used with nobody visible");
+    }
+
+    /**
+     * One unexplained interaction near you is weak evidence on its own, but with a staff member hidden on this shard
+     * (game mode leak, not in the player list) it is the closest thing to proof that they are next to you.
+     */
+    private void escalateHiddenStaff(Vec3d source, String reason) {
+        StaffIntel.LeakEvent hidden = StaffIntel.get().freshestHidden();
+        if (hidden == null || mc.player == null) return;
+
+        int distance = (int) Math.round(Math.sqrt(source.squaredDistanceTo(mc.player.getX(), mc.player.getY(), mc.player.getZ())));
+        StaffIntel.get().log("escalating %s to NEARBY: %s (%s)", hidden.name(), reason, locatedSubject(source));
+        watchingYou(hidden.name(), new RegionProof(hidden.id(), distance), StaffIntel.AlertKind.NEARBY, reason);
+    }
+
+    private static boolean isLidContainer(Block block) {
+        return block instanceof ChestBlock || block instanceof EnderChestBlock || block instanceof ShulkerBoxBlock;
     }
 
     private void inspectEntitySound(Observation observation) {
@@ -1196,7 +1262,8 @@ public class AntiVanish extends Module {
         ENTITY_SOUND,
         PARTICLE,
         EXPLOSION,
-        GAMEMODE
+        GAMEMODE,
+        CONTAINER_OPEN
     }
 
     private static final class Detection {
@@ -1222,7 +1289,8 @@ public class AntiVanish extends Module {
         VANISH,
         INVISIBLE,
         PARTICLE,
-        SOUND
+        SOUND,
+        CONTAINER
     }
 
     private record RecentMessage(String text, long atMs) {}
