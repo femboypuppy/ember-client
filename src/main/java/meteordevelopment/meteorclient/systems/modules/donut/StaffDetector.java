@@ -14,8 +14,6 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.network.packet.Packet;
-import net.minecraft.network.packet.s2c.play.BundleS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerListS2CPacket;
 import net.minecraft.scoreboard.Team;
 import net.minecraft.sound.SoundEvents;
@@ -28,7 +26,8 @@ import java.util.regex.Pattern;
 
 public class StaffDetector extends Module {
     /**
-     * Built-in DonutSMP known staff/admin roster.
+     * Known DonutSMP staff accounts. Most come from the Glazed addon's roster; Dough4 was seen in a staff sort team
+     * (weight 08) on the live server. Team weights catch staff who are missing here, so this is only a fallback.
      */
     public static final List<String> DEFAULT_DONUT_STAFF = List.of(
         "DrDonutt",
@@ -54,7 +53,8 @@ public class StaffDetector extends Module {
         "Fallerfly",
         "Frwost",
         "bautiedgar",
-        "Itszdeath"
+        "Itszdeath",
+        "Dough4"
     );
 
     /**
@@ -64,7 +64,7 @@ public class StaffDetector extends Module {
     private static final Set<String> DEFAULT_STAFF_LOWER = new HashSet<>();
 
     static {
-        "\u2605\u2606\u2726\u2727\u272A\u272F\u2730\u2B50".codePoints().forEach(STAR_CODEPOINTS::add);
+        "★☆✦✧✪✯✰⭐".codePoints().forEach(STAR_CODEPOINTS::add);
         for (String s : DEFAULT_DONUT_STAFF) {
             DEFAULT_STAFF_LOWER.add(s.toLowerCase(Locale.ROOT));
         }
@@ -72,6 +72,7 @@ public class StaffDetector extends Module {
 
     public static final class StaffEntry {
         public final String name;
+        public UUID uuid;
         public String rank;
         public Identifier skin;
         public int ping;
@@ -101,16 +102,33 @@ public class StaffDetector extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAlerts = settings.createGroup("Alerts");
 
+    private final Setting<Boolean> detectByTeam = sgGeneral.add(new BoolSetting.Builder()
+        .name("detect-by-team")
+        .description("Detect staff from DonutSMP's tab sort teams (NN-name-flag). Regular players are 09, staff are 08 and below.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> teamWeight = sgGeneral.add(new IntSetting.Builder()
+        .name("staff-team-weight")
+        .description("Highest team weight that still counts as staff.")
+        .defaultValue(8)
+        .range(0, 20)
+        .sliderRange(0, 12)
+        .visible(detectByTeam::get)
+        .build()
+    );
+
     private final Setting<Boolean> useDonutRoster = sgGeneral.add(new BoolSetting.Builder()
         .name("donut-staff-roster")
-        .description("Automatically include the built-in DonutSMP admin and moderator username roster.")
+        .description("Also include the built-in DonutSMP staff username roster.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> checkStarPrefix = sgGeneral.add(new BoolSetting.Builder()
         .name("detect-star-prefix")
-        .description("Detect DonutSMP staff by the star symbol (★) at the start of their tab list name.")
+        .description("Detect staff by a star symbol at the start of their tab list name.")
         .defaultValue(true)
         .build()
     );
@@ -155,15 +173,15 @@ public class StaffDetector extends Module {
     );
 
     private final Setting<Boolean> alertNearby = sgAlerts.add(new BoolSetting.Builder()
-        .name("alert-nearby")
-        .description("Highlight when a staff member comes into render distance or onto your region shard.")
+        .name("alert-region")
+        .description("Alert when a staff member is proven to be on your shard or comes into render distance.")
         .defaultValue(true)
         .build()
     );
 
-    private final Setting<Boolean> alertLeave = sgAlerts.add(new BoolSetting.Builder()
-        .name("alert-leave")
-        .description("Track when a staff member leaves the server.")
+    private final Setting<Boolean> alertJoinLeave = sgAlerts.add(new BoolSetting.Builder()
+        .name("alert-join-leave")
+        .description("Small notification when a staff member joins or leaves the server.")
         .defaultValue(true)
         .build()
     );
@@ -178,27 +196,27 @@ public class StaffDetector extends Module {
     private final Setting<Boolean> notification = sgAlerts.add(new BoolSetting.Builder()
         .name("notification")
         .description("Also show alerts in the bottom-right notifications widget.")
-        .defaultValue(false)
+        .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> sound = sgAlerts.add(new BoolSetting.Builder()
         .name("sound")
-        .description("Play a sound when staff join, leave, vanish, or come near you.")
+        .description("Play a sound for join/leave notifications.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> elderAnimation = sgAlerts.add(new BoolSetting.Builder()
         .name("elder-guardian-animation")
-        .description("Play the Elder Guardian staff-head curse animation and siren when staff spectate, vanish, or enter your region.")
+        .description("Play the 10 second Elder Guardian staff-head alert when staff are proven on your shard or near you.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> testAnimation = sgAlerts.add(new BoolSetting.Builder()
         .name("test-elder-animation")
-        .description("Click to immediately preview the Elder Guardian staff-head curse animation and siren.")
+        .description("Click to immediately preview the Elder Guardian staff-head alert.")
         .defaultValue(false)
         .onChanged(v -> {
             if (v) {
@@ -210,15 +228,15 @@ public class StaffDetector extends Module {
 
     /** Staff currently online or recently left (keyed by lowercase name). */
     private final Map<String, StaffEntry> tracked = new LinkedHashMap<>();
-    private final Set<String> learnedStarredNames = new HashSet<>();
     private final Set<String> nearbySet = new HashSet<>();
-    private final Map<UUID, Long> regionSwitchTimestamps = new ConcurrentHashMap<>();
     private final Map<UUID, Boolean> listedState = new ConcurrentHashMap<>();
+    private final Set<UUID> seenListed = ConcurrentHashMap.newKeySet();
     private boolean primed;
     private long lastScanMs;
 
     public StaffDetector() {
         super(Categories.Donut, "staff-detector", "Displays an on-screen UI of online moderators that updates as they join or leave.");
+        StaffIntel.get();
     }
 
     private void triggerTestAnimation() {
@@ -229,34 +247,43 @@ public class StaffDetector extends Module {
                 break;
             }
         }
-        StaffWatchingEffect.get().play(null, sampleName, "ELDER GUARDIAN STAFF CURSE PREVIEW", 0);
+        StaffWatchingEffect.get().play(null, sampleName, "ELDER GUARDIAN STAFF ALERT PREVIEW", 0);
         testAnimation.set(false);
     }
 
-    public boolean isWatchingOrInRegion(String name) {
+    public int teamThreshold() {
+        return isActive() && !detectByTeam.get() ? -1 : teamWeight.get();
+    }
+
+    /** True if the name is on the built-in roster (when enabled) or the custom staff list. */
+    public boolean isRosterName(String name) {
+        if (name == null || name.isBlank()) return false;
+        String lower = name.trim().toLowerCase(Locale.ROOT);
+        if (useDonutRoster.get() && DEFAULT_STAFF_LOWER.contains(lower)) return true;
+        for (String listed : staffNames.get()) {
+            if (listed != null && listed.trim().equalsIgnoreCase(lower)) return true;
+        }
+        return false;
+    }
+
+    /** True if this staff member is proven to be on your shard (game mode leak) or within render distance. */
+    public boolean isOnYourShard(String name) {
         if (name == null || name.isBlank()) return false;
         StaffEntry entry = tracked.get(name.trim().toLowerCase(Locale.ROOT));
-        return entry != null && entry.online && (entry.inRegion || entry.nearby || entry.spectator || entry.vanished);
+        return entry != null && entry.online && (entry.inRegion || entry.nearby);
     }
 
     public boolean isTrackedStaffName(String name) {
         if (name == null || name.isBlank()) return false;
-        String lower = name.trim().toLowerCase(Locale.ROOT);
-        if (useDonutRoster.get() && DEFAULT_STAFF_LOWER.contains(lower)) return true;
-        if (learnedStarredNames.contains(lower) || tracked.containsKey(lower)) return true;
-        for (String listed : staffNames.get()) {
-            if (listed != null && listed.trim().equalsIgnoreCase(name.trim())) return true;
-        }
-        return false;
+        return tracked.containsKey(name.trim().toLowerCase(Locale.ROOT)) || StaffIntel.get().isStaffName(name);
     }
 
     @Override
     public void onActivate() {
         tracked.clear();
-        learnedStarredNames.clear();
         nearbySet.clear();
-        regionSwitchTimestamps.clear();
         listedState.clear();
+        seenListed.clear();
         primed = false;
         lastScanMs = 0;
 
@@ -296,34 +323,15 @@ public class StaffDetector extends Module {
 
     @EventHandler
     private void onReceivePacket(PacketEvent.Receive event) {
-        handlePacket(event.packet);
-    }
+        if (!(event.packet instanceof PlayerListS2CPacket listPacket)) return;
 
-    private void handlePacket(Packet<?> packet) {
-        if (packet instanceof PlayerListS2CPacket listPacket) {
-            var actions = listPacket.getActions();
-            boolean checkListed = actions.contains(PlayerListS2CPacket.Action.ADD_PLAYER)
-                || actions.contains(PlayerListS2CPacket.Action.UPDATE_LISTED);
-            // On DonutSMP, UPDATE_GAME_MODE without ADD_PLAYER only arrives for players on your current region shard
-            boolean checkRegionSwitch = actions.contains(PlayerListS2CPacket.Action.UPDATE_GAME_MODE)
-                && !actions.contains(PlayerListS2CPacket.Action.ADD_PLAYER);
+        var actions = listPacket.getActions();
+        if (!actions.contains(PlayerListS2CPacket.Action.ADD_PLAYER) && !actions.contains(PlayerListS2CPacket.Action.UPDATE_LISTED)) return;
 
-            if (checkListed || checkRegionSwitch) {
-                long now = System.currentTimeMillis();
-                for (PlayerListS2CPacket.Entry entry : listPacket.getEntries()) {
-                    if (entry == null || entry.profileId() == null) continue;
-                    if (checkListed) {
-                        listedState.put(entry.profileId(), entry.listed());
-                    }
-                    if (checkRegionSwitch) {
-                        regionSwitchTimestamps.put(entry.profileId(), now);
-                    }
-                }
-            }
-        } else if (packet instanceof BundleS2CPacket bundle) {
-            for (Packet<?> sub : bundle.getPackets()) {
-                handlePacket(sub);
-            }
+        for (PlayerListS2CPacket.Entry entry : listPacket.getEntries()) {
+            if (entry == null || entry.profileId() == null) continue;
+            listedState.put(entry.profileId(), entry.listed());
+            if (entry.listed()) seenListed.add(entry.profileId());
         }
     }
 
@@ -352,10 +360,9 @@ public class StaffDetector extends Module {
     public void scanNow() {
         if (mc.getNetworkHandler() == null || mc.world == null || mc.player == null) {
             tracked.clear();
-            learnedStarredNames.clear();
             nearbySet.clear();
-            regionSwitchTimestamps.clear();
             listedState.clear();
+            seenListed.clear();
             primed = false;
             return;
         }
@@ -364,6 +371,7 @@ public class StaffDetector extends Module {
         if (nowMs - lastScanMs < 400) return;
         lastScanMs = nowMs;
 
+        StaffIntel intel = StaffIntel.get();
         String self = mc.player.getName().getString();
 
         Map<String, PlayerListEntry> currentTab = new LinkedHashMap<>();
@@ -374,7 +382,6 @@ public class StaffDetector extends Module {
             String name = info.getProfile().name();
             if (name == null || name.equalsIgnoreCase(self)) continue;
 
-            // Strip any zero-width characters around the username if present
             String cleanName = stripZeroWidth(name).trim();
             if (cleanName.isEmpty()) continue;
 
@@ -386,7 +393,7 @@ public class StaffDetector extends Module {
             }
         }
 
-        // Check for newly joined or still-online staff
+        // Newly joined or still-online staff
         for (Map.Entry<String, PlayerListEntry> e : currentTab.entrySet()) {
             String key = e.getKey();
             PlayerListEntry info = e.getValue();
@@ -396,148 +403,111 @@ public class StaffDetector extends Module {
             Identifier skin = info.getSkinTextures() != null && info.getSkinTextures().body() != null
                 ? info.getSkinTextures().body().texturePath()
                 : StaffFaceSkins.getOrFetch(uuid, name);
-            int ping = info.getLatency();
-            boolean isSpectator = info.getGameMode() == GameMode.SPECTATOR;
-            boolean isVanished = uuid != null && Boolean.FALSE.equals(listedState.get(uuid));
-            Long regionSwitchAt = uuid != null ? regionSwitchTimestamps.get(uuid) : null;
-            boolean inRegion = regionSwitchAt != null && (nowMs - regionSwitchAt < 600_000L);
 
-            StaffEntry existing = tracked.get(key);
-            if (existing == null) {
-                StaffEntry created = new StaffEntry(name, rank, skin, ping, nowMs);
-                created.spectator = isSpectator;
-                created.vanished = isVanished;
-                created.inRegion = inRegion;
-                if (inRegion) created.regionProvenAt = regionSwitchAt;
-                tracked.put(key, created);
-                if (primed) {
-                    alert(name + " joined", statusSummary(created));
-                    if (elderAnimation.get() && (isSpectator || isVanished || inRegion)) {
-                        StaffWatchingEffect.get().play(uuid, name, statusSummary(created) + " IN YOUR REGION", 0);
-                    }
+            PlayerEntity body = intel.entity(uuid);
+            boolean onShard = intel.isOnYourShard(uuid);
+            GameMode shardMode = intel.shardGameMode(uuid);
+            boolean spectator = shardMode == GameMode.SPECTATOR || (shardMode == null && info.getGameMode() == GameMode.SPECTATOR);
+            // Only a listed -> unlisted change counts as vanish; some servers never list part of the tab.
+            boolean vanished = uuid != null && seenListed.contains(uuid) && Boolean.FALSE.equals(listedState.get(uuid));
+
+            StaffEntry entry = tracked.get(key);
+            boolean fresh = entry == null;
+            boolean wasOffline = !fresh && !entry.online;
+            boolean wasSpectator = !fresh && entry.spectator;
+            boolean wasVanished = !fresh && entry.vanished;
+            boolean wasOnShard = !fresh && entry.inRegion;
+
+            if (fresh) {
+                entry = new StaffEntry(name, rank, skin, info.getLatency(), nowMs);
+                tracked.put(key, entry);
+            }
+
+            entry.uuid = uuid;
+            entry.online = true;
+            entry.rank = rank;
+            if (skin != null) entry.skin = skin;
+            entry.ping = info.getLatency();
+            entry.spectator = spectator;
+            entry.vanished = vanished;
+            entry.inRegion = onShard;
+            entry.nearby = body != null;
+            entry.distance = body != null ? mc.player.distanceTo(body) : 0;
+            if (onShard && !wasOnShard) entry.regionProvenAt = nowMs;
+            entry.leftAt = 0;
+
+            if (!primed) continue;
+
+            if (fresh || wasOffline) {
+                entry.joinedAt = nowMs;
+                entry.pulse = 1f;
+                if (alertJoinLeave.get()) small(name + " joined", rank);
+            }
+
+            if (!alertNearby.get()) continue;
+
+            String nearKey = key;
+            if (body != null) {
+                if (nearbySet.add(nearKey)) {
+                    entry.pulse = 1f;
+                    big(uuid, name, StaffIntel.AlertKind.NEARBY, String.format("NEARBY (%.0f BLOCKS AWAY)", entry.distance));
                 }
             } else {
-                boolean wasOffline = !existing.online;
-                boolean wasSpectator = existing.spectator;
-                boolean wasVanished = existing.vanished;
-                boolean wasInRegion = existing.inRegion;
+                nearbySet.remove(nearKey);
+            }
 
-                existing.online = true;
-                existing.rank = rank;
-                if (skin != null) existing.skin = skin;
-                existing.ping = ping;
-                existing.spectator = isSpectator;
-                existing.vanished = isVanished;
-                existing.inRegion = inRegion || existing.nearby;
-                if (inRegion) existing.regionProvenAt = regionSwitchAt;
-                existing.leftAt = 0;
-
-                if (wasOffline) {
-                    existing.joinedAt = nowMs;
-                    existing.pulse = 1f;
-                    if (primed) {
-                        alert(name + " joined", statusSummary(existing));
-                    }
-                } else if (primed) {
-                    if (!wasSpectator && isSpectator) {
-                        existing.pulse = 1f;
-                        alert(name + " entered Spectator", rank);
-                        if (elderAnimation.get()) {
-                            StaffWatchingEffect.get().play(uuid, name, "SWITCHED TO SPECTATOR MODE", 0);
-                        }
-                    } else if (!wasVanished && isVanished) {
-                        existing.pulse = 1f;
-                        alert(name + " vanished", rank);
-                        if (elderAnimation.get()) {
-                            StaffWatchingEffect.get().play(uuid, name, "HIDDEN FROM TAB (VANISHED)", 0);
-                        }
-                    } else if (!wasInRegion && inRegion && alertNearby.get()) {
-                        existing.pulse = 1f;
-                        alert(name + " is in your region!", rank);
-                        if (elderAnimation.get()) {
-                            StaffWatchingEffect.get().play(uuid, name, "ACTIVE ON YOUR REGION SHARD", 0);
-                        }
-                    }
-                }
+            if (onShard && spectator && !wasSpectator) {
+                entry.pulse = 1f;
+                big(uuid, name, StaffIntel.AlertKind.SPECTATOR, "SPECTATOR MODE ON YOUR SHARD");
+            } else if (onShard && vanished && !wasVanished) {
+                entry.pulse = 1f;
+                big(uuid, name, StaffIntel.AlertKind.VANISHED, "VANISHED ON YOUR SHARD");
+            } else if (onShard && !wasOnShard) {
+                entry.pulse = 1f;
+                big(uuid, name, StaffIntel.AlertKind.REGION, "ON YOUR SHARD (" + intel.currentShardLabel() + ")");
+            } else if (!onShard && vanished && !wasVanished && alertJoinLeave.get()) {
+                entry.pulse = 1f;
+                small(name + " vanished", "somewhere else on the server");
             }
         }
 
-        // Check nearby players in world (also catches vanished staff whose player entity is still in world)
-        Map<String, PlayerEntity> nearbyPlayers = new HashMap<>();
-        for (PlayerEntity player : mc.world.getPlayers()) {
-            if (player == mc.player) continue;
-            String pName = player.getName().getString();
-            if (pName != null) {
-                String cleanPName = stripZeroWidth(pName).trim();
-                nearbyPlayers.put(cleanPName.toLowerCase(Locale.ROOT), player);
-            }
-        }
-
-        // Check for staff who left Tab (if still in world, they vanished; otherwise they left)
+        // Staff that dropped out of the tab list
         for (StaffEntry entry : tracked.values()) {
             String key = entry.name.toLowerCase(Locale.ROOT);
-            if (entry.online && !currentTab.containsKey(key)) {
-                if (nearbyPlayers.containsKey(key)) {
-                    if (!entry.vanished) {
-                        entry.vanished = true;
-                        entry.pulse = 1f;
-                        if (primed) {
-                            alert(entry.name + " vanished nearby!", entry.rank);
-                            if (elderAnimation.get()) {
-                                StaffWatchingEffect.get().play(null, entry.name, "VANISHED NEARBY IN WORLD", 0);
-                            }
-                        }
-                    }
-                } else {
-                    entry.online = false;
-                    entry.nearby = false;
-                    entry.vanished = false;
-                    entry.spectator = false;
-                    entry.inRegion = false;
-                    entry.leftAt = nowMs;
+            if (!entry.online || currentTab.containsKey(key)) continue;
+
+            PlayerEntity body = intel.entity(entry.uuid);
+            if (body != null) {
+                // Gone from tab but the body is still here: hidden from the list while next to you.
+                entry.nearby = true;
+                entry.distance = mc.player.distanceTo(body);
+                if (!entry.vanished) {
+                    entry.vanished = true;
                     entry.pulse = 1f;
-                    if (primed && alertLeave.get()) {
-                        alert(entry.name + " left", entry.rank);
-                    }
+                    if (primed && alertNearby.get()) big(entry.uuid, entry.name, StaffIntel.AlertKind.NEARBY, "VANISHED NEXT TO YOU");
                 }
+                continue;
             }
+
+            entry.online = false;
+            entry.nearby = false;
+            entry.vanished = false;
+            entry.spectator = false;
+            entry.inRegion = false;
+            entry.leftAt = nowMs;
+            entry.pulse = 1f;
+            nearbySet.remove(key);
+            if (primed && alertJoinLeave.get()) small(entry.name + " left", entry.rank);
         }
 
         if (!primed) {
             primed = true;
-            if (!currentTab.isEmpty()) {
-                List<String> names = new ArrayList<>();
-                for (StaffEntry se : tracked.values()) if (se.online) names.add(se.name);
-                if (!names.isEmpty()) alert("Staff online", String.join(", ", names));
-            }
+            List<String> names = new ArrayList<>();
+            for (StaffEntry se : tracked.values()) if (se.online) names.add(se.name);
+            if (!names.isEmpty()) small("Staff online", String.join(", ", names));
+            // Mark staff that are already around so they do not alert on the first scan.
+            for (StaffEntry se : tracked.values()) if (se.nearby) nearbySet.add(se.name.toLowerCase(Locale.ROOT));
         }
-
-        Set<String> seenNearby = new HashSet<>();
-        for (StaffEntry entry : tracked.values()) {
-            if (!entry.online) {
-                entry.nearby = false;
-                continue;
-            }
-            String key = entry.name.toLowerCase(Locale.ROOT);
-            PlayerEntity entity = nearbyPlayers.get(key);
-            if (entity != null) {
-                entry.nearby = true;
-                entry.inRegion = true;
-                entry.distance = mc.player.distanceTo(entity);
-                seenNearby.add(key);
-                if (nearbySet.add(key) && alertNearby.get()) {
-                    entry.pulse = 1f;
-                    alert(entry.name + " is near you", String.format("%.0f blocks away", entry.distance));
-                    if (elderAnimation.get()) {
-                        StaffWatchingEffect.get().play(entity.getUuid(), entry.name, String.format("NEARBY (%.0f BLOCKS AWAY)", entry.distance), 0);
-                    }
-                }
-            } else {
-                entry.nearby = false;
-                entry.distance = 0;
-            }
-        }
-        nearbySet.retainAll(seenNearby);
 
         // Expire left entries after hold duration and anim fade out
         long holdMs = Math.round(leaveHoldSeconds.get() * 1000.0);
@@ -547,30 +517,20 @@ public class StaffDetector extends Module {
         });
     }
 
-    private String statusSummary(StaffEntry entry) {
-        if (entry.spectator) return "SPECTATOR";
-        if (entry.vanished) return "VANISHED";
-        return entry.rank;
-    }
-
     private String staffRank(PlayerListEntry info, String name) {
         String lowerName = name.toLowerCase(Locale.ROOT);
 
-        // 1. Check built-in DonutSMP staff roster
-        if (useDonutRoster.get() && DEFAULT_STAFF_LOWER.contains(lowerName)) {
+        int weight = StaffIntel.teamPriority(info);
+        if (detectByTeam.get() && weight >= 0 && weight <= teamWeight.get()) {
             if (lowerName.equals("drdonutt")) return "OWNER";
-            return "ADMIN";
+            return weight <= 3 ? "ADMIN" : "STAFF";
         }
 
-        // 2. Check custom staff-names setting
-        for (String listed : staffNames.get()) {
-            if (listed != null && listed.trim().equalsIgnoreCase(name)) {
-                if (lowerName.equals("drdonutt")) return "OWNER";
-                return DEFAULT_STAFF_LOWER.contains(lowerName) ? "ADMIN" : "STAFF";
-            }
+        if (isRosterName(name)) {
+            if (lowerName.equals("drdonutt")) return "OWNER";
+            return "STAFF";
         }
 
-        // 3. Check DonutSMP leading star prefix in Tab display name / scoreboard team
         StringBuilder text = new StringBuilder();
         if (info.getDisplayName() != null) text.append(info.getDisplayName().getString()).append(' ');
 
@@ -580,17 +540,12 @@ public class StaffDetector extends Module {
         }
 
         String fullTabText = text.toString();
-        if (checkStarPrefix.get()) {
-            if (hasLeadingStar(fullTabText) || learnedStarredNames.contains(lowerName)) {
-                learnedStarredNames.add(lowerName);
-                return lowerName.equals("drdonutt") ? "OWNER" : "★ STAFF";
-            }
+        if (checkStarPrefix.get() && hasLeadingStar(fullTabText)) {
+            return "★ STAFF";
         }
 
-        // 4. Check rank words in tab decoration
         if (!checkRanks.get()) return null;
 
-        // Strip Minecraft formatting codes (§x) before matching rank words
         String clean = stripFormatting(fullTabText);
 
         // A username can itself contain a rank word ("mod_steve"), so only the decoration around it is checked.
@@ -608,7 +563,7 @@ public class StaffDetector extends Module {
     }
 
     /**
-     * Checks if the Tab list display name starts with a DonutSMP staff star symbol
+     * Checks if the Tab list display name starts with a star symbol
      * (★, ☆, ✦, ✧, ✪, ✯, ✰, ⭐) after stripping formatting codes and zero-width characters.
      */
     public static boolean hasLeadingStar(String text) {
@@ -639,13 +594,22 @@ public class StaffDetector extends Module {
         return text.replaceAll("[\\u200B\\u200C\\u200D\\uFE0F\\uFEFF]", "");
     }
 
-    private void alert(String title, String subtitle) {
-        if (notification.get()) {
-            EmberNotificationsHud.push(title, subtitle, EmberNotificationsHud.BAD);
-            if (chat.get() && !EmberNotificationsHud.shouldInterceptChat()) info("%s (%s)", title, subtitle);
-        } else if (chat.get()) {
-            info("%s (%s)", title, subtitle);
+    /** Elder Guardian alert + top banner, gated so the same staff member does not keep re-alerting. */
+    private void big(UUID uuid, String name, StaffIntel.AlertKind kind, String subtitle) {
+        if (!StaffIntel.get().tryAlert(name, kind)) return;
+
+        if (elderAnimation.get()) StaffWatchingEffect.get().play(uuid, name, subtitle, 0);
+        String title = kind == StaffIntel.AlertKind.NEARBY ? name + " is near you" : name + " is in your region";
+        if (notification.get()) EmberNotificationsHud.push(title, subtitle, EmberNotificationsHud.BAD);
+        if (chat.get()) info("%s (%s)", title, subtitle);
+        if (!elderAnimation.get() && sound.get() && mc.player != null) {
+            mc.player.playSound(SoundEvents.ENTITY_EXPERIENCE_ORB_PICKUP, 0.85f, 1.1f);
         }
+    }
+
+    private void small(String title, String subtitle) {
+        if (notification.get()) EmberNotificationsHud.push(title, subtitle, EmberNotificationsHud.WARN);
+        if (chat.get()) info("%s (%s)", title, subtitle);
         if (sound.get() && mc.player != null) {
             mc.player.playSound(SoundEvents.ENTITY_EXPERIENCE_ORB_PICKUP, 0.85f, 1.1f);
         }

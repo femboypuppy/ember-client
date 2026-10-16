@@ -68,9 +68,25 @@ public class AntiVanish extends Module {
         .build()
     );
 
+    private final Setting<Boolean> sensorHints = sgGeneral.add(new BoolSetting.Builder()
+        .name("sensor-hints")
+        .description("Show a small notification for single ghost-sensor hits. They are weak evidence on their own.")
+        .defaultValue(false)
+        .visible(soundAndParticleSensors::get)
+        .build()
+    );
+
+    private final Setting<Boolean> debugLog = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug-log")
+        .description("Write staff packets, shard changes and probe results to latest.log so detections can be verified.")
+        .defaultValue(true)
+        .onChanged(v -> StaffIntel.get().debug = v && isActive())
+        .build()
+    );
+
     private final Setting<Boolean> elderAnimation = sgAlerts.add(new BoolSetting.Builder()
         .name("elder-guardian-animation")
-        .description("Play the Elder Guardian staff-head curse animation and siren when a vanished/spectating staff member watches you.")
+        .description("Play the 10 second Elder Guardian staff-head alert when vanished or spectating staff are proven on your shard.")
         .defaultValue(true)
         .build()
     );
@@ -85,7 +101,7 @@ public class AntiVanish extends Module {
     private final Setting<Boolean> chatNotify = sgAlerts.add(new BoolSetting.Builder()
         .name("chat-notify")
         .description("Print vanish detections in chat.")
-        .defaultValue(true)
+        .defaultValue(false)
         .build()
     );
 
@@ -117,10 +133,8 @@ public class AntiVanish extends Module {
     private final Map<String, HiddenSpell> hiddenSpells = new LinkedHashMap<>();
     private final Deque<RecentMessage> recentMessages = new ArrayDeque<>();
     private final Map<UUID, Long> listedSinceMs = new HashMap<>();
-    private final Map<UUID, Long> regionProvenMs = new ConcurrentHashMap<>();
-    private final Map<String, Long> regionAlertCooldowns = new ConcurrentHashMap<>();
+    private final Set<UUID> staffIds = new HashSet<>();
     private final Set<Integer> completionRequestIds = ConcurrentHashMap.newKeySet();
-    private final Set<String> learnedStaffNames = ConcurrentHashMap.newKeySet();
 
     private volatile List<String> pendingCompletionNames;
     private volatile long lastLocalActionMs;
@@ -131,15 +145,13 @@ public class AntiVanish extends Module {
     private long lastCriticalMs;
     private long criticalUntilMs;
     private String criticalWatcher = "";
-
-    // Exact DonutSMP Goliath shard state tracking
-    private net.minecraft.client.world.ClientWorld trackedWorld;
-    private net.minecraft.client.network.ClientPlayerEntity trackedSelf;
-    private String trackedBrand;
-    private int trackedRegion = -1;
+    private int probesSent;
+    private int probesAnswered;
+    private int trackedShard = Integer.MIN_VALUE;
 
     public AntiVanish() {
-        super(Categories.Donut, "anti-vanish", "Detects vanished staff in your region or near you and plays a 10-second Elder Guardian staff-head alert.");
+        super(Categories.Donut, "anti-vanish", "Detects vanished staff on your shard or near you and plays a 10-second Elder Guardian staff-head alert.");
+        StaffIntel.get();
     }
 
     private void triggerTestAnimation() {
@@ -176,6 +188,8 @@ public class AntiVanish extends Module {
     @Override
     public void onActivate() {
         resetRuntime();
+        trackedShard = Integer.MIN_VALUE;
+        StaffIntel.get().debug = debugLog.get();
         // Preload known DonutSMP staff skins so they are ready immediately if any vanish occurs
         for (String staff : StaffDetector.DEFAULT_DONUT_STAFF) {
             StaffFaceSkins.preload(staff);
@@ -186,6 +200,7 @@ public class AntiVanish extends Module {
     @Override
     public void onDeactivate() {
         resetRuntime();
+        StaffIntel.get().debug = false;
     }
 
     public boolean isWatchingNow(String name) {
@@ -201,45 +216,19 @@ public class AntiVanish extends Module {
         return false;
     }
 
+    /** Shard-local state (hidden spells, pending vanishes, signals) is meaningless after moving to another goliath. */
     private boolean checkShardMoved() {
-        var nowWorld = mc.world;
-        var nowSelf = mc.player;
-        if (nowWorld == null || nowSelf == null) {
-            clearShardTracker();
-            return false;
-        }
-
-        String nowBrand = mc.getNetworkHandler() != null ? mc.getNetworkHandler().getBrand() : null;
-        RegionMap.RegionCell cell = nowWorld.getRegistryKey() == net.minecraft.world.World.OVERWORLD
-            ? RegionMap.getRegionAt(nowSelf.getBlockX(), nowSelf.getBlockZ())
-            : null;
-        int nowRegion = cell != null ? cell.id() : -1;
-
-        boolean moved = trackedWorld != null && (
-            nowWorld != trackedWorld
-            || (nowSelf != trackedSelf && !trackedSelf.isDead())
-            || nowRegion != trackedRegion
-            || (nowBrand != null && trackedBrand != null && !nowBrand.equals(trackedBrand))
-        );
-
-        trackedWorld = nowWorld;
-        trackedSelf = nowSelf;
-        trackedBrand = nowBrand;
-        trackedRegion = nowRegion;
+        int now = StaffIntel.get().currentShard();
+        boolean moved = trackedShard != Integer.MIN_VALUE && now != trackedShard;
+        trackedShard = now;
         return moved;
-    }
-
-    private void clearShardTracker() {
-        trackedWorld = null;
-        trackedSelf = null;
-        trackedBrand = null;
-        trackedRegion = -1;
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null || mc.getNetworkHandler() == null) {
             resetRuntime();
+            trackedShard = Integer.MIN_VALUE;
             return;
         }
 
@@ -454,10 +443,7 @@ public class AntiVanish extends Module {
 
             String name = info.getProfile().name();
             if (name != null) {
-                if (info.getDisplayName() != null && StaffDetector.hasLeadingStar(info.getDisplayName().getString())) {
-                    learnedStaffNames.add(name.toLowerCase(Locale.ROOT));
-                    StaffFaceSkins.preload(name);
-                }
+                if (StaffIntel.get().isStaff(info) && staffIds.add(uuid)) StaffFaceSkins.preload(name);
                 if (!knownPlayers.containsKey(uuid)) {
                     knownPlayers.put(uuid, new KnownPlayer(uuid, name));
                 }
@@ -479,18 +465,7 @@ public class AntiVanish extends Module {
     }
 
     private boolean isKnownStaffName(String name) {
-        if (name == null || name.isBlank()) return false;
-        String lower = name.trim().toLowerCase(Locale.ROOT);
-
-        for (String s : StaffDetector.DEFAULT_DONUT_STAFF) {
-            if (s.equalsIgnoreCase(lower)) return true;
-        }
-        if (learnedStaffNames.contains(lower)) return true;
-
-        StaffDetector detector = Modules.get() != null ? Modules.get().get(StaffDetector.class) : null;
-        if (detector != null && detector.isTrackedStaffName(name)) return true;
-
-        return false;
+        return StaffIntel.get().isStaffName(name);
     }
 
     private boolean trustedListed(UUID uuid) {
@@ -499,7 +474,8 @@ public class AntiVanish extends Module {
     }
 
     private boolean credibleSubject(UUID uuid, String name) {
-        return uuid != null && isPlausiblePlayerName(name) && isKnownStaffName(name) && trustedListed(uuid);
+        // Team-detected staff have no tab entry left once removed, so remember them by UUID.
+        return uuid != null && isPlausiblePlayerName(name) && (staffIds.contains(uuid) || isKnownStaffName(name)) && trustedListed(uuid);
     }
 
     private void handleTabRemoval(UUID uuid) {
@@ -633,15 +609,24 @@ public class AntiVanish extends Module {
 
         try {
             mc.getNetworkHandler().sendPacket(new RequestCommandCompletionsC2SPacket(id, PROBE_COMMAND + " "));
+            probesSent++;
         } catch (Throwable ignored) {}
+
+        // Every ~5 minutes, report whether the server actually answers the probe at all.
+        if (probesSent % 60 == 0) {
+            StaffIntel.get().log("completion probe: %d sent, %d answered", probesSent, probesAnswered);
+        }
     }
 
     private void processCompletionProbe() {
         List<String> current = pendingCompletionNames;
         if (current == null) return;
         pendingCompletionNames = null;
+        probesAnswered++;
 
         if (mc.getNetworkHandler() == null || mc.player == null) return;
+        if (probesAnswered == 1) StaffIntel.get().log("first completion probe answer: %d names %s", current.size(),
+            current.subList(0, Math.min(8, current.size())));
 
         Set<String> tabNames = new HashSet<>();
         for (PlayerListEntry info : mc.getNetworkHandler().getPlayerList()) {
@@ -662,6 +647,7 @@ public class AntiVanish extends Module {
             hidden.add(name);
         }
 
+        if (!hidden.isEmpty()) StaffIntel.get().log("completion probe found staff off tab: %s", hidden);
         if (hidden.isEmpty() || hidden.size() > 3) return;
 
         for (String name : hidden) {
@@ -713,7 +699,9 @@ public class AntiVanish extends Module {
             if (proof != null) {
                 spell.told = true;
                 spell.watched = true;
-                watchingYou(spell.name, proof, spell.spectator ? "SPECTATOR MODE IN YOUR REGION" : "VANISHED IN YOUR REGION");
+                watchingYou(spell.name, proof,
+                    spell.spectator ? StaffIntel.AlertKind.SPECTATOR : StaffIntel.AlertKind.VANISHED,
+                    spell.spectator ? "SPECTATOR MODE ON YOUR SHARD" : "VANISHED ON YOUR SHARD (" + spell.detail + ")");
                 continue;
             }
 
@@ -737,82 +725,72 @@ public class AntiVanish extends Module {
         return true;
     }
 
+    /** Proof that the player is on your goliath: a loaded entity (with distance) or a shard-local game mode update. */
     private RegionProof regionProof(UUID uuid, String name) {
-        if (uuid != null && mc.world != null) {
-            PlayerEntity body = mc.world.getPlayerByUuid(uuid);
-            if (body != null && body != mc.player) {
-                return new RegionProof(uuid, Math.round(body.distanceTo(mc.player)));
-            }
+        if (uuid == null && name != null && mc.getNetworkHandler() != null) {
+            PlayerListEntry entry = mc.getNetworkHandler().getPlayerListEntry(name);
+            if (entry != null && entry.getProfile() != null) uuid = entry.getProfile().id();
         }
+        if (uuid == null) return null;
 
-        if (uuid != null) {
-            Long provenAt = regionProvenMs.get(uuid);
-            if (provenAt != null && System.currentTimeMillis() - provenAt < 600_000L) {
-                return new RegionProof(uuid, -1);
-            }
-        }
+        StaffIntel intel = StaffIntel.get();
+        PlayerEntity body = intel.entity(uuid);
+        if (body != null) return new RegionProof(uuid, Math.round(body.distanceTo(mc.player)));
 
-        StaffDetector detector = Modules.get() != null ? Modules.get().get(StaffDetector.class) : null;
-        if (detector != null && detector.isWatchingOrInRegion(name)) {
-            return new RegionProof(uuid, -1);
-        }
-
-        return null;
+        return intel.isOnYourShard(uuid) ? new RegionProof(uuid, -1) : null;
     }
 
-    private void watchingYou(String name, RegionProof proof, String subtitle) {
-        long now = System.currentTimeMillis();
-        String key = name == null ? "" : name.trim().toLowerCase(Locale.ROOT);
-        Long lastForStaff = regionAlertCooldowns.get(key);
-        if (lastForStaff != null && now - lastForStaff < 300_000L) {
-            return;
-        }
-        regionAlertCooldowns.put(key, now);
+    private void watchingYou(String name, RegionProof proof, StaffIntel.AlertKind kind, String subtitle) {
+        if (proof != null && proof.distance() >= 0) kind = StaffIntel.AlertKind.NEARBY;
+        if (!StaffIntel.get().tryAlert(name, kind)) return;
 
+        long now = System.currentTimeMillis();
         lastCriticalMs = now;
         criticalUntilMs = now + 10_000L;
         criticalWatcher = name;
 
         UUID id = proof != null ? proof.id() : knownUuid(name);
+        String title = kind == StaffIntel.AlertKind.NEARBY ? name + " is near you" : name + " is in your region";
+        if (proof != null && proof.distance() >= 0) subtitle = subtitle + " (" + proof.distance() + "m)";
 
         if (elderAnimation.get()) {
             StaffWatchingEffect.get().play(id, name, subtitle, 0);
         }
         if (notifications.get()) {
-            EmberNotificationsHud.push(name + " is in your region", subtitle, EmberNotificationsHud.BAD);
+            EmberNotificationsHud.push(title, subtitle, EmberNotificationsHud.BAD);
         }
-        if (chatNotify.get()) {
-            info("%s%s%s is in your region (%s)", Formatting.RED, name, Formatting.GRAY, subtitle);
+        if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) {
+            info("%s%s%s (%s)", Formatting.RED, title, Formatting.GRAY, subtitle);
         }
     }
 
     private void notifyVanishEvent(String name, String action, String detail) {
         String sub = detail == null || detail.isEmpty() ? action : action + " (" + detail + ")";
+        StaffIntel.get().log("vanish event: %s %s", name, sub);
         if (notifications.get()) {
-            EmberNotificationsHud.push("Staff Alert: " + name, sub, EmberNotificationsHud.BAD);
+            EmberNotificationsHud.push("Staff: " + name, sub, EmberNotificationsHud.WARN);
         }
-        if (chatNotify.get()) {
+        if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) {
             info("%s%s%s %s", Formatting.AQUA, name, Formatting.GRAY, sub);
         }
     }
 
+    /**
+     * A game mode update without ADD_PLAYER only comes from the goliath you are on, so it proves the staff member is
+     * on your shard (StaffIntel records the proof). Spectator gets its own, stronger alert.
+     */
     private void announceGamemode(UUID uuid, String gameMode) {
         if (uuid == null || (mc.player != null && mc.player.getUuid().equals(uuid))) return;
 
         String name = knownName(uuid);
-        if (name == null || !isKnownStaffName(name)) return;
-
-        long now = System.currentTimeMillis();
-        regionProvenMs.put(uuid, now);
+        if (name == null || !(staffIds.contains(uuid) || isKnownStaffName(name))) return;
 
         if (GameMode.SPECTATOR.asString().equalsIgnoreCase(gameMode)) {
             reportHidden(uuid, name, true, "Vanish Event: switched to spectator", "Spectator Mode", 100);
-            watchingYou(name, new RegionProof(uuid, -1), "SPECTATOR MODE IN YOUR REGION");
+            watchingYou(name, new RegionProof(uuid, -1), StaffIntel.AlertKind.SPECTATOR, "SPECTATOR MODE ON YOUR SHARD");
         } else {
             endSpell(name, true, 0L);
-            if (now - lastCriticalMs >= CRITICAL_COOLDOWN_MS) {
-                watchingYou(name, new RegionProof(uuid, -1), "ACTIVE IN YOUR REGION");
-            }
+            watchingYou(name, regionProof(uuid, name), StaffIntel.AlertKind.REGION, "ON YOUR SHARD (" + StaffIntel.get().currentShardLabel() + ")");
         }
     }
 
@@ -929,7 +907,7 @@ public class AntiVanish extends Module {
         if (watcher == null || strongest.size() < 2 || score < CRITICAL_SCORE) return;
         if (now - lastCriticalMs < CRITICAL_COOLDOWN_MS) return;
 
-        watchingYou(watcher.subject, watcher.proof, watcher.reason);
+        watchingYou(watcher.subject, watcher.proof, StaffIntel.AlertKind.VANISHED, watcher.reason);
     }
 
     private void announceTrigger(String eventKey, String subject, String reason) {
@@ -943,10 +921,13 @@ public class AntiVanish extends Module {
         announceCooldowns.put(eventKey, now);
         announceTimes.addLast(now);
 
+        StaffIntel.get().log("sensor: %s (%s)", reason, subject);
+        if (!sensorHints.get()) return;
+
         if (notifications.get()) {
-            EmberNotificationsHud.push("AntiVanish Sensor", reason + " (" + subject + ")", EmberNotificationsHud.BAD);
+            EmberNotificationsHud.push("AntiVanish Sensor", reason + " (" + subject + ")", EmberNotificationsHud.WARN);
         }
-        if (chatNotify.get()) {
+        if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) {
             info("%s%s %s(%s)", Formatting.YELLOW, reason, Formatting.GRAY, subject);
         }
     }
@@ -1048,8 +1029,9 @@ public class AntiVanish extends Module {
         if (source == null || mc.world == null) return true;
         for (Entity entity : mc.world.getEntities()) {
             if (entity == mc.player) continue;
+            // Interaction reach is ~4.5 blocks from the eyes, so a visible player within 6 blocks can be the cause.
             boolean cause = entity instanceof PlayerEntity player
-                ? !player.isInvisible() && entity.squaredDistanceTo(source) <= 16.0
+                ? !player.isInvisible() && entity.squaredDistanceTo(source) <= 36.0
                 : entity instanceof ProjectileEntity && entity.squaredDistanceTo(source) <= 16.0;
             if (cause) return true;
         }
@@ -1186,8 +1168,7 @@ public class AntiVanish extends Module {
         hiddenSpells.clear();
         recentMessages.clear();
         listedSinceMs.clear();
-        regionProvenMs.clear();
-        regionAlertCooldowns.clear();
+        staffIds.clear();
         completionRequestIds.clear();
 
         pendingCompletionNames = null;
