@@ -216,7 +216,7 @@ public class StaffDetector extends Module {
 
     private final Setting<Boolean> elderAnimation = sgAlerts.add(new BoolSetting.Builder()
         .name("elder-guardian-animation")
-        .description("Play the 10 second Elder Guardian staff-head alert when staff are proven on your shard or near you.")
+        .description("Show the staff alert overlay: a calm card when staff are in your region, the elder guardian face when they are near you.")
         .defaultValue(true)
         .build()
     );
@@ -257,7 +257,7 @@ public class StaffDetector extends Module {
                 break;
             }
         }
-        StaffWatchingEffect.get().play(null, sampleName, "ELDER GUARDIAN STAFF ALERT PREVIEW", 0);
+        StaffWatchingEffect.get().play(null, sampleName, StaffWatchingEffect.Level.REGION, "Preview \u00B7 " + StaffIntel.get().currentShardLabel());
         testAnimation.set(false);
     }
 
@@ -475,7 +475,7 @@ public class StaffDetector extends Module {
             if (body != null) {
                 if (nearbySet.add(nearKey)) {
                     entry.pulse = 1f;
-                    big(uuid, name, StaffIntel.AlertKind.NEARBY, String.format("NEARBY (%.0f BLOCKS AWAY)", entry.distance));
+                    big(uuid, name, StaffIntel.AlertKind.NEARBY, String.format("%.0f blocks away", entry.distance));
                 }
             } else {
                 nearbySet.remove(nearKey);
@@ -483,13 +483,13 @@ public class StaffDetector extends Module {
 
             if (onShard && spectator && !wasSpectator) {
                 entry.pulse = 1f;
-                big(uuid, name, StaffIntel.AlertKind.SPECTATOR, "SPECTATOR MODE ON YOUR SHARD");
+                big(uuid, name, StaffIntel.AlertKind.SPECTATOR, "Spectator mode \u00B7 " + intel.currentShardLabel());
             } else if (onShard && vanished && !wasVanished) {
                 entry.pulse = 1f;
-                big(uuid, name, StaffIntel.AlertKind.VANISHED, "VANISHED ON YOUR SHARD");
+                big(uuid, name, StaffIntel.AlertKind.VANISHED, "Vanished \u00B7 " + intel.currentShardLabel());
             } else if (onShard && !wasOnShard) {
                 entry.pulse = 1f;
-                big(uuid, name, StaffIntel.AlertKind.REGION, "ON YOUR SHARD (" + intel.currentShardLabel() + ")");
+                big(uuid, name, StaffIntel.AlertKind.REGION, intel.currentShardLabel());
             } else if (!onShard && vanished && !wasVanished && alertJoinLeave.get()) {
                 entry.pulse = 1f;
                 small(name + " vanished", "somewhere else on the server");
@@ -509,7 +509,7 @@ public class StaffDetector extends Module {
                 if (!entry.vanished) {
                     entry.vanished = true;
                     entry.pulse = 1f;
-                    if (primed && alertNearby.get()) big(entry.uuid, entry.name, StaffIntel.AlertKind.NEARBY, "VANISHED NEXT TO YOU");
+                    if (primed && alertNearby.get()) big(entry.uuid, entry.name, StaffIntel.AlertKind.NEARBY, "Hidden from tab, right next to you");
                 }
                 continue;
             }
@@ -619,17 +619,24 @@ public class StaffDetector extends Module {
         return text.replaceAll("[\\u200B\\u200C\\u200D\\uFE0F\\uFEFF]", "");
     }
 
-    /** Elder Guardian alert + top banner, gated so the same staff member does not keep re-alerting. */
+    /** Staff alert overlay (or a notification when it is off), gated so the same staff member does not keep re-alerting. */
     private void big(UUID uuid, String name, StaffIntel.AlertKind kind, String subtitle) {
         if (!StaffIntel.get().tryAlert(name, kind)) return;
 
-        if (elderAnimation.get()) StaffWatchingEffect.get().play(uuid, name, subtitle, 0);
-        String title = kind == StaffIntel.AlertKind.NEARBY ? name + " is near you" : name + " is in your region";
-        if (notification.get()) EmberNotificationsHud.push(title, subtitle, EmberNotificationsHud.BAD);
-        if (chat.get()) info("%s (%s)", title, subtitle);
-        if (!elderAnimation.get() && sound.get() && mc.player != null) {
-            mc.player.playSound(SoundEvents.ENTITY_EXPERIENCE_ORB_PICKUP, 0.85f, 1.1f);
+        StaffWatchingEffect.Level level = StaffWatchingEffect.Level.of(kind);
+        String title = switch (level) {
+            case REGION -> name + " is in your region";
+            case HIDDEN -> name + " is hidden in your region";
+            case WATCHING -> name + " is near you";
+        };
+
+        if (elderAnimation.get()) {
+            StaffWatchingEffect.get().play(uuid, name, level, subtitle);
+        } else {
+            if (notification.get()) EmberNotificationsHud.push(title, subtitle, level == StaffWatchingEffect.Level.REGION ? EmberNotificationsHud.WARN : EmberNotificationsHud.BAD);
+            if (sound.get() && mc.player != null) mc.player.playSound(SoundEvents.ENTITY_EXPERIENCE_ORB_PICKUP, 0.85f, 1.1f);
         }
+        if (chat.get() && !EmberNotificationsHud.shouldInterceptChat()) info("%s (%s)", title, subtitle);
     }
 
     private void small(String title, String subtitle) {

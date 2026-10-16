@@ -84,7 +84,7 @@ public class AntiVanish extends Module {
 
     private final Setting<Boolean> elderAnimation = sgAlerts.add(new BoolSetting.Builder()
         .name("elder-guardian-animation")
-        .description("Play the 10 second Elder Guardian staff-head alert when vanished or spectating staff are proven on your shard.")
+        .description("Show the staff alert overlay: amber card for hidden staff in your region, the elder guardian face when they are near you.")
         .defaultValue(true)
         .build()
     );
@@ -144,7 +144,7 @@ public class AntiVanish extends Module {
     private int trackedShard = Integer.MIN_VALUE;
 
     public AntiVanish() {
-        super(Categories.Donut, "anti-vanish", "Detects vanished staff on your shard or near you and plays a 10-second Elder Guardian staff-head alert.");
+        super(Categories.Donut, "anti-vanish", "Detects staff on your region's server, hidden staff, and staff near you.");
         StaffIntel.get();
     }
 
@@ -162,10 +162,7 @@ public class AntiVanish extends Module {
             }
         }
 
-        StaffWatchingEffect.get().play(sampleId, sampleStaff, "STAFF DETECTED IN YOUR REGION", 0);
-        if (notifications.get()) {
-            EmberNotificationsHud.push(sampleStaff + " is in your region", "Staff detected on your shard", EmberNotificationsHud.BAD);
-        }
+        StaffWatchingEffect.get().play(sampleId, sampleStaff, StaffWatchingEffect.Level.WATCHING, "Preview \u00B7 12 blocks away");
         testAnimation.set(false);
     }
 
@@ -488,7 +485,7 @@ public class AntiVanish extends Module {
         if (!credibleSubject(uuid, name)) return;
         if (recentMessageNames(name)) return;
 
-        reportHidden(uuid, name, false, "Vanish Event: hidden from TAB", "hidden from TAB", 100);
+        reportHidden(uuid, name, false, "Vanish Event: hidden from TAB", "Hidden from tab", 100);
     }
 
     private String knownName(UUID uuid) {
@@ -544,7 +541,7 @@ public class AntiVanish extends Module {
 
             PlayerEntity remaining = mc.world.getPlayerByUuid(pending.uuid);
             if (remaining != null && !remaining.isRemoved()) {
-                reportHidden(pending.uuid, pending.name, false, "Vanish Event: entity remained", "off TAB, still nearby", 100);
+                reportHidden(pending.uuid, pending.name, false, "Vanish Event: entity remained", "Hidden from tab, still nearby", 100);
                 continue;
             }
 
@@ -552,7 +549,7 @@ public class AntiVanish extends Module {
             int score = serverSendsLeaveMessages ? 100 : 30;
 
             if (serverSendsLeaveMessages) {
-                reportHidden(pending.uuid, pending.name, false, reason, "left TAB silently", score);
+                reportHidden(pending.uuid, pending.name, false, reason, "Left tab without a leave message", score);
                 continue;
             }
 
@@ -613,7 +610,7 @@ public class AntiVanish extends Module {
 
             if (tabNames.contains(name.toLowerCase(Locale.ROOT))) {
                 watchingYou(name, regionProof(null, name), StaffIntel.AlertKind.REGION,
-                    "ON YOUR SHARD (" + StaffIntel.get().currentShardLabel() + ")");
+                    StaffIntel.get().currentShardLabel());
                 continue;
             }
 
@@ -624,7 +621,7 @@ public class AntiVanish extends Module {
         if (hidden.isEmpty() || hidden.size() > 3) return;
 
         for (String name : hidden) {
-            reportHidden(knownUuid(name), name, false, "Vanish Event: hidden but targetable", "off TAB, still targetable on shard", 95);
+            reportHidden(knownUuid(name), name, false, "Vanish Event: hidden but targetable", "Hidden from tab, still on this server", 95);
         }
     }
 
@@ -674,7 +671,7 @@ public class AntiVanish extends Module {
                 spell.watched = true;
                 watchingYou(spell.name, proof,
                     spell.spectator ? StaffIntel.AlertKind.SPECTATOR : StaffIntel.AlertKind.VANISHED,
-                    spell.spectator ? "SPECTATOR MODE ON YOUR SHARD" : "VANISHED ON YOUR SHARD (" + spell.detail + ")");
+                    spell.spectator ? "Spectator mode \u00B7 " + StaffIntel.get().currentShardLabel() : spell.detail + " \u00B7 " + StaffIntel.get().currentShardLabel());
                 continue;
             }
 
@@ -723,14 +720,18 @@ public class AntiVanish extends Module {
         criticalWatcher = name;
 
         UUID id = proof != null ? proof.id() : knownUuid(name);
-        String title = kind == StaffIntel.AlertKind.NEARBY ? name + " is near you" : name + " is in your region";
-        if (proof != null && proof.distance() >= 0) subtitle = subtitle + " (" + proof.distance() + "m)";
+        StaffWatchingEffect.Level level = StaffWatchingEffect.Level.of(kind);
+        String title = switch (level) {
+            case REGION -> name + " is in your region";
+            case HIDDEN -> name + " is hidden in your region";
+            case WATCHING -> name + " is near you";
+        };
+        if (proof != null && proof.distance() >= 0) subtitle = proof.distance() + " blocks away \u00B7 " + subtitle;
 
         if (elderAnimation.get()) {
-            StaffWatchingEffect.get().play(id, name, subtitle, 0);
-        }
-        if (notifications.get()) {
-            EmberNotificationsHud.push(title, subtitle, EmberNotificationsHud.BAD);
+            StaffWatchingEffect.get().play(id, name, level, subtitle);
+        } else if (notifications.get()) {
+            EmberNotificationsHud.push(title, subtitle, level == StaffWatchingEffect.Level.REGION ? EmberNotificationsHud.WARN : EmberNotificationsHud.BAD);
         }
         if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) {
             info("%s%s%s (%s)", Formatting.RED, title, Formatting.GRAY, subtitle);
@@ -760,10 +761,10 @@ public class AntiVanish extends Module {
 
         if (GameMode.SPECTATOR.asString().equalsIgnoreCase(gameMode)) {
             reportHidden(uuid, name, true, "Vanish Event: switched to spectator", "Spectator Mode", 100);
-            watchingYou(name, new RegionProof(uuid, -1), StaffIntel.AlertKind.SPECTATOR, "SPECTATOR MODE ON YOUR SHARD");
+            watchingYou(name, new RegionProof(uuid, -1), StaffIntel.AlertKind.SPECTATOR, "Spectator mode \u00B7 " + StaffIntel.get().currentShardLabel());
         } else {
             endSpell(name, true, 0L);
-            watchingYou(name, regionProof(uuid, name), StaffIntel.AlertKind.REGION, "ON YOUR SHARD (" + StaffIntel.get().currentShardLabel() + ")");
+            watchingYou(name, regionProof(uuid, name), StaffIntel.AlertKind.REGION, StaffIntel.get().currentShardLabel());
         }
     }
 
