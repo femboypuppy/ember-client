@@ -361,6 +361,7 @@ public class EmberSubEditor {
         r.scissorEnd();
 
         EmberUI.shadow(r, x, y, w, h, fade);
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) EmberUI.rim(r, x, y, w, h, RADIUS, fade);
         r.roundedRect(x, y, w, h, RADIUS, alpha(EmberUI.bg(), fade));
 
         drawHeader(r, x, y, w, fade, dt);

@@ -116,6 +116,7 @@ public final class EmberStrip {
 
     /** Rim, background and glass - the stack every Ember panel wants. */
     public static void panel(HudRenderer r, double x, double y, double w, double h, double radius, double opacity) {
+        if (EmberAppearance.liquid() && r.liquidPanel(x, y, w, h, radius, opacity)) return;
         rim(r, x, y, w, h, radius, opacity);
 
         Color bg = background();
@@ -138,13 +139,13 @@ public final class EmberStrip {
     }
 
     public static double height(HudRenderer r, double s, double textScale) {
-        return r.textHeight(true, textScale) + 14 * s;
+        return r.textHeight(true, textScale) + (EmberAppearance.liquid() ? 10 : 14) * s;
     }
 
     public static double width(HudRenderer r, List<Segment> segments, double s, double textScale) {
         if (segments.isEmpty()) return 0;
 
-        double w = 14 * s * 2;
+        double w = (EmberAppearance.liquid() ? 10 : 14) * s * 2;
 
         for (int i = 0; i < segments.size(); i++) {
             Segment seg = segments.get(i);
@@ -153,7 +154,7 @@ public final class EmberStrip {
             w += r.textWidth(seg.text(), true, textScale);
 
             if (i < segments.size() - 1) {
-                w += 8 * s * 2 + r.textWidth(SEPARATOR, true, textScale);
+                w += EmberAppearance.liquid() ? 13 * s : 8 * s * 2 + r.textWidth(SEPARATOR, true, textScale);
             }
         }
 
@@ -173,7 +174,7 @@ public final class EmberStrip {
         double iconSize = 11 * s;
         double textH = r.textHeight(true, textScale);
         double ty = y + (h - textH) / 2;
-        double cx = x + 14 * s;
+        double cx = x + (EmberAppearance.liquid() ? 10 : 14) * s;
 
         for (int i = 0; i < segments.size(); i++) {
             Segment seg = segments.get(i);
@@ -189,6 +190,11 @@ public final class EmberStrip {
             cx += r.textWidth(seg.text(), true, textScale);
 
             if (i < segments.size() - 1) {
+                if (EmberAppearance.liquid()) {
+                    r.quad(cx + 6 * s, y + h * 0.26, Math.max(0.7, s * 0.6), h * 0.48, new Color(255, 255, 255, 32));
+                    cx += 13 * s;
+                    continue;
+                }
                 cx += 8 * s;
                 r.text(SEPARATOR, cx, ty, dim, true, textScale);
                 cx += r.textWidth(SEPARATOR, true, textScale) + 8 * s;

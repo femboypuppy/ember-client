@@ -71,6 +71,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
      */
     private double panelH = 430;
     private double measuredLeftH;
+    private double leftScroll, leftScrollTarget;
 
     /** Recorded while laying out, so section headings cannot drift away from their rows. */
     private double widgetsLabelY = -1;
@@ -97,7 +98,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         TEXT_WHITE = EmberUI.TEXT;
         TEXT_DIM = EmberUI.TEXT_DIM;
         // Dark text for use on top of accent-coloured fills.
-        ON_ACCENT = new Color(10, 10, 13, 255);
+        ON_ACCENT = meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid() ? TEXT_WHITE : new Color(10, 10, 13, 255);
     }
 
     @Override
@@ -132,6 +133,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     protected void onRenderBefore(DrawContext graphics, float delta) {
         syncPalette();
         float dt = clock.tick();
+        leftScrollTarget = Math.max(0, Math.min(leftScrollTarget, Math.max(0, measuredLeftH - (panelH - HEADER_H - 18))));
+        leftScroll = EmberAnim.approach(leftScroll, leftScrollTarget, dt, 0.06);
 
         hits.clear();
 
@@ -173,7 +176,22 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         if (ca > 0.01f) r.roundedRect(cbX - 6, cbY - 5, 26, 26, 6, new Color(222, 86, 86, (int) (60 * ca)));
         hits.add(new Hit(cbX - 6, cbY - 5, 26, 26, this::close));
 
+        double leftW = PW - 36 - LIST_W - 14;
+        double clipTop = py + HEADER_H + 32, clipBottom = py + panelH - 12;
+        int firstLeftHit = hits.size();
+        r.scissorStart(px + 18, clipTop, leftW, Math.max(0, clipBottom - clipTop));
         drawLeftColumn(r, dt);
+        r.scissorEnd();
+        for (int i = hits.size() - 1; i >= firstLeftHit; i--) {
+            Hit hit = hits.get(i);
+            if (hit.y < clipTop || hit.y + hit.h > clipBottom) hits.remove(i);
+        }
+        if (measuredLeftH > panelH - HEADER_H - 18) {
+            double trackH = clipBottom - clipTop;
+            double thumbH = Math.max(24, trackH * trackH / measuredLeftH);
+            double maxScroll = Math.max(1, measuredLeftH - (panelH - HEADER_H - 18));
+            r.roundedRect(px + 18 + leftW + 3, clipTop + (trackH - thumbH) * leftScroll / maxScroll, 3, thumbH, 1.5, accentAlpha(130));
+        }
         drawFontList(r, dt);
 
         r.end();
@@ -186,13 +204,19 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     private void drawLeftColumn(GuiRenderer r, float dt) {
         double x = px + 18;
         double w = PW - 36 - LIST_W - 14;
-        double y = py + HEADER_H + 16;
+        double y = py + HEADER_H + 16 - leftScroll;
 
         y += 18; // section label
         y = themeRow(r, dt, x, y, w);
         y += 8;
 
         y = appearanceRow(r, dt, x, y, w);
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) {
+            r.roundedRect(x, y, w, ROW_H, 7, accentAlpha(38));
+            texts.add(new Label("Arrange HUD like reference", x + 12, y + ROW_H / 2, TEXT_WHITE, 0.84));
+            hits.add(new Hit(x, y, w, ROW_H, this::arrangeGlassHud));
+            y += ROW_H + 8;
+        }
 
         // Only meaningful while frosted, so it stays out of the way otherwise.
         if (meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) {
@@ -206,6 +230,10 @@ public class EmberClientSettingsScreen extends WidgetScreen {
                 v -> Config.get().glassTint.set(v));
             y = toggleRow(r, dt, x, y, w, "Accent tint", Config.get().glassAccent.get(),
                 () -> Config.get().glassAccent.set(!Config.get().glassAccent.get()));
+            if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) {
+                y = sliderRow(r, dt, x, y, w, "Motion", Config.get().liquidMotion.get() / 2,
+                    v -> Config.get().liquidMotion.set(v * 2));
+            }
         }
 
         // The master switch for the HUD. Without this the only ways to reach it are Meteor's
@@ -258,7 +286,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         texts.add(new Label("Reset HUD to Ember defaults", x + 12, y + (ROW_H - 0) / 2, TEXT_WHITE, 0.92));
 
         // What the panel has to be tall enough to hold, measured from below the header.
-        measuredLeftH = (y + ROW_H) - (py + HEADER_H);
+        measuredLeftH = (y + ROW_H + leftScroll) - (py + HEADER_H);
     }
 
     /**
@@ -303,35 +331,31 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         return y + ROW_H + 8;
     }
 
-    /** Solid or frosted, as two pills on one row. */
+    /** All styles remain visible without overlapping the row label. */
     private double appearanceRow(GuiRenderer r, float dt, double x, double y, double w) {
-        r.roundedRect(x, y, w, ROW_H, 7, ROW_BG);
+        r.roundedRect(x, y, w, 62, 8, ROW_BG);
 
         var options = meteordevelopment.meteorclient.utils.render.EmberAppearance.values();
         var current = meteordevelopment.meteorclient.utils.render.EmberAppearance.current();
 
-        double bw = 78, gap = 6;
-        double total = options.length * bw + (options.length - 1) * gap;
-        double sx = x + w - 12 - total;
+        double gap = 4;
+        double bw = (w - 16 - (options.length - 1) * gap) / options.length;
+        double sx = x + 8, by = y + 28, bh = 26;
+        double selected = anim("appearance-position", current.ordinal(), dt);
+        r.roundedRect(sx + selected * (bw + gap), by, bw, bh, 6, accentAlpha(230));
 
         for (int i = 0; i < options.length; i++) {
             var option = options[i];
             double bx = sx + i * (bw + gap);
             boolean sel = current == option;
-            float a = anim("appearance" + i, sel || hovered(bx, y + 5, bw, ROW_H - 10) ? 1f : 0f, dt);
-
-            Color fill = sel ? accentAlpha(225) : new Color(
-                (int) MathHelper.lerp(a * 0.4f, ROW_BG.r, accent().r),
-                (int) MathHelper.lerp(a * 0.4f, ROW_BG.g, accent().g),
-                (int) MathHelper.lerp(a * 0.4f, ROW_BG.b, accent().b), 235);
-
-            r.roundedRect(bx, y + 5, bw, ROW_H - 10, 6, fill);
-            hits.add(new Hit(bx, y + 5, bw, ROW_H - 10, () -> Config.get().appearance.set(option)));
-            texts.add(new Label(option.name(), bx + 9, y + ROW_H / 2, sel ? ON_ACCENT : TEXT_WHITE, 0.84));
+            float a = anim("appearance" + i, hovered(bx, by, bw, bh) ? 1f : 0f, dt);
+            if (!sel && a > 0.01f) r.roundedRect(bx, by, bw, bh, 6, new Color(255, 255, 255, (int) (18 * a)));
+            hits.add(new Hit(bx, by, bw, bh, () -> Config.get().appearance.set(option)));
+            texts.add(new Label(option.toString(), bx + 6, by + bh / 2, sel ? ON_ACCENT : TEXT_WHITE, 0.66));
         }
 
-        texts.add(new Label("Appearance", x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));
-        return y + ROW_H + 8;
+        texts.add(new Label("Surface style", x + 10, y + 13, TEXT_WHITE, 0.86));
+        return y + 70;
     }
 
     private double themeRow(GuiRenderer r, float dt, double x, double y, double w) {
@@ -380,6 +404,19 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         hits.add(new Hit(x, y, w, ROW_H, toggle));
         texts.add(new Label(label, x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));
         return y + ROW_H + 6;
+    }
+
+    private void arrangeGlassHud() {
+        int screenW = getWindowWidth(), screenH = getWindowHeight();
+        for (HudElement element : Hud.get()) {
+            switch (element.info.name) {
+                case "ember-status-bar" -> element.setPos((int) (screenW * 0.12), 16);
+                case "spotify" -> element.setPos(Math.max(16, screenW - Math.max(280, element.getWidth()) - 20), 16);
+                case "ember-keybinds" -> element.setPos((int) (screenW * 0.18), (int) (screenH * 0.32));
+                case "ember-target" -> element.setPos((screenW - element.getWidth()) / 2, (int) (screenH * 0.64));
+                default -> { }
+            }
+        }
     }
 
     private double widgetRow(GuiRenderer r, float dt, double x, double y, double w, String label, String elementName) {
@@ -469,11 +506,12 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         theme.textRenderer().begin(theme.scale(0.82));
         double lx = px + 18;
         theme.textRenderer().render("APPEARANCE", lx, py + HEADER_H + 16, TEXT_DIM, false);
-        if (widgetsLabelY > 0) theme.textRenderer().render("WIDGETS", lx, widgetsLabelY, TEXT_DIM, false);
+        if (widgetsLabelY >= py + HEADER_H + 32 && widgetsLabelY < py + panelH - 28) theme.textRenderer().render("WIDGETS", lx, widgetsLabelY, TEXT_DIM, false);
         theme.textRenderer().render("FONT", px + PW - 18 - LIST_W, py + HEADER_H + 16, TEXT_DIM, false);
         theme.textRenderer().end();
 
         for (Label label : texts) {
+            if (label.x < px + PW - 18 - LIST_W && (label.centerY < py + HEADER_H + 42 || label.centerY > py + panelH - 20)) continue;
             theme.textRenderer().begin(theme.scale(label.scale()));
             theme.textRenderer().render(label.text(), label.x(), label.centerY() - theme.textHeight() / 2, label.color(), false);
             theme.textRenderer().end();
@@ -524,6 +562,10 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         if (cx >= px + PW - 18 - LIST_W) {
             fontScroll -= (int) v;
             fontScroll = Math.max(0, fontScroll);
+            return true;
+        }
+        if (cx >= px + 18 && cx < px + PW - 18 - LIST_W - 14) {
+            leftScrollTarget = Math.max(0, leftScrollTarget - v * 38);
             return true;
         }
 

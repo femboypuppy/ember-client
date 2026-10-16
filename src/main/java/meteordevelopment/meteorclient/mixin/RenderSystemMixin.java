@@ -24,6 +24,8 @@ public abstract class RenderSystemMixin {
     @Inject(method = "flipFrame", at = @At("TAIL"))
     private static void meteor$flipFrame(CallbackInfo info) {
         MeshUniforms.flipFrame();
+        meteordevelopment.meteorclient.utils.render.LiquidGlassRenderer.flipFrame();
+        meteordevelopment.meteorclient.utils.render.EmberGlass.flipFrame();
         PostProcessShader.flipFrame();
         ChamsShader.flipFrame();
         OutlineUniforms.flipFrame();

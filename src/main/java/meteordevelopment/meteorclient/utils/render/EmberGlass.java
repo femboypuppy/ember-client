@@ -7,6 +7,7 @@ import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.TextureFormat;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.ResolutionChangedEvent;
@@ -39,6 +40,7 @@ public final class EmberGlass {
     private static final int LEVELS = 5;
 
     private static final GpuTextureView[] fbos = new GpuTextureView[LEVELS + 1];
+    private static final GpuTexture[] textures = new GpuTexture[LEVELS + 1];
     private static GpuBufferSlice[] ubos;
 
     private static boolean ready;
@@ -65,6 +67,15 @@ public final class EmberGlass {
         return fbos[0];
     }
 
+    public static void flipFrame() {
+        ready = false;
+    }
+
+    /** Widget screens can also use glass over the title-screen panorama. */
+    public static void ensureCaptured() {
+        if (!ready && EmberAppearance.liquid()) capture();
+    }
+
     public static net.minecraft.client.gl.GpuSampler sampler() {
         return RenderSystem.getSamplerCache().get(FilterMode.LINEAR);
     }
@@ -74,6 +85,10 @@ public final class EmberGlass {
             if (fbos[i] != null) {
                 fbos[i].close();
                 fbos[i] = null;
+            }
+            if (textures[i] != null) {
+                textures[i].close();
+                textures[i] = null;
             }
         }
 
@@ -133,8 +148,8 @@ public final class EmberGlass {
             int w = Math.max(1, (int) (width * scale));
             int h = Math.max(1, (int) (height * scale));
 
-            fbos[i] = RenderSystem.getDevice().createTextureView(
-                RenderSystem.getDevice().createTexture("Ember Glass - " + i, 15, TextureFormat.RGBA8, w, h, 1, 1));
+            textures[i] = RenderSystem.getDevice().createTexture("Ember Glass - " + i, 15, TextureFormat.RGBA8, w, h, 1, 1);
+            fbos[i] = RenderSystem.getDevice().createTextureView(textures[i]);
         }
 
         builtWidth = width;

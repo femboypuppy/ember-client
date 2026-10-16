@@ -36,6 +36,7 @@ public final class EmberUI {
      * slightly, so the scene behind reads through; the constants above stay the solid values.
      */
     public static Color bg() {
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) return new Color(8, 10, 14, 22);
         // Neutral grey, not the slightly blue tint this used to carry - over a bright scene
         // even a couple of points of extra blue read as a purple cast. Frosted also runs from
         // a dark pane to white with the tint slider.
@@ -46,6 +47,7 @@ public final class EmberUI {
     }
 
     public static Color raised() {
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) return new Color(26, 29, 36, 45);
         if (!meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) return RAISED_SOLID;
 
         int v = (int) (28 + 215 * meteordevelopment.meteorclient.utils.render.EmberAppearance.glassTint());
@@ -54,6 +56,7 @@ public final class EmberUI {
 
     /** White film and a lit top edge, which is what actually reads as glass. */
     public static void gloss(GuiRenderer r, double x, double y, double w, double h, double radius, float fade) {
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) return;
         if (!meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) {
             r.quad(x + radius, y, w - radius * 2, 1, new Color(255, 255, 255, (int) (24 * fade)));
             return;
@@ -71,6 +74,7 @@ public final class EmberUI {
      * sampling the framebuffer around it every frame.
      */
     public static void rim(GuiRenderer r, double x, double y, double w, double h, double radius, float fade) {
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid() && r.glassPanel(x, y, w, h, radius, fade)) return;
         Color a = accent();
         double t = 1.2;
 

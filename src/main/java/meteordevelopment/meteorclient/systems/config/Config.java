@@ -43,9 +43,19 @@ public class Config extends System<Config> {
     public final Setting<meteordevelopment.meteorclient.utils.render.EmberAppearance> appearance = sgVisual.add(
         new EnumSetting.Builder<meteordevelopment.meteorclient.utils.render.EmberAppearance>()
             .name("ember-appearance")
-            .description("Solid panels, or frosted glass that lets the scene through.")
+            .description("Choose Solid, Frosted, or Liquid Glass for Ember's menu and HUD.")
             .defaultValue(meteordevelopment.meteorclient.utils.render.EmberAppearance.Solid)
             .build()
+    );
+
+    public final Setting<Double> liquidMotion = sgVisual.add(new DoubleSetting.Builder()
+        .name("liquid-glass-motion")
+        .description("Liquid Glass animation speed. Zero disables decorative motion.")
+        .defaultValue(1.0)
+        .range(0, 2)
+        .sliderRange(0, 2)
+        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.LiquidGlass)
+        .build()
     );
 
     public final Setting<Double> glass = sgVisual.add(new DoubleSetting.Builder()
@@ -55,7 +65,7 @@ public class Config extends System<Config> {
         .min(0)
         .max(1)
         .sliderRange(0, 1)
-        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .visible(() -> appearance.get() != meteordevelopment.meteorclient.utils.render.EmberAppearance.Solid)
         .build()
     );
 
@@ -66,7 +76,7 @@ public class Config extends System<Config> {
         .min(0)
         .max(1)
         .sliderRange(0, 1)
-        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .visible(() -> appearance.get() != meteordevelopment.meteorclient.utils.render.EmberAppearance.Solid)
         .build()
     );
 
@@ -77,7 +87,7 @@ public class Config extends System<Config> {
         .min(0)
         .max(1)
         .sliderRange(0, 1)
-        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .visible(() -> appearance.get() != meteordevelopment.meteorclient.utils.render.EmberAppearance.Solid)
         .build()
     );
 
@@ -88,7 +98,7 @@ public class Config extends System<Config> {
         .min(0)
         .max(1)
         .sliderRange(0, 1)
-        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .visible(() -> appearance.get() != meteordevelopment.meteorclient.utils.render.EmberAppearance.Solid)
         .build()
     );
 
@@ -96,7 +106,7 @@ public class Config extends System<Config> {
         .name("ember-glass-accent")
         .description("Tint the glass edge with the accent. Off leaves only the colour it picks up from behind.")
         .defaultValue(true)
-        .visible(() -> appearance.get() == meteordevelopment.meteorclient.utils.render.EmberAppearance.Frosted)
+        .visible(() -> appearance.get() != meteordevelopment.meteorclient.utils.render.EmberAppearance.Solid)
         .build()
     );
 

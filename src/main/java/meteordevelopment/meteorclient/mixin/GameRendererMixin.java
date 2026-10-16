@@ -173,6 +173,7 @@ public abstract class GameRendererMixin implements IGameRenderer {
 
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/render/GuiRenderer;render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V", shift = At.Shift.AFTER))
     private void onRenderGui(RenderTickCounter tickCounter, boolean tick, CallbackInfo info) {
+        meteordevelopment.meteorclient.utils.render.EmberGlass.ensureCaptured();
         if (meteor$renderHud) {
             meteor$renderHud = false;
             var context = new DrawContext(client, guiState, (int) client.mouse.getScaledX(client.getWindow()), (int) client.mouse.getScaledY(client.getWindow()));

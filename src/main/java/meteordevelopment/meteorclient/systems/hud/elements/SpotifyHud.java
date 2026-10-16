@@ -35,6 +35,12 @@ public class SpotifyHud extends HudElement {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgControls = settings.createGroup("Controls");
+    private final Setting<Boolean> glassPlayer = sgGeneral.add(new BoolSetting.Builder()
+        .name("glass-player-controls")
+        .description("Show the reference-style full music card with transport controls in Liquid Glass.")
+        .defaultValue(true)
+        .visible(meteordevelopment.meteorclient.utils.render.EmberAppearance::liquid)
+        .build());
 
     private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
         .name("scale")
@@ -185,7 +191,7 @@ public class SpotifyHud extends HudElement {
         boolean withArtist = !artist.isEmpty();
         boolean withProgress = showProgress.get();
 
-        if (mode.get() == Mode.Expanded) {
+        if (mode.get() == Mode.Expanded || (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid() && glassPlayer.get())) {
             renderExpanded(renderer, s, titleScale, subScale, titleH, subH, title, artist, has, accent, bg, artBg, white, gray, track);
             return;
         }

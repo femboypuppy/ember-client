@@ -10,6 +10,8 @@ import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.EmberIcons;
 import meteordevelopment.meteorclient.utils.render.EmberStrip;
+import meteordevelopment.meteorclient.utils.render.EmberAppearance;
+import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import net.minecraft.util.Identifier;
@@ -36,6 +38,21 @@ public class EmberStatusBarHud extends HudElement {
     private static final Color SKIN_TINT = new Color(255, 255, 255, 255);
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final Setting<Boolean> compactGlass = sgGeneral.add(new BoolSetting.Builder()
+        .name("compact-glass-layout")
+        .description("Liquid Glass reference layout: separate logo, username, and server/FPS/time pills. Turn off for all performance statistics.")
+        .defaultValue(true)
+        .visible(EmberAppearance::liquid)
+        .build());
+    private final EmberAnim.Clock glassClock = new EmberAnim.Clock();
+    private final Setting<Boolean> mediaPill = sgGeneral.add(new BoolSetting.Builder()
+        .name("glass-now-playing")
+        .description("Show the current song beside the glass status pills when media is available.")
+        .defaultValue(true)
+        .visible(EmberAppearance::liquid)
+        .build());
+    private float glassIntro;
+    private double glassWidth;
 
     private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
         .name("scale")
@@ -138,6 +155,10 @@ public class EmberStatusBarHud extends HudElement {
 
     @Override
     public void render(HudRenderer renderer) {
+        if (EmberAppearance.liquid() && compactGlass.get()) {
+            renderLiquid(renderer);
+            return;
+        }
         double s = scale.get();
         double textScale = 0.9 * s;
 
@@ -214,6 +235,75 @@ public class EmberStatusBarHud extends HudElement {
     }
 
     /** Your actual skin face, falling back to a lettered chip before the skin has loaded. */
+    private void renderLiquid(HudRenderer renderer) {
+        double dt = glassClock.tick();
+        double motion = EmberAppearance.motion();
+        glassIntro = EmberAnim.approach(glassIntro, 1, dt, motion == 0 ? 0 : 0.09 / motion);
+        double s = scale.get(), ts = 0.74 * s;
+        double h = EmberStrip.height(renderer, s, ts), gap = 5 * s, radius = 7 * s;
+        double by = y - (1 - glassIntro) * 8 * s;
+        Color accent = EmberPalette.accent();
+        Color white = new Color(244, 245, 250, (int) (255 * glassIntro));
+
+        counter.tick();
+        double cx = x;
+        EmberStrip.panel(renderer, cx, by, h, h, radius, glassIntro);
+        EmberIcons.draw(renderer, EmberIcons.Glyph.BRAND, cx + h * 0.25, by + h * 0.25, h * 0.5, white, EmberStrip.background());
+        cx += h + gap;
+
+        if (showUser.get()) {
+            String user = mc.getSession().getUsername();
+            double badge = h - 8 * s;
+            double uw = renderer.textWidth(user, true, ts) + 16 * s + (showAvatar.get() ? badge + 5 * s : 0);
+            EmberStrip.panel(renderer, cx, by, uw, h, radius, glassIntro);
+            double tx = cx + 8 * s;
+            if (showAvatar.get()) {
+                drawBadge(renderer, tx, by + 4 * s, badge, accent);
+                tx += badge + 5 * s;
+            }
+            renderer.text(user, tx, by + (h - renderer.textHeight(true, ts)) / 2, white, true, ts);
+            cx += uw + gap;
+        }
+
+        List<EmberStrip.Segment> metrics = new ArrayList<>();
+        if (showServer.get()) metrics.add(new EmberStrip.Segment(EmberIcons.Glyph.SERVER,
+            mc.getCurrentServerEntry() == null ? "Singleplayer" : mc.getCurrentServerEntry().address));
+        if (showFps.get()) metrics.add(new EmberStrip.Segment(EmberIcons.Glyph.FPS, Math.round(counter.get("fps", mc.getCurrentFps(), 0.25)) + " fps"));
+        if (showClock.get()) metrics.add(new EmberStrip.Segment(EmberIcons.Glyph.CLOCK, LocalTime.now().format(CLOCK)));
+        if (!metrics.isEmpty()) {
+            double mw = EmberStrip.width(renderer, metrics, s, ts);
+            EmberStrip.draw(renderer, cx, by, mw, h, radius, metrics, s, ts);
+            cx += mw;
+        } else cx -= gap;
+
+        if (mediaPill.get()) {
+            meteordevelopment.meteorclient.utils.misc.MediaInfo.start();
+            if (meteordevelopment.meteorclient.utils.misc.MediaInfo.isAvailable()) {
+                String song = meteordevelopment.meteorclient.utils.misc.MediaInfo.getTitle();
+                double maxText = Math.min(220 * s, Math.max(0, mc.getWindow().getFramebufferWidth() - cx - 70 * s));
+                if (maxText > 60 * s) {
+                    while (song.length() > 1 && renderer.textWidth(song, false, ts) > maxText) song = song.substring(0, song.length() - 1);
+                    double mw = renderer.textWidth(song, false, ts) + 41 * s;
+                    cx += gap;
+                    EmberStrip.panel(renderer, cx, by, mw, h, radius, glassIntro);
+                    renderer.text(song, cx + 9 * s, by + (h - renderer.textHeight(false, ts)) / 2, white, false, ts);
+                    boolean playing = meteordevelopment.meteorclient.utils.misc.MediaInfo.isPlaying();
+                    double seconds = System.nanoTime() / 1_000_000_000.0 * motion;
+                    for (int i = 0; i < 4; i++) {
+                        double bh = (playing ? 3 + (0.5 + 0.5 * Math.sin(seconds * 4 + i * 1.7)) * 8 : 3) * s;
+                        renderer.roundedQuad(cx + mw - 23 * s + i * 4 * s, by + (h - bh) / 2, 2 * s, bh, s,
+                            new Color(accent.r, accent.g, accent.b, (int) (220 * glassIntro)));
+                    }
+                    cx += mw;
+                }
+            }
+        }
+
+        double target = cx - x;
+        glassWidth = glassWidth == 0 ? target : EmberAnim.approach(glassWidth, target, dt, motion == 0 ? 0 : 0.1 / motion);
+        setSize(Math.max(target, glassWidth), h);
+    }
+
     private void drawBadge(HudRenderer renderer, double bx, double by, double size, Color accent) {
         Identifier skin = skin();
 

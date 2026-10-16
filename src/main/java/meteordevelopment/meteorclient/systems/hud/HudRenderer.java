@@ -48,6 +48,9 @@ public class HudRenderer {
 
     private final Hud hud = Hud.get();
     private final List<Runnable> postTasks = new ArrayList<>();
+    private record GlassPane(double x, double y, double w, double h, double radius, double opacity) {}
+    private final List<GlassPane> glassPanes = new ArrayList<>();
+    private final Renderer2D glassShadows = new Renderer2D(false);
 
     private final Int2ObjectMap<FontHolder> fontsInUse = new Int2ObjectOpenHashMap<>();
     private final LoadingCache<Integer, FontHolder> fontCache = CacheBuilder.newBuilder()
@@ -68,6 +71,8 @@ public class HudRenderer {
 
     public void begin(DrawContext drawContext) {
         Renderer2D.COLOR.begin();
+        glassShadows.begin();
+        glassPanes.clear();
 
         this.drawContext = drawContext;
         this.delta = Utils.frameTime;
@@ -81,6 +86,12 @@ public class HudRenderer {
     }
 
     public void end() {
+        glassShadows.render();
+        for (GlassPane pane : glassPanes) {
+            meteordevelopment.meteorclient.utils.render.LiquidGlassRenderer.draw(
+                pane.x, pane.y, pane.w, pane.h, pane.radius, pane.opacity);
+        }
+        glassPanes.clear();
         Renderer2D.COLOR.render();
 
         if (hud.hasCustomFont()) {
@@ -201,8 +212,11 @@ public class HudRenderer {
             if (alpha <= 0) continue;
 
             double w = width + spread * 2, h = height + spread * 2;
-            roundedQuad(x - spread, y - spread, w, h, Math.min(Math.min(w, h) / 2, radius + spread),
-                new Color(color.r, color.g, color.b, alpha));
+            Color layer = new Color(color.r, color.g, color.b, alpha);
+            double rad = Math.min(Math.min(w, h) / 2, radius + spread);
+            if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) {
+                meteordevelopment.meteorclient.utils.render.EmberShapes.roundedQuad(glassShadows, x - spread, y - spread, w, h, rad, layer);
+            } else roundedQuad(x - spread, y - spread, w, h, rad, layer);
         }
     }
 
@@ -236,8 +250,10 @@ public class HudRenderer {
             if (alpha <= 0) continue;
 
             double w = width + spread * 2, h = height + spread * 2;
-            roundedQuad(x - spread, y - spread, w, h,
-                Math.min(Math.min(w, h) / 2, radius + spread), new Color(0, 0, 0, alpha));
+            double rad = Math.min(Math.min(w, h) / 2, radius + spread);
+            if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) {
+                meteordevelopment.meteorclient.utils.render.EmberShapes.roundedQuad(glassShadows, x - spread, y - spread, w, h, rad, new Color(0, 0, 0, alpha));
+            } else roundedQuad(x - spread, y - spread, w, h, rad, new Color(0, 0, 0, alpha));
         }
     }
 
@@ -309,6 +325,12 @@ public class HudRenderer {
      * blurred frame is available, so the caller can fall back to a flat fill rather than
      * leaving a hole.
      */
+    public boolean liquidPanel(double x, double y, double width, double height, double radius, double opacity) {
+        if (!meteordevelopment.meteorclient.utils.render.LiquidGlassRenderer.available()) return false;
+        glassPanes.add(new GlassPane(x, y, width, height, radius, opacity));
+        return true;
+    }
+
     public boolean glassFill(double x, double y, double width, double height, double radius, Color tint) {
         if (!meteordevelopment.meteorclient.utils.render.EmberGlass.ready()) return false;
 

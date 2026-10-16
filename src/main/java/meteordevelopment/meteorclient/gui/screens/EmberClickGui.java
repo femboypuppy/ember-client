@@ -217,6 +217,10 @@ public class EmberClickGui extends TabScreen {
 
     private void renderAll(DrawContext graphics, float delta) {
         frameDt = clock.tick();
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) {
+            double motion = meteordevelopment.meteorclient.utils.render.EmberAppearance.motion();
+            frameDt = motion == 0 ? 1f : (float) (frameDt * motion);
+        }
 
         boolean popupUp = popup.isVisible();
         mx = popupUp ? -10000 : rawMx;
@@ -260,7 +264,7 @@ public class EmberClickGui extends TabScreen {
         r.theme = theme;
         r.begin(graphics);
 
-        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (BG_OVERLAY.a * fade)));
+        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) ((meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid() ? 45 : BG_OVERLAY.a) * fade)));
 
         // No scissor needed to layer these under the panels: the renderer keeps glow in its
         // own batch and draws it before plain quads within a flush. Forcing a flush here just
@@ -353,7 +357,7 @@ public class EmberClickGui extends TabScreen {
             EmberUI.raised().r + (int) (10 * hAmt),
             EmberUI.raised().g + (int) (10 * hAmt),
             EmberUI.raised().b + (int) (12 * hAmt),
-            (int) (255 * fade));
+            (int) (EmberUI.raised().a * fade));
 
         if (p.openAnim < 0.05f) {
             r.roundedRect(x, y, PW, HH, EmberUI.RADIUS, hc);
@@ -512,6 +516,7 @@ public class EmberClickGui extends TabScreen {
 
     private void drawSearchBar(GuiRenderer r, float fade) {
         double x = searchX(), y = searchY();
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) r.glassPanel(x, y, SEARCH_W, SEARCH_H, SEARCH_H / 2, fade);
         r.roundedRect(x, y, SEARCH_W, SEARCH_H, SEARCH_H / 2, EmberUI.alpha(EmberUI.raised(), fade));
 
         if (searchFocused) {
@@ -554,6 +559,7 @@ public class EmberClickGui extends TabScreen {
         boolean hover = mx >= bx && mx < bx + CFG_W && my >= by && my < by + CFG_H;
         float hA = anim("cfgbtn", hoverAnims, hover ? 1f : 0f, 12f, frameDt);
 
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) r.glassPanel(bx, by, CFG_W, CFG_H, CFG_H / 2, fade);
         r.roundedRect(bx, by, CFG_W, CFG_H, CFG_H / 2, EmberUI.alpha(EmberUI.raised(), fade));
         if (hA > 0.01f) r.roundedRect(bx, by, CFG_W, CFG_H, CFG_H / 2, EmberUI.accent((int) (34 * hA * fade)));
 
@@ -576,6 +582,7 @@ public class EmberClickGui extends TabScreen {
         boolean hover = mx >= bx && mx < bx + GEAR && my >= by && my < by + GEAR;
         float hA = anim("gearbtn", hoverAnims, hover ? 1f : 0f, 12f, frameDt);
 
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) r.glassPanel(bx, by, GEAR, GEAR, GEAR / 2, fade);
         r.quad(bx, by, GEAR, GEAR, GuiRenderer.CIRCLE, EmberUI.alpha(EmberUI.raised(), fade));
         if (hA > 0.01f) r.quad(bx, by, GEAR, GEAR, GuiRenderer.CIRCLE, EmberUI.accent((int) (34 * hA * fade)));
 

@@ -281,6 +281,7 @@ public class EmberSettingsPopup {
 
         // Depth from a shadow, not an accent outline - the flat style has no glowing edges.
         EmberUI.shadow(r, x, y, w, h, fade);
+        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) EmberUI.rim(r, x, y, w, h, RADIUS, fade);
         r.roundedRect(x, y, w, h, RADIUS, alpha(PANEL_BG, fade));
 
         drawHeader(r, x, y, w, fade, dt);
@@ -380,6 +381,10 @@ public class EmberSettingsPopup {
 
         switch (row.kind()) {
             case BOOL -> {
+                if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) {
+                    drawGlassBoolean(r, row, ctrlX, cy, fade, dt);
+                    break;
+                }
                 double tw = 40, th = 22, tx = ctrlX + CTRL_W - tw;
                 drawToggle(r, row, (Boolean) row.setting().get(), tx, cy - th / 2, tw, th, fade, dt);
                 hits.add(new Hit(tx, cy - th / 2, tw, th, row, "toggle"));
@@ -409,6 +414,18 @@ public class EmberSettingsPopup {
 
     private void drawToggle(GuiRenderer r, Object key, boolean on, double x, double y, double w, double h, float fade, float dt) {
         EmberUI.toggle(r, x, y, w, h, anim(key + "tgl", on, dt * 1.4f), fade);
+    }
+
+    private void drawGlassBoolean(GuiRenderer r, Row row, double x, double cy, float fade, float dt) {
+        boolean on = (Boolean) row.setting().get();
+        double gap = 5, bw = (CTRL_W - gap) / 2, h = 25, y = cy - h / 2;
+        float a = anim(row + "glass-bool", on, dt);
+        r.roundedRect(x, y, CTRL_W, h, 6, alpha(CONTROL_BG, fade));
+        r.roundedRect(x + (1 - a) * (bw + gap), y, bw, h, 6, accentAlpha((int) (230 * fade)));
+        text("Enabled", x + bw / 2, cy - 4.5, alpha(on ? TEXT : TEXT_DIM, fade), SMALL_SCALE + 0.04, 2, 0);
+        text("Disabled", x + bw + gap + bw / 2, cy - 4.5, alpha(on ? TEXT_DIM : TEXT, fade), SMALL_SCALE + 0.04, 2, 0);
+        hits.add(new Hit(x, y, bw, h, row, "boolOn"));
+        hits.add(new Hit(x + bw + gap, y, bw, h, row, "boolOff"));
     }
 
     private void drawSlider(GuiRenderer r, Row row, double ctrlX, double cy, float fade, float dt) {
@@ -818,6 +835,11 @@ public class EmberSettingsPopup {
                 BoolSetting bs = (BoolSetting) row.setting();
                 if (button == 1) bs.reset();
                 else bs.set(!bs.get());
+            }
+            case "boolOn", "boolOff" -> {
+                BoolSetting setting = (BoolSetting) row.setting();
+                if (button == 1) setting.reset();
+                else setting.set(hit.area().equals("boolOn"));
             }
             case "rainbow" -> {
                 @SuppressWarnings("unchecked")

@@ -55,6 +55,9 @@ public class GuiRenderer {
     private final List<TextOperation> texts = new ObjectArrayList<>();
 
     private final List<Runnable> postTasks = new ObjectArrayList<>();
+    private record GlassPane(double x, double y, double w, double h, double radius, double opacity) {}
+    private final List<GlassPane> glassPanes = new ObjectArrayList<>();
+    private double alpha = 1;
 
     public String tooltip, lastTooltip;
     public WWidget tooltipWidget;
@@ -194,6 +197,11 @@ public class GuiRenderer {
         rTex.end();
 
         renderGlow(rGlowUnder);
+        for (GlassPane pane : glassPanes) {
+            meteordevelopment.meteorclient.utils.render.LiquidGlassRenderer.draw(
+                pane.x, pane.y, pane.w, pane.h, pane.radius, pane.opacity);
+        }
+        glassPanes.clear();
         r.render();
         renderGlow(rGlowOver);
         rTex.render("u_Texture", TEXTURE.getGlTextureView(), TEXTURE.getSampler());
@@ -288,6 +296,7 @@ public class GuiRenderer {
     }
 
     public void setAlpha(double a) {
+        alpha = a;
         r.setAlpha(a);
         rTex.setAlpha(a);
 
@@ -315,6 +324,12 @@ public class GuiRenderer {
     }
 
     /** Ember: rounded rectangle - straight quads plus the circle texture's quadrants as corners. */
+    public boolean glassPanel(double x, double y, double w, double h, double radius, double opacity) {
+        if (!meteordevelopment.meteorclient.utils.render.LiquidGlassRenderer.available()) return false;
+        glassPanes.add(new GlassPane(x, y, w, h, radius, opacity * alpha));
+        return true;
+    }
+
     public void roundedRect(double x, double y, double w, double h, double rad, Color c) {
         if (rad <= 0) { quad(x, y, w, h, c); return; }
         rad = Math.min(rad, Math.min(w, h) / 2);
