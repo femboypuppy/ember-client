@@ -8,7 +8,7 @@ base {
     group = properties["maven_group"] as String
 
     val suffix = providers.gradleProperty("build_number").getOrElse("local")
-    version = "${libs.versions.minecraft.get()}-$suffix"
+    version = providers.gradleProperty("release_version").getOrElse("${libs.versions.minecraft.get()}-$suffix")
 }
 
 repositories {

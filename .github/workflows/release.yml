@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build release
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          chmod +x gradlew
+          ./gradlew build --no-daemon -Prelease_version="${RELEASE_TAG#v}" -Parchives_base_name=ember-client -Pcommit="$COMMIT"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ember-client-${{ github.ref_name }}
+          path: build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" build/libs/*.jar \
+            --verify-tag \
+            --title "Ember Client ${RELEASE_TAG#v} (Minecraft 1.21.11)" \
+            --generate-notes
