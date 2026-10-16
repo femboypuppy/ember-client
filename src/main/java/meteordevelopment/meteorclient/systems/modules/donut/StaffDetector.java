@@ -55,7 +55,6 @@ public class StaffDetector extends Module {
         "bautiedgar",
         "Itszdeath",
         "Dough4",
-        // From Anubis Client's roster.
         "Bloodspulse"
     );
 
@@ -261,7 +260,7 @@ public class StaffDetector extends Module {
         StaffIntel.get().onLeak(this::onLeakVerdict);
     }
 
-    /** A staff game mode change forwarded by your shard: Anubis's "watching you" (see AntiVanish#onLeakVerdict). */
+    /** A staff game mode change forwarded by your shard means they are watching someone (see AntiVanish#onLeakVerdict). */
     private void onLeakVerdict(StaffIntel.LeakEvent leak) {
         if (!isActive() || !alertNearby.get() || mc.player == null) return;
         String mode = leak.mode() == null ? "?" : leak.mode().asString().toUpperCase(Locale.ROOT);

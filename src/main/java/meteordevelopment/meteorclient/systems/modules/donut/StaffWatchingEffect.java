@@ -12,6 +12,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 
+import java.util.Random;
 import java.util.UUID;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -23,14 +24,11 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  *     soft bell. They could be anywhere in a 25k block region, so this is information, not an alarm.</li>
  *     <li>{@link Level#HIDDEN}: a staff member is vanished or spectating on your region's server. Same card in amber
  *     with a lower two-note bell.</li>
- *     <li>{@link Level#WATCHING}: a staff member's game mode leaked from your shard, or they are near you. Their 3D
- *     head tumbles past the camera like the elder guardian curse, then a WATCHING YOU title, and the card turns
+ *     <li>{@link Level#WATCHING}: a staff member's game mode leaked from your shard, or they are near you. Their head
+ *     pops like a totem of undying (swells, spins, a burst of embers), then a WATCHING YOU title, and the card turns
  *     red.</li>
  * </ul>
  * A lower level never interrupts a higher one that is still on screen.
- * <p>
- * The tumbling head and title are ported from Anubis Client's StaffGhost (4ldenz, GPL-3.0,
- * https://github.com/4ldenz/Anubis-client), redrawn with Meteor's renderer instead of ImGui.
  */
 public final class StaffWatchingEffect {
     private static final StaffWatchingEffect INSTANCE = new StaffWatchingEffect();
@@ -39,23 +37,29 @@ public final class StaffWatchingEffect {
     private static final float FADE_OUT_SECONDS = 0.45f;
     private static final float VIGNETTE_SECONDS = 3.0f;
 
-    // Anubis StaffGhost: head geometry in camera space, the tumble lasts 1.5 s and the title follows at 1.25 s.
-    private static final float GHOST_SECONDS = 1.5f;
-    private static final float TITLE_AT_SECONDS = 1.25f;
-    private static final float HEAD_DISTANCE = 1.49f;
-    private static final float HEAD_LIFT = 0.24f;
-    private static final float HEAD_HALF = 0.45f;
+    // Totem pop: vanilla's floating item lasts 40 ticks.
+    private static final float POP_SECONDS = 2.0f;
+    private static final float TITLE_AT_SECONDS = 0.5f;
     private static final float HAT_SCALE = 1.125f;
-    private static final float NEAR_PLANE = -0.08f;
-    private static final float HALF_FOV_TAN = (float) Math.tan(Math.toRadians(35.0));
+    private static final float CAMERA_DISTANCE = 5f;
     private static final int CELLS = 8;
-    // Per face: skin u, v of the 8x8 patch, then corners a, b, c (unit cube) and a shade.
-    private static final float[][] FACES = {
-        {8, 8, -1, 1, 1, 1, 1, 1, -1, -1, 1, 1.0f},
-        {0, 8, -1, 1, -1, -1, 1, 1, -1, -1, -1, 0.8f},
-        {16, 8, 1, 1, 1, 1, 1, -1, 1, -1, 1, 0.8f},
-        {8, 0, -1, 1, -1, 1, 1, -1, -1, 1, 1, 0.95f},
-        {16, 0, -1, -1, 1, 1, -1, 1, -1, -1, -1, 0.6f}
+    private static final int PARTICLES = 56;
+
+    /**
+     * The six faces of a skin's head: the 8x8 patch (u, v) and how it lies on a cube from -1 to 1 (corner A at the
+     * patch's top-left, then the directions of the patch's u and v axes). y is up, z points at the camera.
+     */
+    private static final float[][] HEAD_FACES = {
+        {8, 8,   -1, 1, 1,    2, 0, 0,    0, -2, 0},   // front
+        {24, 8,   1, 1, -1,  -2, 0, 0,    0, -2, 0},   // back
+        {0, 8,   -1, 1, -1,   0, 0, 2,    0, -2, 0},   // right side (viewer's left)
+        {16, 8,   1, 1, 1,    0, 0, -2,   0, -2, 0},   // left side
+        {8, 0,   -1, 1, -1,   2, 0, 0,    0, 0, 2},    // top
+        {16, 0,  -1, -1, 1,   2, 0, 0,    0, 0, -2}    // bottom
+    };
+
+    private static final Color[] EMBER_COLORS = {
+        new Color(255, 84, 84), new Color(255, 140, 60), new Color(255, 205, 90), new Color(200, 40, 40)
     };
 
     public enum Level {
@@ -93,6 +97,12 @@ public final class StaffWatchingEffect {
     private boolean titleShown;
     private int ticks;
 
+    // Where the pop drifts to, like the totem's random offset.
+    private float driftX, driftY;
+    private final float[] pAngle = new float[PARTICLES], pSpeed = new float[PARTICLES], pLife = new float[PARTICLES];
+    private final float[] pSize = new float[PARTICLES], pDelay = new float[PARTICLES];
+    private final int[] pColor = new int[PARTICLES];
+
     private final Color work = new Color();
     private final Color clear = new Color(0, 0, 0, 0);
 
@@ -126,6 +136,7 @@ public final class StaffWatchingEffect {
         this.titleShown = false;
         this.active = true;
 
+        if (level == Level.WATCHING) seedPop();
         playSound(0);
     }
 
@@ -135,6 +146,22 @@ public final class StaffWatchingEffect {
 
     public boolean isActive() {
         return active;
+    }
+
+    private void seedPop() {
+        Random random = new Random();
+        driftX = (random.nextFloat() * 2 - 1) * 0.12f;
+        driftY = (random.nextFloat() * 2 - 1) * 0.08f;
+
+        for (int i = 0; i < PARTICLES; i++) {
+            pAngle[i] = (float) (random.nextFloat() * Math.PI * 2);
+            pSpeed[i] = 0.25f + random.nextFloat() * 0.55f;
+            pLife[i] = 0.8f + random.nextFloat() * 0.8f;
+            pSize[i] = 0.004f + random.nextFloat() * 0.006f;
+            // Two waves: the pop itself and a smaller one as the head peaks.
+            pDelay[i] = i < PARTICLES * 2 / 3 ? random.nextFloat() * 0.08f : 0.3f + random.nextFloat() * 0.1f;
+            pColor[i] = random.nextInt(EMBER_COLORS.length);
+        }
     }
 
     private void playSound(int tick) {
@@ -149,7 +176,7 @@ public final class StaffWatchingEffect {
                 if (tick == 4) mc.player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_BELL.value(), 0.7f, 0.63f);
             }
             case WATCHING -> {
-                if (tick == 0) mc.player.playSound(SoundEvents.ENTITY_ELDER_GUARDIAN_CURSE, 1.0f, 1.0f);
+                if (tick == 0) mc.player.playSound(SoundEvents.ITEM_TOTEM_USE, 0.9f, 1.0f);
             }
         }
     }
@@ -167,9 +194,9 @@ public final class StaffWatchingEffect {
 
         if (level == Level.WATCHING && !titleShown && elapsed() >= TITLE_AT_SECONDS) {
             titleShown = true;
-            mc.inGameHud.setTitleTicks(10, 40, 15);
+            mc.inGameHud.setTitleTicks(6, 40, 15);
             mc.inGameHud.setTitle(Text.literal("WATCHING YOU").formatted(Formatting.RED, Formatting.BOLD));
-            mc.inGameHud.setSubtitle(Text.literal(watcherName).formatted(Formatting.RED, Formatting.BOLD));
+            mc.inGameHud.setSubtitle(Text.literal(watcherName).formatted(Formatting.RED));
         }
 
         if (elapsed() >= level.seconds) active = false;
@@ -192,7 +219,8 @@ public final class StaffWatchingEffect {
 
         if (level == Level.WATCHING) {
             if (t < VIGNETTE_SECONDS) drawVignette(renderer, sw, sh, t);
-            if (t < GHOST_SECONDS) drawGhostHead(renderer, sw, sh, t / GHOST_SECONDS);
+            if (t < POP_SECONDS + 1.6f) drawEmbers(renderer, sw, sh, t);
+            if (t < POP_SECONDS) drawTotemHead(renderer, sw, sh, t / POP_SECONDS);
         }
 
         drawCard(renderer, sw, sh, t);
@@ -213,88 +241,142 @@ public final class StaffWatchingEffect {
         r.quad(sw - band, 0, band, sh, clear, work, work, clear);
     }
 
+    /** Sparks thrown out of the pop, falling and fading like totem particles. */
+    private void drawEmbers(HudRenderer r, double sw, double sh, float t) {
+        double cx = sw / 2 + driftX * sw * 0.5, cy = sh / 2 + driftY * sh * 0.5;
+        double unit = sh;
+
+        for (int i = 0; i < PARTICLES; i++) {
+            float age = t - pDelay[i];
+            if (age <= 0 || age >= pLife[i]) continue;
+
+            float life = age / pLife[i];
+            // Fast burst that slows down, plus gravity pulling the sparks down.
+            double travel = pSpeed[i] * (1 - Math.pow(1 - Math.min(1, age / 0.9), 3)) * 0.55;
+            double x = cx + Math.cos(pAngle[i]) * travel * unit;
+            double y = cy + Math.sin(pAngle[i]) * travel * unit * 0.8 + 0.22 * age * age * unit;
+            double size = pSize[i] * unit * (1 - life * 0.6);
+
+            Color base = EMBER_COLORS[pColor[i]];
+            int alpha = Math.round(255 * (1 - life * life));
+            r.quad(x - size / 2, y - size / 2, size, size, work.set(base.r, base.g, base.b, alpha));
+        }
+    }
+
     /**
-     * The elder guardian curse, as Anubis draws it: the staff member's head as a real cube (plus the hat layer)
-     * right in front of the camera, tipping over from above as it fades in and out. Each face is split into its 8x8
-     * skin pixels so the perspective stays correct without a 3D pipeline.
+     * The staff member's head popping like a totem of undying: it swells from small to huge and back while spinning
+     * two and a half turns, with the totem's little wobble. Drawn as a real cube (head plus hat layer) with a light
+     * from the front, each face cut into its 8x8 skin pixels so the slight perspective stays correct.
      */
-    private void drawGhostHead(HudRenderer r, double sw, double sh, float p) {
+    private void drawTotemHead(HudRenderer r, double sw, double sh, float f) {
         Identifier texture = skin != null ? skin.texture() : null;
         if (texture == null) return;
 
-        float alpha = 0.05f + 0.6f * (float) Math.sin(p * Math.PI);
-        double angle = Math.toRadians(60.0 - 150.0 * p);
-        float cos = (float) Math.cos(angle);
-        float sin = (float) Math.sin(angle);
-        float w = (float) sw, h = (float) sh;
-        float focal = h * 0.5f / HALF_FOV_TAN;
+        // Vanilla's floating item curve: k runs from 0 to pi, so sin(k) swells and settles.
+        float g = f * f, h = f * g;
+        float k = (float) ((10.25f * h * g - 24.95f * g * g + 25.5f * h - 13.8f * g + 4.0f * f) * Math.PI);
+        double guiScale = mc.getWindow().getScaleFactor();
+        double half = (50 + 175 * Math.sin(k)) * 0.42 * guiScale;
+        double drift = Math.abs(Math.sin(k * 2));
+        double cx = sw / 2 + driftX * sw * drift, cy = sh / 2 + driftY * sh * drift;
 
+        double yaw = Math.toRadians(900 * Math.abs(Math.sin(k)));
+        double wobble = Math.toRadians(6 * Math.cos(f * 8));
+        float alpha = f > 0.85f ? (1 - f) / 0.15f : 1f;
+
+        float[][] rot = rotation(yaw, wobble, wobble);
         r.post(() -> r.texturedMesh(texture, mesh -> {
-            drawCube(mesh, HEAD_HALF, 0f, cos, sin, w, h, focal, alpha);
-            drawCube(mesh, HEAD_HALF * HAT_SCALE, 32f, cos, sin, w, h, focal, alpha);
+            drawCube(mesh, rot, 1f, 0f, cx, cy, half, alpha);
+            drawCube(mesh, rot, HAT_SCALE, 32f, cx, cy, half, alpha);
         }));
     }
 
-    private static void drawCube(Renderer2D mesh, float half, float uShift, float cos, float sin, float w, float h, float focal, float alpha) {
-        float[] a = new float[3], b = new float[3], c = new float[3];
-        float[] sx = new float[(CELLS + 1) * (CELLS + 1)];
-        float[] sy = new float[sx.length];
+    /** Rotation matrix for Z then X then Y (the order the totem applies them). */
+    private static float[][] rotation(double yaw, double pitch, double roll) {
+        double cy = Math.cos(yaw), sy = Math.sin(yaw);
+        double cx = Math.cos(pitch), sx = Math.sin(pitch);
+        double cz = Math.cos(roll), sz = Math.sin(roll);
+
+        double[][] ry = {{cy, 0, sy}, {0, 1, 0}, {-sy, 0, cy}};
+        double[][] rx = {{1, 0, 0}, {0, cx, -sx}, {0, sx, cx}};
+        double[][] rz = {{cz, -sz, 0}, {sz, cz, 0}, {0, 0, 1}};
+        double[][] m = mul(ry, mul(rx, rz));
+
+        float[][] out = new float[3][3];
+        for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) out[i][j] = (float) m[i][j];
+        return out;
+    }
+
+    private static double[][] mul(double[][] a, double[][] b) {
+        double[][] out = new double[3][3];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                out[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j];
+        return out;
+    }
+
+    private static void drawCube(Renderer2D mesh, float[][] rot, float scale, float uShift, double cx, double cy, double half, float alpha) {
+        float[] a = new float[3], u = new float[3], v = new float[3];
+        float[] px = new float[(CELLS + 1) * (CELLS + 1)], py = new float[px.length];
         Color color = new Color();
 
-        for (float[] face : FACES) {
-            corner(face, 2, half, cos, sin, a);
-            corner(face, 5, half, cos, sin, b);
-            corner(face, 8, half, cos, sin, c);
+        for (float[] face : HEAD_FACES) {
+            transform(rot, face[2] * scale, face[3] * scale, face[4] * scale, a);
+            transform(rot, face[5] * scale, face[6] * scale, face[7] * scale, u);
+            transform(rot, face[8] * scale, face[9] * scale, face[10] * scale, v);
 
-            float ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
-            float vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
-            float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-            float mx = a[0] + (ux + vx) * 0.5f, my = a[1] + (uy + vy) * 0.5f, mz = a[2] + (uz + vz) * 0.5f;
+            // Outward normal is v x u for this face table; skip faces turned away from the camera.
+            float nx = v[1] * u[2] - v[2] * u[1], ny = v[2] * u[0] - v[0] * u[2], nz = v[0] * u[1] - v[1] * u[0];
+            float mx = a[0] + (u[0] + v[0]) / 2, my = a[1] + (u[1] + v[1]) / 2, mz = a[2] + (u[2] + v[2]) / 2;
+            if (nx * -mx + ny * -my + nz * (CAMERA_DISTANCE - mz) <= 0) continue;
 
-            // Facing away from the camera, or poking through the near plane.
-            if (nx * mx + ny * my + nz * mz <= 0f) continue;
-            if (a[2] > NEAR_PLANE || b[2] > NEAR_PLANE || c[2] > NEAR_PLANE || c[2] + uz > NEAR_PLANE) continue;
+            float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+            float light = Math.max(0, (ny * 0.55f + nz * 0.83f) / len);
+            int shade = Math.round(255 * (0.5f + 0.5f * light));
+            color.set(shade, shade, shade, Math.round(255 * clamp(alpha)));
 
             for (int j = 0; j <= CELLS; j++) {
                 for (int i = 0; i <= CELLS; i++) {
                     float s = (float) i / CELLS, t = (float) j / CELLS;
-                    float x = a[0] + ux * s + vx * t;
-                    float y = a[1] + uy * s + vy * t;
-                    float z = a[2] + uz * s + vz * t;
-                    sx[j * (CELLS + 1) + i] = w * 0.5f + x / -z * focal;
-                    sy[j * (CELLS + 1) + i] = h * 0.5f - y / -z * focal;
+                    float x = a[0] + u[0] * s + v[0] * t;
+                    float y = a[1] + u[1] * s + v[1] * t;
+                    float z = a[2] + u[2] * s + v[2] * t;
+                    float persp = CAMERA_DISTANCE / (CAMERA_DISTANCE - z);
+                    px[j * (CELLS + 1) + i] = (float) (cx + x * persp * half);
+                    py[j * (CELLS + 1) + i] = (float) (cy - y * persp * half);
                 }
             }
 
-            int shade = Math.round(face[11] * 255f);
-            color.set(shade, shade, shade, Math.round(clamp(alpha) * 255f));
-            float u0 = (face[0] + uShift) / 64f, v0 = face[1] / 64f, texel = 1f / 64f;
+            // The UI texture pipeline culls one winding, so match the winding Renderer2D.texQuad uses.
+            int far = CELLS * (CELLS + 1);
+            float area = (px[0] * py[CELLS] - px[CELLS] * py[0])
+                + (px[CELLS] * py[far + CELLS] - px[far + CELLS] * py[CELLS])
+                + (px[far + CELLS] * py[far] - px[far] * py[far + CELLS])
+                + (px[far] * py[0] - px[0] * py[far]);
+            boolean flip = area > 0;
 
+            float u0 = (face[0] + uShift) / 64f, v0 = face[1] / 64f, texel = 1f / 64f;
             for (int j = 0; j < CELLS; j++) {
                 for (int i = 0; i < CELLS; i++) {
-                    int p0 = j * (CELLS + 1) + i;
-                    int q0 = p0 + CELLS + 1;
+                    int p = j * (CELLS + 1) + i, q = p + CELLS + 1;
                     float cu = u0 + i * texel, cv = v0 + j * texel;
 
                     mesh.triangles.ensureQuadCapacity();
-                    int i1 = mesh.triangles.vec2(sx[p0], sy[p0]).vec2(cu, cv).color(color).next();
-                    int i2 = mesh.triangles.vec2(sx[p0 + 1], sy[p0 + 1]).vec2(cu + texel, cv).color(color).next();
-                    int i3 = mesh.triangles.vec2(sx[q0 + 1], sy[q0 + 1]).vec2(cu + texel, cv + texel).color(color).next();
-                    int i4 = mesh.triangles.vec2(sx[q0], sy[q0]).vec2(cu, cv + texel).color(color).next();
-                    mesh.triangles.quad(i1, i2, i3, i4);
+                    int v1 = mesh.triangles.vec2(px[p], py[p]).vec2(cu, cv).color(color).next();
+                    int v2 = mesh.triangles.vec2(px[p + 1], py[p + 1]).vec2(cu + texel, cv).color(color).next();
+                    int v3 = mesh.triangles.vec2(px[q + 1], py[q + 1]).vec2(cu + texel, cv + texel).color(color).next();
+                    int v4 = mesh.triangles.vec2(px[q], py[q]).vec2(cu, cv + texel).color(color).next();
+                    if (flip) mesh.triangles.quad(v1, v4, v3, v2);
+                    else mesh.triangles.quad(v1, v2, v3, v4);
                 }
             }
         }
     }
 
-    /** One cube corner in camera space, tipped about the X axis by the current tumble angle. */
-    private static void corner(float[] face, int at, float half, float cos, float sin, float[] out) {
-        float x = face[at] * half;
-        float y = face[at + 1] * half + HEAD_LIFT;
-        float z = face[at + 2] * half - HEAD_DISTANCE;
-        out[0] = x;
-        out[1] = y * cos - z * sin;
-        out[2] = y * sin + z * cos;
+    private static void transform(float[][] m, float x, float y, float z, float[] out) {
+        out[0] = m[0][0] * x + m[0][1] * y + m[0][2] * z;
+        out[1] = m[1][0] * x + m[1][1] * y + m[1][2] * z;
+        out[2] = m[2][0] * x + m[2][1] * y + m[2][2] * z;
     }
 
     private void drawCard(HudRenderer r, double sw, double sh, float t) {

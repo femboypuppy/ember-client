@@ -543,6 +543,7 @@ public class Modules extends System<Modules> {
         add(new Animations());
         add(new Glint());
         add(new HitEffects());
+        add(new TargetEsp());
         add(new HoleESP());
         add(new ItemPhysics());
         add(new ItemHighlight());

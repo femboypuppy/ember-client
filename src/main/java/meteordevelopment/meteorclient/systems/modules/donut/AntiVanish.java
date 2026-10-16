@@ -763,7 +763,7 @@ public class AntiVanish extends Module {
 
     /**
      * A game mode update without ADD_PLAYER only comes from the goliath you are on, so it proves the staff member is
-     * on your shard. Like Anubis, the switch is posted straight away ("X switched to SURVIVAL"); the WATCHING alert
+     * on your shard. The switch is posted straight away ("X switched to SURVIVAL"); the WATCHING alert
      * waits for StaffIntel's follow-up probe so it can say whether they are hidden (see {@link #onLeakVerdict}).
      */
     private void announceGamemode(UUID uuid, String gameMode) {
@@ -781,7 +781,7 @@ public class AntiVanish extends Module {
     }
 
     /**
-     * Anubis Client's trigger for "watching you" (4ldenz, GPL-3.0): any staff game mode change forwarded by your
+     * The "watching you" trigger: any staff game mode change forwarded by your
      * shard. Staff switch modes when they start or stop spectating someone, and on DonutSMP the switch reaches the
      * shard even while they are vanished.
      */

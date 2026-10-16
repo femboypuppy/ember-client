@@ -76,8 +76,24 @@ public class Glint extends Module {
         .build()
     );
 
-    private final Tinted itemGlint = new Tinted(ItemRenderer.ITEM_ENCHANTMENT_GLINT);
-    private final Tinted armorGlint = new Tinted(ItemRenderer.ENTITY_ENCHANTMENT_GLINT);
+    private final Setting<Boolean> separateArmor = sgGeneral.add(new BoolSetting.Builder()
+        .name("separate-armor-color")
+        .description("Give worn armour its own glint colour.")
+        .defaultValue(false)
+        .visible(armor::get)
+        .build()
+    );
+
+    private final Setting<SettingColor> armorColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("armor-color")
+        .description("Glint colour on worn armour and elytra.")
+        .defaultValue(new SettingColor(120, 200, 255))
+        .visible(() -> armor.get() && separateArmor.get())
+        .build()
+    );
+
+    private final Tinted itemGlint = new Tinted(ItemRenderer.ITEM_ENCHANTMENT_GLINT, false);
+    private final Tinted armorGlint = new Tinted(ItemRenderer.ENTITY_ENCHANTMENT_GLINT, true);
 
     public Glint() {
         super(Categories.Render, "glint", "Custom enchantment glint colour, speed and size.");
@@ -101,14 +117,20 @@ public class Glint extends Module {
 
     private final class Tinted {
         final Identifier id;
+        final boolean armorTexture;
         NativeImage base;
         NativeImageBackedTexture texture;
         int appliedColor;
         double appliedBrightness = -1;
         boolean failed;
 
-        Tinted(Identifier id) {
+        Tinted(Identifier id, boolean armorTexture) {
             this.id = id;
+            this.armorTexture = armorTexture;
+        }
+
+        SettingColor color() {
+            return armorTexture && separateArmor.get() ? armorColor.get() : color.get();
         }
 
         AbstractTexture get() {
@@ -130,7 +152,7 @@ public class Glint extends Module {
                 appliedBrightness = -1;
             }
 
-            int packed = color.get().getPacked();
+            int packed = color().getPacked();
             if (packed != appliedColor || brightness.get() != appliedBrightness) {
                 recolor(packed);
                 appliedColor = packed;
@@ -144,7 +166,7 @@ public class Glint extends Module {
             NativeImage out = texture.getImage();
             if (out == null) return;
 
-            SettingColor c = color.get();
+            SettingColor c = color();
             float bright = brightness.get().floatValue();
 
             for (int y = 0; y < base.getHeight(); y++) {

@@ -51,7 +51,7 @@ public final class StaffIntel {
     private static final Pattern TEAM_PATTERN = Pattern.compile("^(\\d{1,3})-([A-Za-z0-9_.]{1,17})-(\\w+)$");
     private static final long ALERT_COOLDOWN_MS = 5 * 60_000L;
     private static final long WATCHING_COOLDOWN_MS = 2 * 60_000L;
-    // Anubis shows staff as "watching" for this long after a leak.
+    // How long staff show as "watching" after a leak.
     private static final long WATCHING_WINDOW_MS = 10_000L;
     private static final String PROBE_COMMAND = "minecraft:msg ";
     private static final int PROBE_INTERVAL_TICKS = 100;
@@ -90,7 +90,7 @@ public final class StaffIntel {
         SPECTATOR(2),
         VANISHED(2),
         NEARBY(3),
-        // A staff game mode change forwarded by your shard: what Anubis calls "watching you".
+        // A staff game mode change forwarded by your shard: they just started or stopped spectating someone.
         WATCHING(3);
 
         final int severity;
@@ -344,7 +344,7 @@ public final class StaffIntel {
         long now = System.currentTimeMillis();
 
         AlertRecord last = alerts.get(key);
-        // Each leak is a fresh action by the staff member, so it repeats sooner (Anubis uses 2 minutes too).
+        // Each leak is a fresh action by the staff member, so it may repeat sooner.
         long cooldown = kind == AlertKind.WATCHING ? WATCHING_COOLDOWN_MS : ALERT_COOLDOWN_MS;
         if (last != null && now - last.at < cooldown && kind.severity <= last.severity) {
             log("alert suppressed for %s (%s, cooldown)", name, kind);

@@ -1,6 +1,6 @@
 package meteordevelopment.meteorclient.systems.modules.donut;
 
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -15,6 +15,8 @@ import meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.render.RenderUtils;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Block;
@@ -27,6 +29,7 @@ import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.ChunkSection;
+import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.dimension.DimensionType;
 
@@ -35,410 +38,130 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.LongConsumer;
 
 /**
- * Flags chunks showing signs of player activity or extended chunk loading, for finding bases.
- *
- * Signals include player-placed blocks (rotated/cobbled deepslate, underground storage) and
- * random-tick / entity-driven growth that only progresses while a player keeps the chunk loaded
- * (kelp, cave vines, vines, amethyst geodes, bamboo, cocoa pods, and honey-filled bee nests).
+ * Finds chunks showing signs of a player, for base hunting. Three kinds of evidence:
+ * <ul>
+ *     <li>Growth that only happens while a player keeps the area loaded: amethyst geodes with every bud grown into a
+ *     cluster, kelp grown to the surface, long vines and cave vines, tall bamboo, ripe cocoa, bee nests with honey.</li>
+ *     <li>Blocks that only come from players: sideways deepslate, cobbled deepslate below Y 0, storage deep
+ *     underground, beehives.</li>
+ *     <li>Mined geodes: plenty of bare budding amethyst with every crystal broken off.</li>
+ * </ul>
+ * Growth happens everywhere within the server's simulation distance of a player, so by default it is added up over
+ * that radius around each chunk and only the chunk where the total peaks is marked: the spot a player would stand
+ * on to keep all of it growing. A geode in range that is still growing rules a spot out, because a player standing
+ * there for long would have finished it.
  */
 public class SusChunkFinder extends Module {
     private static final String FIND_TYPE = "sus-chunk";
+    private static final String MINED_TYPE = "mined-geode";
+    // A hotspot has to hold this long before it is announced, so it does not jump around while chunks load.
+    private static final int SETTLE_TICKS = 40;
+    private static final int GEODE_MAX_Y = 47;
 
-    private final SettingGroup sgBlocks = settings.createGroup("Block Signals");
-    private final SettingGroup sgGrowth = settings.createGroup("Growth Signals");
-    private final SettingGroup sgStorage = settings.createGroup("Saving");
+    public enum Sensitivity {
+        Low(1.5, 10),
+        Medium(1.0, 6),
+        High(0.6, 3);
+
+        /** Multiplier for every count threshold (higher = stricter). */
+        final double scale;
+        /** Combined growth needed around a chunk to call it a base. */
+        final int heat;
+
+        Sensitivity(double scale, int heat) {
+            this.scale = scale;
+            this.heat = heat;
+        }
+
+        int count(int base) {
+            return Math.max(1, (int) Math.ceil(base * scale));
+        }
+    }
+
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
+    private final SettingGroup sgAlerts = settings.createGroup("Alerts");
 
-    // Block Signals (Deepslate & Storage)
+    // General
 
-    private final Setting<Boolean> rotatedDeepslate = sgBlocks.add(new BoolSetting.Builder()
-        .name("rotated-deepslate")
-        .description("Deepslate lying sideways. Terrain only generates it upright, so it was placed by a player.")
-        .defaultValue(true)
+    private final Setting<Sensitivity> sensitivity = sgGeneral.add(new EnumSetting.Builder<Sensitivity>()
+        .name("sensitivity")
+        .description("High finds more chunks but also more false alarms. Low only flags strong evidence.")
+        .defaultValue(Sensitivity.Medium)
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
 
-    private final Setting<Integer> rotatedThreshold = sgBlocks.add(new IntSetting.Builder()
-        .name("rotated-threshold")
-        .description("Sideways deepslate blocks needed to flag a chunk.")
-        .defaultValue(2)
-        .min(1)
-        .sliderRange(1, 20)
-        .visible(rotatedDeepslate::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Boolean> cobbledDeepslate = sgBlocks.add(new BoolSetting.Builder()
-        .name("cobbled-deepslate")
-        .description("Cobbled deepslate below Y=0, which only comes from mining or placing.")
-        .defaultValue(true)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> cobbledThreshold = sgBlocks.add(new IntSetting.Builder()
-        .name("cobbled-threshold")
-        .description("Cobbled deepslate blocks needed to flag a chunk.")
-        .defaultValue(6)
-        .min(1)
-        .sliderRange(1, 64)
-        .visible(cobbledDeepslate::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Boolean> undergroundStorage = sgBlocks.add(new BoolSetting.Builder()
-        .name("underground-storage")
-        .description("Shulkers, barrels, furnaces, crafting tables or ender chests deep underground.")
-        .defaultValue(true)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> storageThreshold = sgBlocks.add(new IntSetting.Builder()
-        .name("storage-threshold")
-        .description("Storage blocks needed to flag a chunk.")
-        .defaultValue(2)
-        .min(1)
-        .sliderRange(1, 20)
-        .visible(undergroundStorage::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> storageMaxY = sgBlocks.add(new IntSetting.Builder()
-        .name("storage-max-y")
-        .description("Only count storage at or below this height, so surface villages are ignored.")
-        .defaultValue(20)
-        .sliderRange(-64, 64)
-        .visible(undergroundStorage::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    // Growth Signals: Kelp
-
-    private final Setting<Boolean> grownKelp = sgGrowth.add(new BoolSetting.Builder()
-        .name("kelp")
-        .description("Tall kelp mostly reaching the surface. Kelp only grows while the chunk is loaded.")
-        .defaultValue(true)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> kelpMinColumns = sgGrowth.add(new IntSetting.Builder()
-        .name("kelp-min-columns")
-        .description("Tall kelp columns needed before the kelp signal is considered.")
-        .defaultValue(8)
-        .min(1)
-        .sliderRange(1, 64)
-        .visible(grownKelp::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> kelpMinHeight = sgGrowth.add(new IntSetting.Builder()
-        .name("kelp-min-height")
-        .description("Minimum kelp column height. Filters out shallow water, where reaching the surface is trivial.")
-        .defaultValue(8)
-        .min(2)
-        .sliderRange(2, 25)
-        .visible(grownKelp::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Double> kelpSurfaceRatio = sgGrowth.add(new DoubleSetting.Builder()
-        .name("kelp-surface-ratio")
-        .description("Fraction of tall kelp columns that must reach the water surface.")
-        .defaultValue(0.6)
-        .min(0.1)
-        .max(1)
-        .sliderRange(0.1, 1)
-        .visible(grownKelp::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    // Growth Signals: Cave Vines
-
-    private final Setting<Boolean> caveVines = sgGrowth.add(new BoolSetting.Builder()
-        .name("cave-vines")
-        .description("Grown cave vines (glow berries) hanging in lush caves that have ticked while loaded.")
-        .defaultValue(true)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> caveVinesMinLength = sgGrowth.add(new IntSetting.Builder()
-        .name("cave-vines-min-length")
-        .description("Minimum vertical length of a cave vine strand to count as grown.")
-        .defaultValue(10)
-        .min(2)
-        .sliderRange(2, 26)
-        .visible(caveVines::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> caveVinesMinColumns = sgGrowth.add(new IntSetting.Builder()
-        .name("cave-vines-min-columns")
-        .description("Grown cave vine strands needed to flag a chunk.")
-        .defaultValue(3)
-        .min(1)
-        .sliderRange(1, 32)
-        .visible(caveVines::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> caveVinesMinAge = sgGrowth.add(new IntSetting.Builder()
-        .name("cave-vines-min-age")
-        .description("Minimum tip growth age (0-25) required to count a cave vine strand.")
-        .defaultValue(22)
-        .min(0)
-        .max(25)
-        .sliderRange(0, 25)
-        .visible(caveVines::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    // Growth Signals: Vines
-
-    private final Setting<Boolean> vines = sgGrowth.add(new BoolSetting.Builder()
-        .name("vines")
-        .description("Long hanging vines that have spread downward while the chunk was kept loaded.")
-        .defaultValue(true)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> vinesMinLength = sgGrowth.add(new IntSetting.Builder()
-        .name("vines-min-length")
-        .description("Minimum vertical length of a continuous vine column to count as grown.")
-        .defaultValue(12)
-        .min(2)
-        .sliderRange(2, 40)
-        .visible(vines::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> vinesMinColumns = sgGrowth.add(new IntSetting.Builder()
-        .name("vines-min-columns")
-        .description("Number of long vine columns needed to flag a chunk.")
-        .defaultValue(4)
-        .min(1)
-        .sliderRange(1, 32)
-        .visible(vines::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Double> vinesGroundRatio = sgGrowth.add(new DoubleSetting.Builder()
-        .name("vines-ground-ratio")
-        .description("Fraction of long vine columns that must reach a floor or water surface below.")
-        .defaultValue(0.5)
-        .min(0.0)
-        .max(1.0)
-        .sliderRange(0.0, 1.0)
-        .visible(vines::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    // Growth Signals: Amethyst
-
-    private final Setting<Boolean> amethyst = sgGrowth.add(new BoolSetting.Builder()
+    private final Setting<Boolean> amethyst = sgGeneral.add(new BoolSetting.Builder()
         .name("amethyst")
-        .description("Amethyst geodes with grown clusters. Budding amethyst only grows buds into full clusters while loaded.")
+        .description("Geodes where the buds have grown into full clusters, which only happens while a player keeps the area loaded.")
         .defaultValue(true)
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
 
-    private final Setting<Integer> amethystMinClusters = sgGrowth.add(new IntSetting.Builder()
-        .name("amethyst-min-clusters")
-        .description("Minimum grown amethyst clusters in the chunk to flag it.")
-        .defaultValue(8)
-        .min(1)
-        .sliderRange(1, 64)
-        .visible(amethyst::get)
+    private final Setting<Boolean> plants = sgGeneral.add(new BoolSetting.Builder()
+        .name("plant-growth")
+        .description("Kelp grown to the surface, long vines and cave vines, tall bamboo, ripe cocoa and bee nests filled with honey.")
+        .defaultValue(true)
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
 
-    private final Setting<Double> amethystClusterRatio = sgGrowth.add(new DoubleSetting.Builder()
-        .name("amethyst-cluster-ratio")
-        .description("Minimum ratio of mature clusters to total amethyst buds + clusters in the geode.")
-        .defaultValue(0.55)
-        .min(0.0)
-        .max(1.0)
-        .sliderRange(0.0, 1.0)
-        .visible(amethyst::get)
+    private final Setting<Boolean> playerBlocks = sgGeneral.add(new BoolSetting.Builder()
+        .name("player-blocks")
+        .description("Sideways deepslate, cobbled deepslate below Y 0, storage deep underground and beehives. These mark the exact chunk.")
+        .defaultValue(true)
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
 
-    private final Setting<Boolean> amethystIncludeLargeBuds = sgGrowth.add(new BoolSetting.Builder()
-        .name("amethyst-include-large-buds")
-        .description("Count large amethyst buds as grown alongside full clusters.")
+    private final Setting<Boolean> minedGeodes = sgGeneral.add(new BoolSetting.Builder()
+        .name("mined-geodes")
+        .description("Geodes with lots of bare budding amethyst and every crystal broken off: someone farmed them.")
         .defaultValue(false)
-        .visible(amethyst::get)
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
 
-    // Growth Signals: Bamboo
-
-    private final Setting<Boolean> bamboo = sgGrowth.add(new BoolSetting.Builder()
-        .name("bamboo")
-        .description("Grown bamboo stalks that have reached full height while the chunk was loaded.")
+    private final Setting<Boolean> pinpoint = sgGeneral.add(new BoolSetting.Builder()
+        .name("find-base-center")
+        .description("Add up growth around each chunk and only mark the chunk at the center, where a player would stand. Off marks every chunk with enough growth.")
         .defaultValue(true)
-        .onChanged(v -> rescanLoadedChunks())
+        .onChanged(v -> rebuildFields())
         .build()
     );
 
-    private final Setting<Integer> bambooMinHeight = sgGrowth.add(new IntSetting.Builder()
-        .name("bamboo-min-height")
-        .description("Minimum bamboo stalk height to count as grown.")
-        .defaultValue(12)
-        .min(1)
-        .sliderRange(1, 16)
-        .visible(bamboo::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> bambooMinColumns = sgGrowth.add(new IntSetting.Builder()
-        .name("bamboo-min-columns")
-        .description("Number of tall bamboo stalks needed to flag a chunk.")
-        .defaultValue(6)
-        .min(1)
-        .sliderRange(1, 64)
-        .visible(bamboo::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Boolean> bambooRequireMaxStage = sgGrowth.add(new BoolSetting.Builder()
-        .name("bamboo-require-max-stage")
-        .description("Only count bamboo stalks whose top block has reached growth stage 1 (stopped growing).")
-        .defaultValue(false)
-        .visible(bamboo::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    // Growth Signals: Cocoa
-
-    private final Setting<Boolean> cocoa = sgGrowth.add(new BoolSetting.Builder()
-        .name("cocoa")
-        .description("Mature cocoa pods on jungle logs that have ripened while the chunk was loaded.")
-        .defaultValue(true)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> cocoaMinPods = sgGrowth.add(new IntSetting.Builder()
-        .name("cocoa-min-pods")
-        .description("Minimum grown cocoa pods in the chunk needed to flag it.")
-        .defaultValue(3)
-        .min(1)
-        .sliderRange(1, 32)
-        .visible(cocoa::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> cocoaMinAge = sgGrowth.add(new IntSetting.Builder()
-        .name("cocoa-min-age")
-        .description("Minimum cocoa growth age (0 = small, 1 = medium, 2 = fully ripe).")
-        .defaultValue(2)
-        .min(0)
-        .max(2)
-        .sliderRange(0, 2)
-        .visible(cocoa::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Double> cocoaMatureRatio = sgGrowth.add(new DoubleSetting.Builder()
-        .name("cocoa-mature-ratio")
-        .description("Fraction of cocoa pods in the chunk that must be at or above the minimum age.")
-        .defaultValue(0.75)
-        .min(0.0)
-        .max(1.0)
-        .sliderRange(0.0, 1.0)
-        .visible(cocoa::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    // Growth Signals: Bee Nest
-
-    private final Setting<Boolean> beeNest = sgGrowth.add(new BoolSetting.Builder()
-        .name("bee-nest")
-        .description("Bee nests with honey or player-crafted beehives. Natural bee nests spawn at honey level 0 and only fill while loaded.")
-        .defaultValue(true)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> beeNestMinCount = sgGrowth.add(new IntSetting.Builder()
-        .name("bee-nest-min-count")
-        .description("Number of matching bee nests or beehives needed to flag a chunk.")
-        .defaultValue(1)
-        .min(1)
-        .sliderRange(1, 10)
-        .visible(beeNest::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Integer> beeNestMinHoney = sgGrowth.add(new IntSetting.Builder()
-        .name("bee-nest-min-honey")
-        .description("Minimum honey level (0-5) on a natural bee nest to count (1+ means bees produced honey while loaded).")
-        .defaultValue(1)
-        .min(0)
-        .max(5)
-        .sliderRange(0, 5)
-        .visible(beeNest::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    private final Setting<Boolean> includeBeehives = sgGrowth.add(new BoolSetting.Builder()
-        .name("include-beehives")
-        .description("Always count player-crafted beehives regardless of honey level.")
-        .defaultValue(true)
-        .visible(beeNest::get)
-        .onChanged(v -> rescanLoadedChunks())
-        .build()
-    );
-
-    // Saving
-
-    private final Setting<Boolean> saveFinds = sgStorage.add(new BoolSetting.Builder()
-        .name("save-finds")
-        .description("Remember flagged chunks for this server, so they still show after relogging.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Boolean> autoWaypoint = sgStorage.add(new BoolSetting.Builder()
-        .name("auto-waypoint")
-        .description("Add a waypoint for every newly flagged chunk.")
-        .defaultValue(false)
+    private final Setting<Integer> simulationDistance = sgGeneral.add(new IntSetting.Builder()
+        .name("simulation-distance")
+        .description("The server's simulation distance in chunks. Things only grow this close to a player.")
+        .defaultValue(5)
+        .range(2, 12)
+        .sliderRange(2, 12)
+        .visible(pinpoint::get)
+        .onChanged(v -> rebuildFields())
         .build()
     );
 
     // Render
+
+    private final Setting<SettingColor> color = sgRender.add(new ColorSetting.Builder()
+        .name("color")
+        .description("Color of sus chunks.")
+        .defaultValue(new SettingColor(170, 120, 255, 220))
+        .build()
+    );
+
+    private final Setting<SettingColor> minedColor = sgRender.add(new ColorSetting.Builder()
+        .name("mined-color")
+        .description("Color of mined geodes.")
+        .defaultValue(new SettingColor(255, 170, 60, 220))
+        .visible(minedGeodes::get)
+        .build()
+    );
 
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
@@ -447,46 +170,62 @@ public class SusChunkFinder extends Module {
         .build()
     );
 
-    private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
-        .name("side-color")
-        .description("Fill color of flagged chunks.")
-        .defaultValue(new SettingColor(170, 120, 255, 45))
-        .build()
-    );
-
-    private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
-        .name("line-color")
-        .description("Outline color of flagged chunks.")
-        .defaultValue(new SettingColor(170, 120, 255, 220))
+    private final Setting<Boolean> tracers = sgRender.add(new BoolSetting.Builder()
+        .name("tracers")
+        .description("Draw a line from your crosshair to each flagged chunk.")
+        .defaultValue(false)
         .build()
     );
 
     private final Setting<Boolean> followPlayerY = sgRender.add(new BoolSetting.Builder()
         .name("follow-player-y")
-        .description("Draw the chunk plane at your height so it stays visible at any depth.")
+        .description("Draw the chunk plane at your height so it stays visible at any depth. Off draws it at sea level.")
         .defaultValue(true)
         .build()
     );
 
-    private final Setting<Integer> renderY = sgRender.add(new IntSetting.Builder()
-        .name("render-y")
-        .description("Height of the chunk plane.")
-        .defaultValue(63)
-        .sliderRange(-64, 320)
-        .visible(() -> !followPlayerY.get())
-        .build()
-    );
+    // Alerts
 
-    private final Setting<Boolean> chatNotify = sgRender.add(new BoolSetting.Builder()
+    private final Setting<Boolean> chatNotify = sgAlerts.add(new BoolSetting.Builder()
         .name("chat-notify")
         .description("Announce newly flagged chunks in chat.")
         .defaultValue(true)
         .build()
     );
 
-    private final Long2ObjectMap<String> flagged = new Long2ObjectOpenHashMap<>();
-    /** Chunks flagged in earlier sessions; drawn even when not loaded. */
+    private final Setting<Boolean> saveFinds = sgAlerts.add(new BoolSetting.Builder()
+        .name("save-finds")
+        .description("Remember flagged chunks for this server, so they still show after relogging.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> autoWaypoint = sgAlerts.add(new BoolSetting.Builder()
+        .name("auto-waypoint")
+        .description("Add a waypoint for every newly flagged chunk.")
+        .defaultValue(false)
+        .build()
+    );
+
+    /** What one chunk scan found. Growth is spread over the area by the main thread. */
+    private record Report(int amethystGrowth, int plantGrowth, boolean stillGrowing, String growthWhy, String directWhy, String minedWhy) {
+        boolean growthQualifies() {
+            return growthWhy != null;
+        }
+    }
+
+    // Main thread only from here on.
+    private final Long2ObjectOpenHashMap<Report> reports = new Long2ObjectOpenHashMap<>();
+    private final Long2IntOpenHashMap amethystHeat = new Long2IntOpenHashMap();
+    private final Long2IntOpenHashMap plantHeat = new Long2IntOpenHashMap();
+    private final Long2IntOpenHashMap vetoes = new Long2IntOpenHashMap();
+    private final Long2IntOpenHashMap candidateSince = new Long2IntOpenHashMap();
+    private int appliedRadius = -1;
+
+    private final Long2ObjectOpenHashMap<String> flagged = new Long2ObjectOpenHashMap<>();
+    private final Long2ObjectOpenHashMap<String> mined = new Long2ObjectOpenHashMap<>();
     private final LongSet saved = new LongOpenHashSet();
+    private final LongSet savedMined = new LongOpenHashSet();
     private final LongSet announced = new LongOpenHashSet();
     private final LongSet pendingRescan = new LongOpenHashSet();
 
@@ -498,7 +237,10 @@ public class SusChunkFinder extends Module {
 
     private DimensionType lastDimension;
     private FindsStorage.Context context = new FindsStorage.Context("", "");
+    private boolean dirty;
+    private int ticks;
     private int rescanTimer;
+    private int generation;
 
     public SusChunkFinder() {
         super(Categories.Donut, "sus-chunk-finder", "Highlights chunks showing signs of player activity.");
@@ -512,15 +254,10 @@ public class SusChunkFinder extends Module {
         lastDimension = mc.world.getDimension();
         context = FindsStorage.context();
 
-        synchronized (flagged) {
-            for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) {
-                saved.add(ChunkPos.toLong(find.x >> 4, find.z >> 4));
-            }
-        }
+        for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) saved.add(ChunkPos.toLong(find.x >> 4, find.z >> 4));
+        for (FindsStorage.Find find : FindsStorage.get(context, MINED_TYPE)) savedMined.add(ChunkPos.toLong(find.x >> 4, find.z >> 4));
 
-        for (Chunk chunk : Utils.chunks()) {
-            if (chunk instanceof WorldChunk levelChunk) queueScan(levelChunk);
-        }
+        rescanLoadedChunks();
     }
 
     @Override
@@ -529,12 +266,24 @@ public class SusChunkFinder extends Module {
     }
 
     private void clear() {
-        synchronized (flagged) {
-            flagged.clear();
-            saved.clear();
-            announced.clear();
-            pendingRescan.clear();
-        }
+        generation++;
+        reports.clear();
+        amethystHeat.clear();
+        plantHeat.clear();
+        vetoes.clear();
+        candidateSince.clear();
+        flagged.clear();
+        mined.clear();
+        saved.clear();
+        savedMined.clear();
+        announced.clear();
+        pendingRescan.clear();
+        appliedRadius = radius();
+        dirty = false;
+    }
+
+    private int radius() {
+        return pinpoint.get() ? simulationDistance.get() : 0;
     }
 
     private void rescanLoadedChunks() {
@@ -542,6 +291,18 @@ public class SusChunkFinder extends Module {
         for (Chunk chunk : Utils.chunks()) {
             if (chunk instanceof WorldChunk levelChunk) queueScan(levelChunk);
         }
+    }
+
+    /** Re-spreads every stored report, after the radius or mode changed. */
+    private void rebuildFields() {
+        if (!isActive()) return;
+        amethystHeat.clear();
+        plantHeat.clear();
+        vetoes.clear();
+        candidateSince.clear();
+        appliedRadius = radius();
+        for (var entry : reports.long2ObjectEntrySet()) spread(entry.getLongKey(), entry.getValue(), 1);
+        dirty = true;
     }
 
     @EventHandler
@@ -556,387 +317,436 @@ public class SusChunkFinder extends Module {
 
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
-        if (!isRelevant(event.newState) && !isRelevant(event.oldState)) return;
-
         // Batched: an explosion or a player mining can update hundreds of blocks in one chunk.
-        synchronized (flagged) {
-            pendingRescan.add(ChunkPos.toLong(event.pos));
-        }
+        if (isRelevant(event.newState) || isRelevant(event.oldState)) pendingRescan.add(ChunkPos.toLong(event.pos));
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.world == null) return;
+        if (mc.world == null || mc.player == null) return;
 
-        DimensionType dimension = mc.world.getDimension();
-        if (dimension != lastDimension) {
+        if (mc.world.getDimension() != lastDimension) {
             onActivate();
             return;
         }
 
-        if (++rescanTimer < 20) return;
-        rescanTimer = 0;
-
-        long[] keys;
-        synchronized (flagged) {
-            if (pendingRescan.isEmpty()) return;
-            keys = pendingRescan.toLongArray();
+        ticks++;
+        if (++rescanTimer >= 20) {
+            rescanTimer = 0;
+            for (long key : pendingRescan) {
+                Chunk chunk = mc.world.getChunk(ChunkPos.getPackedX(key), ChunkPos.getPackedZ(key), ChunkStatus.FULL, false);
+                if (chunk instanceof WorldChunk levelChunk) queueScan(levelChunk);
+            }
             pendingRescan.clear();
+            pruneFarReports();
+            dirty = true;
         }
 
-        for (long key : keys) {
-            Chunk chunk = mc.world.getChunk(ChunkPos.getPackedX(key), ChunkPos.getPackedZ(key), net.minecraft.world.chunk.ChunkStatus.FULL, false);
-            if (chunk instanceof WorldChunk levelChunk) queueScan(levelChunk);
+        if (dirty && ticks % 5 == 0) {
+            dirty = false;
+            recompute();
         }
     }
 
     private void queueScan(WorldChunk chunk) {
-        FindsStorage.Context ctx = context;
+        int gen = generation;
+        Sensitivity sens = sensitivity.get();
 
         worker.submit(() -> {
             if (!isActive()) return;
-
-            String reason = scan(chunk);
+            Report report = scan(chunk, sens);
             long key = chunk.getPos().toLong();
-
-            boolean isNewFind;
-            synchronized (flagged) {
-                if (reason == null) {
-                    flagged.remove(key);
-                    return;
-                }
-
-                flagged.put(key, reason);
-                // Chunks remembered from earlier sessions were already announced back then.
-                isNewFind = !saved.contains(key) && announced.add(key);
-                if (isNewFind && saveFinds.get()) saved.add(key);
-            }
-
-            if (!isNewFind) return;
-
-            int blockX = chunk.getPos().getStartX() + 8;
-            int blockZ = chunk.getPos().getStartZ() + 8;
-            BlockPos center = new BlockPos(blockX, 64, blockZ);
-
-            if (saveFinds.get()) FindsStorage.add(ctx, FIND_TYPE, center, reason);
-
             mc.execute(() -> {
-                if (autoWaypoint.get()) FindsStorage.waypoint("Sus chunk", center);
-                if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) info("Sus chunk at (highlight)%d, %d(default): %s", blockX, blockZ, reason);
-                EmberNotificationsHud.push("Sus chunk found", blockX + ", " + blockZ + " — " + reason, EmberNotificationsHud.GOOD);
+                if (gen == generation && isActive()) apply(key, report);
             });
         });
     }
 
-    /** @return why the chunk is suspicious, or null if it looks natural */
-    private String scan(WorldChunk chunk) {
+    private void apply(long key, Report report) {
+        Report old = reports.put(key, report);
+        if (old != null) spread(key, old, -1);
+        spread(key, report, 1);
+        dirty = true;
+    }
+
+    /** Adds (sign 1) or removes (sign -1) a chunk's growth and veto over the area around it. */
+    private void spread(long key, Report report, int sign) {
+        int r = appliedRadius;
+        int amethystPoints = report.stillGrowing ? 0 : report.amethystGrowth;
+        int plantPoints = report.plantGrowth;
+        if (amethystPoints == 0 && plantPoints == 0 && !report.stillGrowing) return;
+
+        int cx = ChunkPos.getPackedX(key), cz = ChunkPos.getPackedZ(key);
+        forArea(cx, cz, r, area -> {
+            if (amethystPoints > 0) add(amethystHeat, area, sign * amethystPoints);
+            if (plantPoints > 0) add(plantHeat, area, sign * plantPoints);
+            if (report.stillGrowing) add(vetoes, area, sign);
+        });
+    }
+
+    private static void forArea(int cx, int cz, int r, LongConsumer action) {
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dz = -r; dz <= r; dz++) action.accept(ChunkPos.toLong(cx + dx, cz + dz));
+        }
+    }
+
+    private static void add(Long2IntOpenHashMap map, long key, int amount) {
+        int value = map.get(key) + amount;
+        if (value > 0) map.put(key, value);
+        else map.remove(key);
+    }
+
+    /** Forget scans far outside the loaded area so a long flight does not keep growing memory. */
+    private void pruneFarReports() {
+        int limit = mc.options.getViewDistance().getValue() + appliedRadius + 8;
+        ChunkPos at = mc.player.getChunkPos();
+        var it = reports.long2ObjectEntrySet().iterator();
+        boolean removed = false;
+        while (it.hasNext()) {
+            var entry = it.next();
+            long key = entry.getLongKey();
+            if (Math.max(Math.abs(ChunkPos.getPackedX(key) - at.x), Math.abs(ChunkPos.getPackedZ(key) - at.z)) <= limit) continue;
+            spread(key, entry.getValue(), -1);
+            it.remove();
+            removed = true;
+        }
+        if (removed) candidateSince.keySet().removeIf(key -> !reports.containsKey(key));
+    }
+
+    private void recompute() {
+        Long2ObjectOpenHashMap<String> nowFlagged = new Long2ObjectOpenHashMap<>();
+        Long2ObjectOpenHashMap<String> nowMined = new Long2ObjectOpenHashMap<>();
+
+        for (var entry : reports.long2ObjectEntrySet()) {
+            long key = entry.getLongKey();
+            Report report = entry.getValue();
+            if (report.directWhy != null) nowFlagged.put(key, report.directWhy);
+            if (report.minedWhy != null) nowMined.put(key, report.minedWhy);
+            if (!pinpoint.get() && report.growthQualifies() && !nowFlagged.containsKey(key)) {
+                nowFlagged.put(key, report.growthWhy);
+            }
+        }
+
+        if (pinpoint.get()) findCenters(nowFlagged);
+
+        flagged.clear();
+        flagged.putAll(nowFlagged);
+        mined.clear();
+        mined.putAll(nowMined);
+
+        for (var entry : flagged.long2ObjectEntrySet()) announce(entry.getLongKey(), entry.getValue(), false);
+        for (var entry : mined.long2ObjectEntrySet()) announce(entry.getLongKey(), entry.getValue(), true);
+    }
+
+    /** Marks chunks where the growth around them peaks, once enough of their surroundings has been scanned. */
+    private void findCenters(Long2ObjectOpenHashMap<String> out) {
+        int r = appliedRadius;
+        int threshold = sensitivity.get().heat;
+        Long2IntOpenHashMap score = new Long2IntOpenHashMap();
+
+        LongOpenHashSet keys = new LongOpenHashSet(amethystHeat.keySet());
+        keys.addAll(plantHeat.keySet());
+        for (long key : keys) {
+            int value = (vetoes.containsKey(key) ? 0 : amethystHeat.get(key)) + plantHeat.get(key);
+            if (value >= threshold && loaded(key) && mostlyScanned(key, r)) score.put(key, value);
+        }
+
+        LongOpenHashSet live = new LongOpenHashSet();
+        for (var entry : score.long2IntEntrySet()) {
+            long key = entry.getLongKey();
+            int value = entry.getIntValue();
+            if (!isPeak(score, key, value, r)) continue;
+
+            live.add(key);
+            int since = candidateSince.containsKey(key) ? candidateSince.get(key) : ticks;
+            candidateSince.put(key, since);
+            if (ticks - since < SETTLE_TICKS) continue;
+
+            int am = vetoes.containsKey(key) ? 0 : amethystHeat.get(key);
+            int pl = plantHeat.get(key);
+            List<String> parts = new ArrayList<>(2);
+            if (am > 0) parts.add(am + " grown amethyst");
+            if (pl > 0) parts.add(pl + " plant growth");
+            out.putIfAbsent(key, "growth center (" + String.join(", ", parts) + " within " + r + " chunks)");
+        }
+        candidateSince.keySet().retainAll(live);
+    }
+
+    private static boolean isPeak(Long2IntOpenHashMap field, long key, int value, int reach) {
+        int cx = ChunkPos.getPackedX(key), cz = ChunkPos.getPackedZ(key);
+        for (int dx = -reach; dx <= reach; dx++) {
+            for (int dz = -reach; dz <= reach; dz++) {
+                if (dx == 0 && dz == 0) continue;
+                long other = ChunkPos.toLong(cx + dx, cz + dz);
+                int v = field.get(other);
+                // Ties go to the lower key so a flat plateau gives one mark, not a cluster.
+                if (v > value || (v == value && other < key)) return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean loaded(long key) {
+        return mc.world != null && mc.world.getChunkManager().isChunkLoaded(ChunkPos.getPackedX(key), ChunkPos.getPackedZ(key));
+    }
+
+    /** Most of the surrounding area has been scanned, so the total is not missing half its evidence. */
+    private boolean mostlyScanned(long key, int r) {
+        int cx = ChunkPos.getPackedX(key), cz = ChunkPos.getPackedZ(key);
+        int scanned = 0, total = 0;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dz = -r; dz <= r; dz++) {
+                total++;
+                if (reports.containsKey(ChunkPos.toLong(cx + dx, cz + dz))) scanned++;
+            }
+        }
+        return scanned * 10 >= total * 8;
+    }
+
+    private void announce(long key, String reason, boolean isMined) {
+        LongSet savedSet = isMined ? savedMined : saved;
+        long announceKey = isMined ? ~key : key;
+        if (savedSet.contains(key) || !announced.add(announceKey)) return;
+
+        int blockX = ChunkPos.getPackedX(key) * 16 + 8;
+        int blockZ = ChunkPos.getPackedZ(key) * 16 + 8;
+        BlockPos center = new BlockPos(blockX, 64, blockZ);
+        String label = isMined ? "Mined geode" : "Sus chunk";
+
+        if (saveFinds.get()) {
+            savedSet.add(key);
+            FindsStorage.add(context, isMined ? MINED_TYPE : FIND_TYPE, center, reason);
+        }
+        if (autoWaypoint.get()) FindsStorage.waypoint(label, center);
+        if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) {
+            info("%s at (highlight)%d, %d(default): %s", label, blockX, blockZ, reason);
+        }
+        EmberNotificationsHud.push(label + " found", blockX + ", " + blockZ + " - " + reason, EmberNotificationsHud.GOOD);
+    }
+
+    // Scanning (worker thread)
+
+    private Report scan(WorldChunk chunk, Sensitivity sens) {
         ChunkSection[] sections = chunk.getSectionArray();
         int minY = chunk.getBottomY();
-        int maxStorageY = storageMaxY.get();
+        int topY = minY + chunk.getHeight() - 1;
+        int startX = chunk.getPos().getStartX();
+        int startZ = chunk.getPos().getStartZ();
+        BlockPos.Mutable probe = new BlockPos.Mutable();
 
-        int rotated = 0;
-        int cobbled = 0;
-        int storage = 0;
+        boolean wantAmethyst = amethyst.get() || minedGeodes.get();
+        boolean wantPlants = plants.get();
+        boolean wantBlocks = playerBlocks.get();
+
+        int rotated = 0, cobbled = 0, storage = 0, beehives = 0;
         boolean ancientCity = false;
 
-        // Kelp tracking per (x, z) column
-        int[] kelpBottom = new int[256];
-        int[] kelpTop = new int[256];
+        int grownAmethyst = 0, growingAmethyst = 0, exposedBudding = 0;
+
+        int[] kelpBottom = new int[256], kelpTop = new int[256];
+        int[] bambooBottom = new int[256], bambooTop = new int[256];
         Arrays.fill(kelpBottom, Integer.MAX_VALUE);
         Arrays.fill(kelpTop, Integer.MIN_VALUE);
-        boolean anyKelp = false;
-
-        // Cave vines tracking (tips and vertical strand runs)
-        List<BlockPos> caveVineTips = new ArrayList<>();
-        int caveVineTipAgeMatches = 0;
-
-        // Vines tracking
-        List<BlockPos> vinePositions = new ArrayList<>();
-
-        // Amethyst tracking
-        int buddingAmethyst = 0;
-        int amethystClusters = 0;
-        int amethystLargeBuds = 0;
-        int amethystSmallMediumBuds = 0;
-
-        // Bamboo tracking per (x, z) column
-        int[] bambooBottom = new int[256];
-        int[] bambooTop = new int[256];
-        boolean[] bambooMaxStage = new boolean[256];
         Arrays.fill(bambooBottom, Integer.MAX_VALUE);
         Arrays.fill(bambooTop, Integer.MIN_VALUE);
-        boolean anyBamboo = false;
-
-        // Cocoa tracking
-        int totalCocoa = 0;
-        int matureCocoa = 0;
-        int minCocoaAge = cocoaMinAge.get();
-
-        // Bee nest / beehive tracking
-        int matchedBeeNests = 0;
-        int minHoney = beeNestMinHoney.get();
-        boolean countBeehives = includeBeehives.get();
-
-        int chunkStartX = chunk.getPos().getStartX();
-        int chunkStartZ = chunk.getPos().getStartZ();
+        boolean anyKelp = false, anyBamboo = false;
+        List<BlockPos> caveVineTips = new ArrayList<>();
+        List<BlockPos> vines = new ArrayList<>();
+        int cocoa = 0, ripeCocoa = 0, honeyNests = 0;
 
         for (int i = 0; i < sections.length; i++) {
             ChunkSection section = sections[i];
             if (section == null || section.isEmpty() || !section.hasAny(this::isRelevant)) continue;
-
             int baseY = minY + (i << 4);
 
             for (int ly = 0; ly < 16; ly++) {
                 int y = baseY + ly;
-
                 for (int lx = 0; lx < 16; lx++) {
                     for (int lz = 0; lz < 16; lz++) {
                         BlockState state = section.getBlockState(lx, ly, lz);
                         Block block = state.getBlock();
+                        int column = (lx << 4) | lz;
 
                         if (block == Blocks.DEEPSLATE) {
                             if (state.get(Properties.AXIS) != Direction.Axis.Y) rotated++;
-                        } else if (block == Blocks.KELP || block == Blocks.KELP_PLANT) {
-                            int column = (lx << 4) | lz;
-                            if (y < kelpBottom[column]) kelpBottom[column] = y;
-                            if (y > kelpTop[column]) kelpTop[column] = y;
-                            anyKelp = true;
                         } else if (block == Blocks.COBBLED_DEEPSLATE) {
                             if (y < 0) cobbled++;
                         } else if (block == Blocks.REINFORCED_DEEPSLATE || block == Blocks.SCULK_SHRIEKER) {
                             ancientCity = true;
-                        } else if (y <= maxStorageY && isStorage(block)) {
+                        } else if (y <= 20 && isStorage(block)) {
                             storage++;
-                        } else if (block == Blocks.CAVE_VINES) {
-                            int age = state.getOrEmpty(Properties.AGE_25).orElse(0);
-                            if (age >= caveVinesMinAge.get()) {
-                                caveVineTipAgeMatches++;
-                                caveVineTips.add(new BlockPos(chunkStartX + lx, y, chunkStartZ + lz));
-                            }
-                        } else if (block == Blocks.VINE) {
-                            vinePositions.add(new BlockPos(chunkStartX + lx, y, chunkStartZ + lz));
-                        } else if (block == Blocks.BUDDING_AMETHYST) {
-                            buddingAmethyst++;
-                        } else if (block == Blocks.AMETHYST_CLUSTER) {
-                            amethystClusters++;
-                        } else if (block == Blocks.LARGE_AMETHYST_BUD) {
-                            amethystLargeBuds++;
-                        } else if (block == Blocks.MEDIUM_AMETHYST_BUD || block == Blocks.SMALL_AMETHYST_BUD) {
-                            amethystSmallMediumBuds++;
-                        } else if (block == Blocks.BAMBOO || block == Blocks.BAMBOO_SAPLING) {
-                            int column = (lx << 4) | lz;
-                            if (y < bambooBottom[column]) bambooBottom[column] = y;
-                            if (y >= bambooTop[column]) {
-                                bambooTop[column] = y;
-                                bambooMaxStage[column] = state.getOrEmpty(Properties.STAGE).orElse(0) >= 1;
-                            }
-                            anyBamboo = true;
-                        } else if (block == Blocks.COCOA) {
-                            totalCocoa++;
-                            int age = state.getOrEmpty(Properties.AGE_2).orElse(0);
-                            if (age >= minCocoaAge) matureCocoa++;
-                        } else if (block == Blocks.BEE_NEST) {
-                            int honey = state.getOrEmpty(Properties.HONEY_LEVEL).orElse(0);
-                            if (honey >= minHoney) matchedBeeNests++;
                         } else if (block == Blocks.BEEHIVE) {
-                            if (countBeehives) matchedBeeNests++;
+                            beehives++;
+                        } else if (block == Blocks.AMETHYST_CLUSTER) {
+                            grownAmethyst++;
+                        } else if (isBud(block)) {
+                            // A bud still sitting on budding amethyst keeps growing; anything else is done.
+                            Direction facing = state.get(Properties.FACING);
+                            int sx = lx - facing.getOffsetX(), sy = y - facing.getOffsetY(), sz = lz - facing.getOffsetZ();
+                            if (sx < 0 || sx > 15 || sz < 0 || sz > 15 || sy < minY || sy > topY) continue;
+                            probe.set(startX + sx, sy, startZ + sz);
+                            if (chunk.getBlockState(probe).isOf(Blocks.BUDDING_AMETHYST)) growingAmethyst++;
+                            else grownAmethyst++;
+                        } else if (block == Blocks.BUDDING_AMETHYST) {
+                            if (y <= GEODE_MAX_Y && exposed(chunk, startX + lx, y, startZ + lz, probe, minY, topY)) exposedBudding++;
+                        } else if (block == Blocks.KELP || block == Blocks.KELP_PLANT) {
+                            kelpBottom[column] = Math.min(kelpBottom[column], y);
+                            kelpTop[column] = Math.max(kelpTop[column], y);
+                            anyKelp = true;
+                        } else if (block == Blocks.BAMBOO) {
+                            bambooBottom[column] = Math.min(bambooBottom[column], y);
+                            bambooTop[column] = Math.max(bambooTop[column], y);
+                            anyBamboo = true;
+                        } else if (block == Blocks.CAVE_VINES) {
+                            if (state.getOrEmpty(Properties.AGE_25).orElse(0) >= 22) caveVineTips.add(new BlockPos(startX + lx, y, startZ + lz));
+                        } else if (block == Blocks.VINE) {
+                            vines.add(new BlockPos(startX + lx, y, startZ + lz));
+                        } else if (block == Blocks.COCOA) {
+                            cocoa++;
+                            if (state.getOrEmpty(Properties.AGE_2).orElse(0) >= 2) ripeCocoa++;
+                        } else if (block == Blocks.BEE_NEST) {
+                            if (state.getOrEmpty(Properties.HONEY_LEVEL).orElse(0) >= 1) honeyNests++;
                         }
                     }
                 }
             }
         }
 
-        List<String> reasons = new ArrayList<>(6);
-
-        // Ancient cities contain deepslate variants, cobbled deepslate and storage naturally.
-        if (!ancientCity) {
-            if (rotatedDeepslate.get() && rotated >= rotatedThreshold.get()) reasons.add(rotated + " rotated deepslate");
-            if (cobbledDeepslate.get() && cobbled >= cobbledThreshold.get()) reasons.add(cobbled + " cobbled deepslate");
-            if (undergroundStorage.get() && storage >= storageThreshold.get()) reasons.add(storage + " underground storage");
+        // Player blocks: mark this exact chunk. Ancient cities have all of these naturally.
+        List<String> direct = new ArrayList<>(4);
+        if (wantBlocks && !ancientCity) {
+            if (rotated >= sens.count(2)) direct.add(rotated + " sideways deepslate");
+            if (cobbled >= sens.count(6)) direct.add(cobbled + " cobbled deepslate below Y 0");
+            if (storage >= sens.count(2)) direct.add(storage + " storage blocks underground");
+            if (beehives > 0) direct.add(beehives + (beehives == 1 ? " beehive" : " beehives"));
         }
 
-        if (grownKelp.get() && anyKelp) {
-            String kelpReason = checkKelp(chunk, kelpBottom, kelpTop);
-            if (kelpReason != null) reasons.add(kelpReason);
+        // Growth
+        List<String> growth = new ArrayList<>(6);
+        int amethystPoints = 0, plantPoints = 0;
+        boolean stillGrowing = amethyst.get() && growingAmethyst > 0;
+
+        if (amethyst.get() && grownAmethyst > 0 && growingAmethyst == 0) {
+            amethystPoints = grownAmethyst;
+            if (grownAmethyst >= sens.count(8)) growth.add(grownAmethyst + " grown amethyst");
         }
 
-        if (caveVines.get() && !caveVineTips.isEmpty()) {
-            String cvReason = checkCaveVines(chunk, caveVineTips, caveVineTipAgeMatches);
-            if (cvReason != null) reasons.add(cvReason);
-        }
+        if (wantPlants) {
+            int kelp = anyKelp ? kelpToSurface(chunk, kelpBottom, kelpTop, sens, probe, topY) : 0;
+            if (kelp > 0) { growth.add(kelp + " kelp grown to the surface"); plantPoints += kelp; }
 
-        if (vines.get() && !vinePositions.isEmpty()) {
-            String vineReason = checkVines(chunk, vinePositions);
-            if (vineReason != null) reasons.add(vineReason);
-        }
+            int strands = longCaveVines(chunk, caveVineTips, probe, topY) ;
+            if (strands >= sens.count(3)) { growth.add(strands + " long cave vines"); plantPoints += strands; }
 
-        if (amethyst.get()) {
-            int grownCount = amethystClusters + (amethystIncludeLargeBuds.get() ? amethystLargeBuds : 0);
-            int totalGrowth = amethystClusters + amethystLargeBuds + amethystSmallMediumBuds;
-            if (grownCount >= amethystMinClusters.get() && totalGrowth > 0) {
-                double ratio = (double) grownCount / totalGrowth;
-                if (ratio >= amethystClusterRatio.get() || (buddingAmethyst == 0 && grownCount >= amethystMinClusters.get())) {
-                    reasons.add(grownCount + "/" + totalGrowth + " grown amethyst");
+            int vineColumns = longVines(chunk, vines, sens, probe, minY, topY);
+            if (vineColumns > 0) { growth.add(vineColumns + " long vines"); plantPoints += vineColumns; }
+
+            int bamboo = 0;
+            if (anyBamboo) {
+                for (int c = 0; c < 256; c++) {
+                    if (bambooTop[c] != Integer.MIN_VALUE && bambooTop[c] - bambooBottom[c] + 1 >= 12) bamboo++;
                 }
             }
+            if (bamboo >= sens.count(6)) { growth.add(bamboo + " tall bamboo"); plantPoints += bamboo; }
+
+            if (ripeCocoa >= sens.count(3) && ripeCocoa >= cocoa * 0.75) { growth.add(ripeCocoa + " ripe cocoa"); plantPoints += ripeCocoa; }
+
+            if (honeyNests >= sens.count(1)) { growth.add(honeyNests + " bee nests with honey"); plantPoints += honeyNests * 3; }
         }
 
-        if (bamboo.get() && anyBamboo) {
-            String bambooReason = checkBamboo(bambooBottom, bambooTop, bambooMaxStage);
-            if (bambooReason != null) reasons.add(bambooReason);
+        // Mined geode: lots of bare budding amethyst and not a single crystal left.
+        String minedWhy = null;
+        if (minedGeodes.get() && exposedBudding >= sens.count(10) && grownAmethyst == 0 && growingAmethyst == 0) {
+            minedWhy = exposedBudding + " bare budding amethyst, every crystal broken off";
         }
 
-        if (cocoa.get() && matureCocoa >= cocoaMinPods.get() && totalCocoa > 0) {
-            double ratio = (double) matureCocoa / totalCocoa;
-            if (ratio >= cocoaMatureRatio.get()) {
-                reasons.add(matureCocoa + "/" + totalCocoa + " grown cocoa");
-            }
-        }
-
-        if (beeNest.get() && matchedBeeNests >= beeNestMinCount.get()) {
-            reasons.add(matchedBeeNests + (matchedBeeNests == 1 ? " active bee nest" : " active bee nests"));
-        }
-
-        return reasons.isEmpty() ? null : String.join(", ", reasons);
+        return new Report(amethystPoints, plantPoints, stillGrowing,
+            growth.isEmpty() ? null : String.join(", ", growth),
+            direct.isEmpty() ? null : String.join(", ", direct),
+            minedWhy);
     }
 
-    private String checkKelp(WorldChunk chunk, int[] kelpBottom, int[] kelpTop) {
-        int chunkMinX = chunk.getPos().getStartX();
-        int chunkMinZ = chunk.getPos().getStartZ();
-        int topLimit = chunk.getBottomY() + chunk.getHeight() - 1;
-        BlockPos.Mutable probe = new BlockPos.Mutable();
+    private static boolean exposed(WorldChunk chunk, int x, int y, int z, BlockPos.Mutable probe, int minY, int topY) {
+        for (Direction side : Direction.values()) {
+            int nx = x + side.getOffsetX(), ny = y + side.getOffsetY(), nz = z + side.getOffsetZ();
+            if (ny < minY || ny > topY || (nx >> 4) != chunk.getPos().x || (nz >> 4) != chunk.getPos().z) continue;
+            if (chunk.getBlockState(probe.set(nx, ny, nz)).isAir()) return true;
+        }
+        return false;
+    }
 
-        int tallColumns = 0;
-        int atSurface = 0;
-
-        for (int column = 0; column < 256; column++) {
-            if (kelpTop[column] == Integer.MIN_VALUE) continue;
-            if (kelpTop[column] - kelpBottom[column] + 1 < kelpMinHeight.get()) continue;
-
-            tallColumns++;
-
-            int aboveY = kelpTop[column] + 1;
-            if (aboveY > topLimit) continue;
-
-            probe.set(chunkMinX + (column >> 4), aboveY, chunkMinZ + (column & 15));
+    /** Kelp columns grown right up to the surface: worldgen leaves most kelp short of it. */
+    private static int kelpToSurface(WorldChunk chunk, int[] bottom, int[] top, Sensitivity sens, BlockPos.Mutable probe, int topY) {
+        int tall = 0, atSurface = 0;
+        for (int c = 0; c < 256; c++) {
+            if (top[c] == Integer.MIN_VALUE || top[c] - bottom[c] + 1 < 8) continue;
+            tall++;
+            if (top[c] + 1 > topY) continue;
+            probe.set(chunk.getPos().getStartX() + (c >> 4), top[c] + 1, chunk.getPos().getStartZ() + (c & 15));
             if (chunk.getBlockState(probe).getFluidState().isEmpty()) atSurface++;
         }
-
-        if (tallColumns < kelpMinColumns.get()) return null;
-        if ((double) atSurface / tallColumns < kelpSurfaceRatio.get()) return null;
-
-        return atSurface + "/" + tallColumns + " kelp grown to surface";
+        if (tall < sens.count(8) || atSurface < tall * 0.6) return 0;
+        return atSurface;
     }
 
-    private String checkCaveVines(WorldChunk chunk, List<BlockPos> tips, int ageMatches) {
-        int topLimit = chunk.getBottomY() + chunk.getHeight() - 1;
-        int minLen = caveVinesMinLength.get();
-        BlockPos.Mutable probe = new BlockPos.Mutable();
-        int longStrands = 0;
-
+    private static int longCaveVines(WorldChunk chunk, List<BlockPos> tips, BlockPos.Mutable probe, int topY) {
+        int strands = 0;
         for (BlockPos tip : tips) {
-            int len = 1;
-            int x = tip.getX();
-            int z = tip.getZ();
-            for (int y = tip.getY() + 1; y <= topLimit; y++) {
-                probe.set(x, y, z);
-                Block b = chunk.getBlockState(probe).getBlock();
-                if (b == Blocks.CAVE_VINES_PLANT || b == Blocks.CAVE_VINES) {
-                    len++;
-                } else {
-                    break;
-                }
+            int length = 1;
+            for (int y = tip.getY() + 1; y <= topY; y++) {
+                Block b = chunk.getBlockState(probe.set(tip.getX(), y, tip.getZ())).getBlock();
+                if (b != Blocks.CAVE_VINES_PLANT && b != Blocks.CAVE_VINES) break;
+                length++;
             }
-            if (len >= minLen) longStrands++;
+            if (length >= 10) strands++;
         }
-
-        if (longStrands < caveVinesMinColumns.get()) return null;
-        return longStrands + " grown cave vines";
+        return strands;
     }
 
-    private String checkVines(WorldChunk chunk, List<BlockPos> vinePositions) {
-        int bottomLimit = chunk.getBottomY();
-        int minLen = vinesMinLength.get();
-        BlockPos.Mutable probe = new BlockPos.Mutable();
+    /** Vine columns long enough to have grown down while loaded, mostly reaching the ground. */
+    private static int longVines(WorldChunk chunk, List<BlockPos> vines, Sensitivity sens, BlockPos.Mutable probe, int minY, int topY) {
+        int longColumns = 0, grounded = 0;
+        for (BlockPos pos : vines) {
+            // Measure each run once, from its lowest vine.
+            if (pos.getY() > minY && chunk.getBlockState(probe.set(pos.getX(), pos.getY() - 1, pos.getZ())).isOf(Blocks.VINE)) continue;
 
-        int longColumns = 0;
-        int groundedColumns = 0;
+            int length = 1;
+            for (int y = pos.getY() + 1; y <= topY && chunk.getBlockState(probe.set(pos.getX(), y, pos.getZ())).isOf(Blocks.VINE); y++) length++;
+            if (length < 12) continue;
 
-        for (BlockPos pos : vinePositions) {
-            // Only start measuring from the bottom-most vine of a vertical run
-            if (pos.getY() > bottomLimit) {
-                probe.set(pos.getX(), pos.getY() - 1, pos.getZ());
-                if (chunk.getBlockState(probe).getBlock() == Blocks.VINE) continue;
-            }
-
-            int len = 1;
-            int topLimit = chunk.getBottomY() + chunk.getHeight() - 1;
-            for (int y = pos.getY() + 1; y <= topLimit; y++) {
-                probe.set(pos.getX(), y, pos.getZ());
-                if (chunk.getBlockState(probe).getBlock() == Blocks.VINE) {
-                    len++;
-                } else {
-                    break;
-                }
-            }
-
-            if (len >= minLen) {
-                longColumns++;
-                if (pos.getY() > bottomLimit) {
-                    probe.set(pos.getX(), pos.getY() - 1, pos.getZ());
-                    BlockState below = chunk.getBlockState(probe);
-                    if (!below.isAir() && below.getBlock() != Blocks.VINE) {
-                        groundedColumns++;
-                    }
-                }
+            longColumns++;
+            if (pos.getY() > minY) {
+                BlockState below = chunk.getBlockState(probe.set(pos.getX(), pos.getY() - 1, pos.getZ()));
+                if (!below.isAir()) grounded++;
             }
         }
-
-        if (longColumns < vinesMinColumns.get()) return null;
-        if (vinesGroundRatio.get() > 0 && (double) groundedColumns / longColumns < vinesGroundRatio.get()) return null;
-
-        return longColumns + " grown vines";
-    }
-
-    private String checkBamboo(int[] bambooBottom, int[] bambooTop, boolean[] bambooMaxStage) {
-        int minHeight = bambooMinHeight.get();
-        boolean requireStage = bambooRequireMaxStage.get();
-        int matchedColumns = 0;
-
-        for (int column = 0; column < 256; column++) {
-            if (bambooTop[column] == Integer.MIN_VALUE) continue;
-            int height = bambooTop[column] - bambooBottom[column] + 1;
-            if (height < minHeight) continue;
-            if (requireStage && !bambooMaxStage[column]) continue;
-            matchedColumns++;
-        }
-
-        if (matchedColumns < bambooMinColumns.get()) return null;
-        return matchedColumns + " grown bamboo";
+        if (longColumns < sens.count(4) || grounded < longColumns * 0.5) return 0;
+        return longColumns;
     }
 
     private boolean isRelevant(BlockState state) {
         Block block = state.getBlock();
         return block == Blocks.DEEPSLATE
-            || block == Blocks.KELP
-            || block == Blocks.KELP_PLANT
             || block == Blocks.COBBLED_DEEPSLATE
             || block == Blocks.REINFORCED_DEEPSLATE
             || block == Blocks.SCULK_SHRIEKER
+            || block == Blocks.BEEHIVE
+            || block == Blocks.BUDDING_AMETHYST
+            || block == Blocks.AMETHYST_CLUSTER
+            || isBud(block)
+            || block == Blocks.KELP
+            || block == Blocks.KELP_PLANT
+            || block == Blocks.BAMBOO
             || block == Blocks.CAVE_VINES
             || block == Blocks.CAVE_VINES_PLANT
             || block == Blocks.VINE
-            || block == Blocks.BUDDING_AMETHYST
-            || block == Blocks.SMALL_AMETHYST_BUD
-            || block == Blocks.MEDIUM_AMETHYST_BUD
-            || block == Blocks.LARGE_AMETHYST_BUD
-            || block == Blocks.AMETHYST_CLUSTER
-            || block == Blocks.BAMBOO
-            || block == Blocks.BAMBOO_SAPLING
             || block == Blocks.COCOA
             || block == Blocks.BEE_NEST
-            || block == Blocks.BEEHIVE
             || isStorage(block);
+    }
+
+    private static boolean isBud(Block block) {
+        return block == Blocks.SMALL_AMETHYST_BUD || block == Blocks.MEDIUM_AMETHYST_BUD || block == Blocks.LARGE_AMETHYST_BUD;
     }
 
     private static boolean isStorage(Block block) {
@@ -947,32 +757,40 @@ public class SusChunkFinder extends Module {
             || block == Blocks.ENDER_CHEST;
     }
 
+    // Rendering
+
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (mc.player == null) return;
+        double y = followPlayerY.get() ? Math.floor(mc.player.getY()) : 63;
 
-        double y = followPlayerY.get() ? Math.floor(mc.player.getY()) : renderY.get();
+        Color fill = new Color(color.get()).a(color.get().a / 5);
+        Color minedFill = new Color(minedColor.get()).a(minedColor.get().a / 5);
 
-        synchronized (flagged) {
-            for (long key : flagged.keySet()) drawChunk(event, key, y);
-            for (long key : saved) {
-                if (!flagged.containsKey(key)) drawChunk(event, key, y);
-            }
-        }
+        LongOpenHashSet sus = new LongOpenHashSet(flagged.keySet());
+        sus.addAll(saved);
+        for (long key : sus) drawChunk(event, key, y, fill, color.get());
+
+        LongOpenHashSet geodes = new LongOpenHashSet(mined.keySet());
+        geodes.addAll(savedMined);
+        for (long key : geodes) drawChunk(event, key, y, minedFill, minedColor.get());
     }
 
-    private void drawChunk(Render3DEvent event, long key, double y) {
-        double x = (double) ChunkPos.getPackedX(key) * 16;
-        double z = (double) ChunkPos.getPackedZ(key) * 16;
-        event.renderer.box(x, y, z, x + 16, y, z + 16, sideColor.get(), lineColor.get(), shapeMode.get(), 0);
+    private void drawChunk(Render3DEvent event, long key, double y, Color side, Color line) {
+        double x = ChunkPos.getPackedX(key) * 16.0;
+        double z = ChunkPos.getPackedZ(key) * 16.0;
+        event.renderer.box(x, y, z, x + 16, y, z + 16, side, line, shapeMode.get(), 0);
+        if (tracers.get() && RenderUtils.center != null) {
+            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, x + 8, y, z + 8, line);
+        }
     }
 
     @Override
     public String getInfoString() {
-        synchronized (flagged) {
-            LongSet all = new LongOpenHashSet(flagged.keySet());
-            all.addAll(saved);
-            return all.isEmpty() ? null : String.valueOf(all.size());
-        }
+        LongOpenHashSet all = new LongOpenHashSet(flagged.keySet());
+        all.addAll(saved);
+        all.addAll(mined.keySet());
+        all.addAll(savedMined);
+        return all.isEmpty() ? null : String.valueOf(all.size());
     }
 }
