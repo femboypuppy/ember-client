@@ -266,7 +266,7 @@ public final class StaffIntel {
         if (conn != connection) {
             resetAll();
             connection = conn;
-            log("connected, tracking staff");
+            log("connected (%s), tracking staff", conn.getBrand());
         }
 
         // Other dimensions are their own servers; give each one a distinct id below OFF_MAP.
@@ -315,6 +315,10 @@ public final class StaffIntel {
         }
     }
 
+    /**
+     * DonutSMP moves you between regions with a full reconnect, so a new connection usually means a new shard.
+     * Shard proofs go, alert cooldowns stay so a transfer does not replay alerts you already saw.
+     */
     private void resetAll() {
         connection = null;
         trackedWorld = null;
@@ -323,9 +327,10 @@ public final class StaffIntel {
         pendingRemovals.clear();
         provenAt.clear();
         shardGameModes.clear();
-        alerts.clear();
         loggedTeams.clear();
-        starred.clear();
+
+        long now = System.currentTimeMillis();
+        alerts.values().removeIf(record -> now - record.at >= ALERT_COOLDOWN_MS);
     }
 
     private static StaffDetector detector() {

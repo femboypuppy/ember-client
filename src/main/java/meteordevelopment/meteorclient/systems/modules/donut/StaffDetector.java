@@ -233,6 +233,9 @@ public class StaffDetector extends Module {
     private final Set<UUID> seenListed = ConcurrentHashMap.newKeySet();
     private boolean primed;
     private long lastScanMs;
+    private Object connection;
+    private long settleUntil;
+    private long offlineSince;
 
     public StaffDetector() {
         super(Categories.Donut, "staff-detector", "Displays an on-screen UI of online moderators that updates as they join or leave.");
@@ -358,18 +361,28 @@ public class StaffDetector extends Module {
     }
 
     public void scanNow() {
+        long nowMs = System.currentTimeMillis();
+
         if (mc.getNetworkHandler() == null || mc.world == null || mc.player == null) {
-            tracked.clear();
-            nearbySet.clear();
-            listedState.clear();
-            seenListed.clear();
-            primed = false;
+            // DonutSMP reconnects you on every region change; only forget everything after a real disconnect.
+            if (offlineSince == 0) offlineSince = nowMs;
+            if (nowMs - offlineSince > 30_000L) {
+                tracked.clear();
+                nearbySet.clear();
+                primed = false;
+            }
             return;
         }
 
-        long nowMs = System.currentTimeMillis();
+        if (mc.getNetworkHandler() != connection) {
+            connection = mc.getNetworkHandler();
+            settleUntil = nowMs + 4000L;
+        }
+        offlineSince = 0;
+
         if (nowMs - lastScanMs < 400) return;
         lastScanMs = nowMs;
+        boolean settling = nowMs < settleUntil;
 
         StaffIntel intel = StaffIntel.get();
         String self = mc.player.getName().getString();
@@ -441,7 +454,8 @@ public class StaffDetector extends Module {
             if (fresh || wasOffline) {
                 entry.joinedAt = nowMs;
                 entry.pulse = 1f;
-                if (alertJoinLeave.get()) small(name + " joined", rank);
+                // While the tab list refills after a transfer, staff showing up is not a join.
+                if (alertJoinLeave.get() && !settling) small(name + " joined", rank);
             }
 
             if (!alertNearby.get()) continue;
@@ -471,10 +485,10 @@ public class StaffDetector extends Module {
             }
         }
 
-        // Staff that dropped out of the tab list
+        // Staff that dropped out of the tab list (not while it is still refilling after a transfer)
         for (StaffEntry entry : tracked.values()) {
             String key = entry.name.toLowerCase(Locale.ROOT);
-            if (!entry.online || currentTab.containsKey(key)) continue;
+            if (settling || !entry.online || currentTab.containsKey(key)) continue;
 
             PlayerEntity body = intel.entity(entry.uuid);
             if (body != null) {
