@@ -51,13 +51,20 @@ void main() {
     vec3 pane = mix(scene, charcoal, density);
     pane += scene * 0.07;
 
+    // The accent switch colors the body as well as the rim. A zero RGB accent
+    // means disabled, so the scene keeps its own color without a residual wash.
+    float accentEnabled = step(0.001, max(u_Accent.r, max(u_Accent.g, u_Accent.b)));
+    float topWash = 1.0 - clamp((p.y + halfSize.y) / max(u_Rect.w, 1.0), 0.0, 1.0);
+    pane = mix(pane, pane * (0.55 + u_Accent.rgb * 0.75), accentEnabled * 0.24);
+    pane += u_Accent.rgb * (0.055 + topWash * 0.025) * accentEnabled;
+
     float topLight = pow(max(dot(normal, normalize(vec2(-0.4, -1.0))), 0.0), 2.0);
     float rim = exp(-abs(sd + 0.65) * 1.7);
     float sweep = 0.5 + 0.5 * sin(u_Surface.y * 0.65 + p.x / max(halfSize.x, 1.0) * 1.2);
     vec2 mouseDelta = (pixel - u_Screen.zw) / vec2(140.0, 100.0);
     float pointer = exp(-dot(mouseDelta, mouseDelta));
     pane += vec3(1.0) * rim * (0.07 + topLight * 0.27 + pointer * 0.16);
-    pane += u_Accent.rgb * rim * (0.025 + 0.035 * sweep);
+    pane += u_Accent.rgb * rim * (0.12 + 0.10 * sweep) * accentEnabled;
     pane += vec3(1.0) * pointer * 0.025;
     pane += vec3(1.0) * (1.0 - clamp((p.y + halfSize.y) / max(u_Rect.w, 1.0), 0.0, 1.0)) * 0.02;
     color = vec4(pane, coverage * v_Color.a);

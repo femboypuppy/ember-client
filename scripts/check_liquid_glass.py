@@ -23,7 +23,7 @@ program["GlassData"].binding = 1
 program["u_Texture"].value = 0
 
 
-def render(scene, rect=(80, 70, 300, 110), time=1.0, opacity=1.0, radius=14):
+def render(scene, rect=(80, 70, 300, 110), time=1.0, opacity=1.0, radius=14, accent=(0.65, 0.54, 0.88)):
     w, h = scene.size
     source = ctx.texture((w, h), 4, scene.convert("RGBA").transpose(Image.Transpose.FLIP_TOP_BOTTOM).tobytes())
     source.filter = (moderngl.LINEAR, moderngl.LINEAR)
@@ -40,7 +40,7 @@ def render(scene, rect=(80, 70, 300, 110), time=1.0, opacity=1.0, radius=14):
     matrices.bind_to_uniform_block(0)
     x, y, rw, rh = rect
     pane = ctx.buffer(struct.pack("16f", x, y, rw, rh, radius, time, 0.45, 0.75,
-                                  0.65, 0.54, 0.88, 0, w, h, x + rw * 0.7, y + 20))
+                                  *accent, 0, w, h, x + rw * 0.7, y + 20))
     pane.bind_to_uniform_block(1)
     vertices = []
     for vx, vy in [(x-1, y-1), (x-1, y+rh+1), (x+rw+1, y+rh+1),
@@ -66,6 +66,11 @@ assert r.getpixel((50, 120)) == red.getpixel((50, 120)), "The shader must not to
 assert render(red, opacity=0).tobytes() == red.tobytes(), "A hidden pane must leave the scene untouched"
 assert render(red, time=1).tobytes() == render(red, time=1).tobytes(), "Fixed-time rendering must be deterministic"
 assert render(red, time=1).tobytes() != render(red, time=5).tobytes(), "Rim highlights should animate"
+neutral = Image.new("RGBA", (640, 360), (90, 90, 90, 255))
+accent_off = render(neutral, accent=(0, 0, 0)).getpixel((220, 120))
+accent_on = render(neutral).getpixel((220, 120))
+assert accent_on[2] > accent_off[2] + 8, "Accent tint must visibly color the panel body"
+assert max(accent_off[:3]) - min(accent_off[:3]) < 5, "Disabling accent tint must leave neutral glass neutral"
 small = Image.new("RGBA", (320, 180), (30, 150, 70, 255))
 resized = render(small, rect=(25, 25, 230, 75), radius=12)
 assert resized.getpixel((0, 0)) == small.getpixel((0, 0)), "Resizing must preserve screen-space sampling"
@@ -85,6 +90,6 @@ output = ROOT / "build/ui-reference/liquid-glass-material.png"
 output.parent.mkdir(parents=True, exist_ok=True)
 scene.save(output)
 print(f"PASS: actual GLSL compiled/linked on {ctx.info['GL_RENDERER']}")
-print("PASS: scene color, rounded transparency, bounds, opacity, animation, and resize checks")
+print("PASS: scene color, rounded transparency, bounds, opacity, animation, resize, and accent on/off checks")
 print(f"Material preview: {output}")
 ctx.release()
