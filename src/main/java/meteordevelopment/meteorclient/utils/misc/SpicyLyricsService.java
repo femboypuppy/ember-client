@@ -79,7 +79,7 @@ public final class SpicyLyricsService {
                         throw new IllegalArgumentException("Lyrics belong to another track");
                     }
                     timeline = LyricsTimeline.parse(envelope);
-                    status = timeline.lines().isEmpty() ? "No timed lyrics for this song" : "";
+                    status = timeline.lines().isEmpty() && timeline.background().isEmpty() ? "No timed lyrics for this song" : "";
                 } else if (code == 401 || code == 403) {
                     status = "Check your Spicy Lyrics client key and native-client access"; retry = 300_000;
                 } else if (code == 404) {

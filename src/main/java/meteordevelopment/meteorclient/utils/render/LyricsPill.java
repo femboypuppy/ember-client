@@ -49,7 +49,7 @@ public final class LyricsPill {
         double leadH = Math.max(baseHeight, r.textHeight(false, ts) + 12 * s);
         double backingH = r.textHeight(false, bs) + 5 * s;
 
-        List<LyricsTimeline.Credit> credits = timeline != null && line != null ? timeline.credits() : List.of();
+        List<LyricsTimeline.Credit> credits = timeline != null && (!timeline.lines().isEmpty() || !timeline.background().isEmpty()) ? timeline.credits() : List.of();
         List<CreditHit> creditLayout = new ArrayList<>();
         List<String> creditText = new ArrayList<>();
         double creditH = r.textHeight(false, cs) + 2 * s, creditX = 0;
