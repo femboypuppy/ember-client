@@ -137,6 +137,29 @@ public class SusChunkFinderV2 extends Module {
         .build()
     );
 
+    private final Setting<Boolean> followPlayerY = sgRender.add(new BoolSetting.Builder()
+        .name("follow-player-y")
+        .description("Draw zones at your height instead of at render-y.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Integer> renderY = sgRender.add(new IntSetting.Builder()
+        .name("render-y")
+        .description("Height zones are drawn at. 64 is just above sea level.")
+        .defaultValue(64)
+        .sliderRange(-64, 320)
+        .visible(() -> !followPlayerY.get())
+        .build()
+    );
+
+    private final Setting<Boolean> centerDot = sgRender.add(new BoolSetting.Builder()
+        .name("center-dot")
+        .description("Marker in the middle of each zone's center chunk, where to dig down.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> tracers = sgRender.add(new BoolSetting.Builder()
         .name("tracers")
         .description("Line from your crosshair to each zone's center.")
@@ -715,7 +738,7 @@ public class SusChunkFinderV2 extends Module {
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (mc.player == null) return;
-        double y = Math.floor(mc.player.getY());
+        double y = followPlayerY.get() ? Math.floor(mc.player.getY()) : renderY.get();
         List<Zone> live = zones;
 
         for (Zone zone : live) drawZone(event, zone, y);
@@ -755,11 +778,36 @@ public class SusChunkFinderV2 extends Module {
         event.renderer.line(x0, y, z1, x0, y, z0, line);
 
         double cx = zone.centerX * 16.0, cz = zone.centerZ * 16.0;
-        event.renderer.box(cx, y, cz, cx + 16, y + 1, cz + 16, new Color(line.r, line.g, line.b, 60), line, ShapeMode.Both, 0);
+        event.renderer.box(cx, y, cz, cx + 16, y, cz + 16, new Color(line.r, line.g, line.b, 60), line, ShapeMode.Both, 0);
 
+        double dotY = y + 1.5;
+        if (centerDot.get()) drawDot(event, cx + 8, dotY, cz + 8, line);
         if (tracers.get()) {
-            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, cx + 8, y, cz + 8, line);
+            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, cx + 8, dotY, cz + 8, line);
         }
+    }
+
+    /** Same marker as the sus chunk finder: a small cube in a diamond shell, growing a little with distance. */
+    private void drawDot(Render3DEvent event, double x, double y, double z, Color color) {
+        var cam = mc.gameRenderer.getCamera().getCameraPos();
+        double dist = Math.sqrt((x - cam.x) * (x - cam.x) + (y - cam.y) * (y - cam.y) + (z - cam.z) * (z - cam.z));
+        double r = Math.max(0.2, Math.min(1.6, 0.2 + dist * 0.0045));
+
+        Color core = new Color(color.r, color.g, color.b, 150);
+        Color tick = new Color(color.r, color.g, color.b, (int) (color.a * 0.45));
+        event.renderer.box(x - r, y - r, z - r, x + r, y + r, z + r, core, color, ShapeMode.Both, 0);
+
+        double s = r * 1.8;
+        double top = y + s, bottom = y - s;
+        double[][] ring = {{x + s, z}, {x, z + s}, {x - s, z}, {x, z - s}};
+        for (int i = 0; i < 4; i++) {
+            double[] a = ring[i], b = ring[(i + 1) % 4];
+            event.renderer.line(a[0], y, a[1], b[0], y, b[1], color);
+            event.renderer.line(a[0], y, a[1], x, top, z, color);
+            event.renderer.line(a[0], y, a[1], x, bottom, z, color);
+        }
+        event.renderer.line(x, top, z, x, top + s * 2.4, z, tick);
+        event.renderer.line(x, bottom, z, x, bottom - s * 2.4, z, tick);
     }
 
     @Override
