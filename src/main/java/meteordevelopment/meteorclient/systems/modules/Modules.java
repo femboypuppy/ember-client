@@ -416,6 +416,7 @@ public class Modules extends System<Modules> {
         add(new meteordevelopment.meteorclient.systems.modules.donut.StashFinder());
         add(new meteordevelopment.meteorclient.systems.modules.donut.StorageStealer());
         add(new meteordevelopment.meteorclient.systems.modules.donut.SusChunkFinder());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.SusChunkFinderV2());
         add(new meteordevelopment.meteorclient.systems.modules.donut.TPAMacro());
         add(new meteordevelopment.meteorclient.systems.modules.donut.TunnelBaseFinder());
         add(new meteordevelopment.meteorclient.systems.modules.donut.VillagerESP());
