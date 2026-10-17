@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "build/ui-tools"))
 import moderngl
 from PIL import Image, ImageDraw, ImageChops, ImageStat
 
-SHADERS = ROOT / "src/main/resources/assets/meteor-client/shaders"
+SHADERS = ROOT / "src/main/resources/assets/ember-client/shaders"
 game = next(p for p in (ROOT / ".gradle/loom-cache/minecraftMaven").rglob("*.jar") if not p.name.endswith("-sources.jar"))
 jar = ZipFile(game)
 
@@ -30,7 +30,7 @@ def source(path, defines=""):
             if match[1] in seen:
                 return ""
             seen.add(match[1])
-            child = (SHADERS / "include" / name).read_text() if namespace == "meteor-client" else jar.read("assets/" + namespace + "/shaders/include/" + name).decode()
+            child = (SHADERS / "include" / name).read_text() if namespace == "ember-client" else jar.read("assets/" + namespace + "/shaders/include/" + name).decode()
             return expand(re.sub(r"(?m)^#version[^\n]*", "", child))
         return re.sub(r"#moj_import\s+<([^>]+)>", include, text)
     text = expand((SHADERS / path).read_text())
