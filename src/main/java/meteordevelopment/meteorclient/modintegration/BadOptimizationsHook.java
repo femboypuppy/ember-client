@@ -8,6 +8,7 @@ package meteordevelopment.meteorclient.modintegration;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.render.Fullbright;
 import meteordevelopment.meteorclient.systems.modules.render.Xray;
+import meteordevelopment.meteorclient.utils.render.EmberWorldAtmosphere;
 
 import java.util.function.BooleanSupplier;
 
@@ -17,6 +18,7 @@ import java.util.function.BooleanSupplier;
  */
 public class BadOptimizationsHook implements BooleanSupplier {
     private int lastState;
+    private int lastLightingState;
 
     @Override
     public boolean getAsBoolean() {
@@ -24,8 +26,10 @@ public class BadOptimizationsHook implements BooleanSupplier {
         if (m == null) return false;
 
         int state = (m.get(Fullbright.class).getGamma() ? 1 : 0) | (m.isActive(Xray.class) ? 2 : 0);
-        boolean changed = state != lastState;
+        int lighting = EmberWorldAtmosphere.lightingState();
+        boolean changed = state != lastState || lighting != lastLightingState;
         lastState = state;
+        lastLightingState = lighting;
         return changed;
     }
 }

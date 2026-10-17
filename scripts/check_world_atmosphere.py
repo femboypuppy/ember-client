@@ -18,9 +18,11 @@ sky = ctx.program(vertex_shader=(SHADERS / "celestial_sky.vert").read_text(),
                   fragment_shader=(SHADERS / "celestial_sky.frag").read_text())
 stars = ctx.program(vertex_shader=(SHADERS / "celestial_sky.vert").read_text(),
                     fragment_shader=(SHADERS / "pos_color.frag").read_text())
-sky["MeshData"].binding = 0
+sky["Projection"].binding = 0
+sky["DynamicTransforms"].binding = 2
 sky["SkyData"].binding = 1
-stars["MeshData"].binding = 0
+stars["Projection"].binding = 0
+stars["DynamicTransforms"].binding = 2
 
 
 def mesh(kind, program):
@@ -36,13 +38,14 @@ def mesh(kind, program):
 shell, points = mesh("sky", sky), mesh("sky-stars", stars)
 
 
-def render(accent=(.65, .54, .88), style=0, time=5, opacity=.85, depth=1, translation=0, starlight=True):
+def render(accent=(.65, .54, .88), style=0, time=5, opacity=.85, depth=1, translation=0, starlight=True,
+           background=(.14, .18, .25), grass_edge=False):
     w, h = 720, 400
     target = ctx.texture((w, h), 4)
     zbuffer = ctx.depth_renderbuffer((w, h))
     fbo = ctx.framebuffer([target], zbuffer)
     fbo.use()
-    fbo.clear(.14, .18, .25, 1, depth=depth)
+    fbo.clear(*background, 1, depth=depth)
     ctx.viewport = (0, 0, w, h)
     ctx.enable(moderngl.BLEND | moderngl.DEPTH_TEST)
     ctx.depth_func = "<="
@@ -52,16 +55,30 @@ def render(accent=(.65, .54, .88), style=0, time=5, opacity=.85, depth=1, transl
     proj = (f/(w/h), 0, 0, 0, 0, f, 0, 0, 0, 0, (far+near)/(near-far), -1, 0, 0, 2*far*near/(near-far), 0)
     c, s = math.cos(-.32), math.sin(-.32)
     view = (1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, translation, translation, translation, 1)
-    matrices = ctx.buffer(struct.pack("32f", *(proj + view)))
+    matrices = ctx.buffer(struct.pack("16f", *proj))
     matrices.bind_to_uniform_block(0)
+    transforms = ctx.buffer(struct.pack("16f", *view))
+    transforms.bind_to_uniform_block(2)
     parameters = ctx.buffer(struct.pack("8f", *accent, opacity, time, style, 0, 0))
     parameters.bind_to_uniform_block(1)
-    shell.render(moderngl.TRIANGLES)
+    if opacity > 0:
+        shell.render(moderngl.TRIANGLES)
     if starlight:
         ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE
         points.render(moderngl.TRIANGLES)
+    if grass_edge:
+        # Alpha-covered terrain must be blended after the sky, with its own near depth.
+        ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+        edge = ctx.program(vertex_shader='''#version 330
+            void main(){ vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2); gl_Position=vec4(p*2.-1.,0.,1.); }''',
+            fragment_shader='''#version 330
+            out vec4 color;void main(){color=vec4(.05,.18,.06,.35);}''')
+        edge_vao = ctx.vertex_array(edge, [])
+        edge_vao.render(moderngl.TRIANGLES, vertices=3)
+        edge_vao.release()
+        edge.release()
     result = Image.frombytes("RGBA", (w, h), fbo.read(components=4)).transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-    for resource in (parameters, matrices, fbo, zbuffer, target):
+    for resource in (parameters, matrices, transforms, fbo, zbuffer, target):
         resource.release()
     ctx.depth_mask = True
     return result
@@ -78,6 +95,9 @@ assert max(ImageStat.Stat(clear).stddev[:3]) == 0, "Zero sky intensity must pres
 occluded = render(depth=.5)
 assert occluded.tobytes() == clear.tobytes(), "Both dome and distant stars must stay behind terrain"
 assert render().tobytes() != render(starlight=False).tobytes(), "Distant stars must actually render"
+assert render(background=(0,0,1)).tobytes() == render(background=(1,0,0)).tobytes(), "Replacement sky must not retain any original blue background"
+assert render(grass_edge=True, background=(0,0,1)).tobytes() == render(grass_edge=True, background=(1,0,0)).tobytes(), "Translucent grass edges must composite against the replacement sky"
+assert render(opacity=.15, background=(0,0,1)).tobytes() == render(opacity=.15, background=(1,0,0)).tobytes(), "Low sky intensity must dim the sky without exposing vanilla color"
 sheet = Image.new("RGB", (1440, 850), (8, 9, 14))
 draw = ImageDraw.Draw(sheet)
 for i, (style, accent, label) in enumerate(((0, (.65, .54, .88), "NEBULA / LAVENDER"), (1, (.65, .54, .88), "AURORA / LAVENDER"),
@@ -86,7 +106,7 @@ for i, (style, accent, label) in enumerate(((0, (.65, .54, .88), "NEBULA / LAVEN
     sheet.paste(render(accent, style), (x, y + 25))
     draw.text((x+14, y+7), label, fill=(220, 215, 235))
 sheet.save(OUT / "world-sky-preview.png")
-print("World sky GLSL passed: accent colors, styles, motion, camera-translation invariance, stars, zero intensity and terrain depth occlusion.")
+print("World sky GLSL passed: native projection, accent colors, motion, full sky coverage, low intensity, translucent grass edges and terrain depth occlusion.")
 print("GPU:", ctx.info["GL_RENDERER"])
 print("Preview:", OUT / "world-sky-preview.png")
 ctx.release()

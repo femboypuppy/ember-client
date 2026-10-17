@@ -7,6 +7,7 @@ public final class LyricsTimingChecks {
     public static void main(String[] args) {
         if (args.length == 1 && args[0].equals("--live-resolver")) { LyricsSourceChecks.liveResolver(); return; }
         LyricsSourceChecks.run();
+        ChunkFindIndexChecks.run();
         long sampled = 5_000_000_000L;
         PlaybackClock playing = new PlaybackClock(1250, 5000, true, sampled);
         require(playing.positionAt(sampled + 275_000_000L) == 1525, "Playback must interpolate milliseconds");

@@ -173,6 +173,9 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             style.toString(), () -> ambience.celestialSky.set(style), ambience.celestialSky.get() == style, dt);
         y += 46;
         y = slider(r, y, "Sky intensity", ambience.skyIntensity.get(), percent(ambience.skyIntensity.get()), ambience.skyIntensity::set, dt);
+        y = toggle(r, y, "Match world lighting", "Accent-colored daylight on blocks and entities, including during daytime.", ambience.worldLighting.get(), () -> ambience.worldLighting.set(!ambience.worldLighting.get()), dt);
+        y = slider(r, y, "World darkness", ambience.worldDarkness.get(), percent(ambience.worldDarkness.get()), ambience.worldDarkness::set, dt);
+        y = slider(r, y, "Light color strength", ambience.worldLightTint.get(), percent(ambience.worldLightTint.get()), ambience.worldLightTint::set, dt);
         y = toggle(r, y, "3D starlight", "Distant stars and drifting motes with depth, parallax and terrain occlusion.", ambience.worldStars.get(), () -> ambience.worldStars.set(!ambience.worldStars.get()), dt);
         y = toggle(r, y, "Accent fog", "Tint distant haze while keeping nearby blocks readable.", ambience.accentFog.get(), () -> ambience.accentFog.set(!ambience.accentFog.get()), dt);
         y = slider(r, y, "Fog amount", ambience.fogAmount.get(), percent(ambience.fogAmount.get()), ambience.fogAmount::set, dt);

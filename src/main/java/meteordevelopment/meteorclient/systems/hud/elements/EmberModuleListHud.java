@@ -124,7 +124,12 @@ public class EmberModuleListHud extends HudElement {
         }
 
         Map<Module, Double> widths = new HashMap<>();
-        for (Module module : shown) widths.put(module, rowWidth(renderer, module, textScale, pad, bar));
+        Map<Module, String> infos = new HashMap<>();
+        for (Module module : shown) {
+            String info = showInfo.get() ? module.getInfoString() : null;
+            infos.put(module, info);
+            widths.put(module, rowWidth(renderer, module, textScale, pad, bar, info));
+        }
 
         if (sort.get() == Sort.Alphabetical) shown.sort(Comparator.comparing((Module m) -> m.title));
         else shown.sort(Comparator.comparingDouble((Module m) -> -widths.get(m)));
@@ -159,7 +164,7 @@ public class EmberModuleListHud extends HudElement {
             double ty = cy + (rowH - textH) / 2;
             renderer.text(module.title, tx, ty, new Color(bright.r, bright.g, bright.b, (int) (255 * a)), true, textScale);
 
-            String info = showInfo.get() ? module.getInfoString() : null;
+            String info = infos.get(module);
             if (info != null) {
                 double titleW = renderer.textWidth(module.title, true, textScale);
                 renderer.text(" " + info, tx + titleW, ty, new Color(dim.r, dim.g, dim.b, (int) (255 * a)), true, textScale);
@@ -169,13 +174,10 @@ public class EmberModuleListHud extends HudElement {
         }
     }
 
-    private double rowWidth(HudRenderer renderer, Module module, double textScale, double pad, double bar) {
+    private double rowWidth(HudRenderer renderer, Module module, double textScale, double pad, double bar, String info) {
         double width = pad * 2 + bar + 2 * scale.get() + renderer.textWidth(module.title, true, textScale);
 
-        if (showInfo.get()) {
-            String info = module.getInfoString();
-            if (info != null) width += renderer.textWidth(" " + info, true, textScale);
-        }
+        if (info != null) width += renderer.textWidth(" " + info, true, textScale);
 
         return width;
     }

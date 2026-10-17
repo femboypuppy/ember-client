@@ -1,6 +1,8 @@
 package meteordevelopment.meteorclient.utils.render;
 
 import com.mojang.blaze3d.buffers.Std140Builder;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.*;
@@ -12,8 +14,13 @@ import net.minecraft.block.enums.CameraSubmersionType;
 import net.minecraft.client.gl.DynamicUniformStorage;
 import net.minecraft.entity.effect.StatusEffects;
 import org.joml.Vector4f;
+import org.joml.Vector3f;
+import org.joml.Vector3fc;
+import org.joml.Matrix4f;
 
 import java.nio.ByteBuffer;
+import java.util.OptionalInt;
+import java.util.OptionalDouble;
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 /** World-space celestial atmosphere. Far-depth sky and scene-depth motes have separate pipelines. */
@@ -38,20 +45,44 @@ public final class EmberWorldAtmosphere {
     }
     public static boolean openSky() { return enabled() && mc.world.getDimension().hasSkyLight() && clearAir(); }
     public static boolean fogEnabled() { return openSky() && Config.get().accentFog.get() && Config.get().fogAmount.get() > 0; }
+    public static boolean skyActive() { return openSky() && Config.get().accentSky.get() && Config.get().skyIntensity.get() > 0; }
+    public static boolean lightingEnabled() {
+        return openSky() && Config.get().worldLighting.get() && (Config.get().worldDarkness.get() > 0 || Config.get().worldLightTint.get() > 0);
+    }
+    public static int lightingState() {
+        if (!lightingEnabled()) return 0;
+        var c = Config.get(); var color = EmberPalette.accent();
+        int hash = 31 * (31 * (31 * (1 + color.r) + color.g) + color.b) + Double.hashCode(c.worldDarkness.get());
+        return 31 * hash + Double.hashCode(c.worldLightTint.get());
+    }
+    public static Vector3fc lightTint(Vector3fc original) {
+        if (!lightingEnabled()) return original;
+        var accent = EmberPalette.accent();
+        float light = Math.max(original.x(), Math.max(original.y(), original.z()));
+        int max = Math.max(accent.r, Math.max(accent.g, accent.b));
+        double strength = Config.get().worldLightTint.get();
+        return new Vector3f(CelestialLighting.channel(original.x(), accent.r, max, light, strength),
+            CelestialLighting.channel(original.y(), accent.g, max, light, strength),
+            CelestialLighting.channel(original.z(), accent.b, max, light, strength));
+    }
 
     public static int skyTint(int original) {
-        if (!openSky() || !Config.get().accentSky.get()) return original;
+        if (!skyActive()) return original;
         var accent = EmberPalette.accent();
-        float lum = (((original >> 16) & 255) + ((original >> 8) & 255) + (original & 255)) / 765f;
         double amount = Config.get().skyIntensity.get();
-        int r = (int) (CelestialWorldGeometry.tint((original >> 16 & 255) / 255f, accent.r, lum, amount) * 255);
-        int g = (int) (CelestialWorldGeometry.tint((original >> 8 & 255) / 255f, accent.g, lum, amount) * 255);
-        int b = (int) (CelestialWorldGeometry.tint((original & 255) / 255f, accent.b, lum, amount) * 255);
+        int r = (int) (CelestialLighting.horizon(accent.r, amount) * 255);
+        int g = (int) (CelestialLighting.horizon(accent.g, amount) * 255);
+        int b = (int) (CelestialLighting.horizon(accent.b, amount) * 255);
         return (original & 0xFF000000) | r << 16 | g << 8 | b;
     }
     public static Vector4f fogTint(Vector4f original) {
-        if (!fogEnabled()) return original;
+        if (!fogEnabled() && !skyActive()) return original;
         var accent = EmberPalette.accent();
+        if (skyActive()) {
+            double intensity = Config.get().skyIntensity.get();
+            return new Vector4f(CelestialLighting.horizon(accent.r, intensity), CelestialLighting.horizon(accent.g, intensity),
+                CelestialLighting.horizon(accent.b, intensity), original.w);
+        }
         float lum = (original.x + original.y + original.z) / 3;
         double amount = Config.get().fogAmount.get();
         return new Vector4f(CelestialWorldGeometry.tint(original.x, accent.r, lum, amount),
@@ -59,39 +90,68 @@ public final class EmberWorldAtmosphere {
             CelestialWorldGeometry.tint(original.z, accent.b, lum, amount), original.w);
     }
 
-    @EventHandler private static void onRender(Render3DEvent event) {
-        if (!enabled()) { previous = 0; world = null; return; }
+    private static void advance() {
         long now = System.nanoTime();
         if (world != mc.world) { world = mc.world; previous = now; time = 0; }
         double dt = previous == 0 ? 0 : Math.clamp((now - previous) / 1e9, 0, 0.1); previous = now;
         var c = Config.get();
         if (!mc.isPaused()) time += dt * c.ambienceSpeed.get();
-        if (!clearAir()) return;
+    }
+
+    /** Called inside Minecraft's sky pass, before cutouts, translucency, terrain and entities. */
+    public static void renderSky(boolean background) {
+        if (!openSky()) return;
+        advance();
+        var c = Config.get();
         var accent = EmberPalette.accent();
         int rgb = accent.r << 16 | accent.g << 8 | accent.b;
         double intensity = c.ambienceIntensity.get();
-        if (openSky()) {
-            if (c.accentSky.get() && c.skyIntensity.get() > 0) {
-                if (sky == null) {
-                    sky = new Renderer3D(MeteorRenderPipelines.WORLD_COLORED_LINES_DEPTH, MeteorRenderPipelines.CELESTIAL_SKY);
-                    CelestialWorldGeometry.skyShell(SHELL);
-                }
-                sky.begin();
-                // Sky shader takes direction-only vertices; Y is deliberately camera-relative here.
-                CelestialRenderer.draw(SHELL, sky, event.offsetX, 0, event.offsetZ, 0, 0);
-                SkyUniforms.STORAGE.clear();
-                var uniform = SkyUniforms.STORAGE.write(new SkyUniforms.Data(accent.r / 255f, accent.g / 255f, accent.b / 255f,
-                    c.skyIntensity.get().floatValue(), (float) time, c.celestialSky.get().ordinal()));
-                MeshRenderer.begin().attachments(mc.getFramebuffer()).pipeline(MeteorRenderPipelines.CELESTIAL_SKY)
-                    .mesh(sky.triangles, event.matrices).uniform("SkyData", uniform).end();
-                sky.lines.end();
+        var camera = mc.gameRenderer.getCamera().getCameraPos();
+        if (background && skyActive()) {
+            if (sky == null) {
+                sky = new Renderer3D(MeteorRenderPipelines.WORLD_COLORED_LINES_DEPTH, MeteorRenderPipelines.CELESTIAL_SKY);
+                CelestialWorldGeometry.skyShell(SHELL);
             }
-            if (c.worldStars.get()) {
-                STARS.clear(); CelestialWorldGeometry.skyStars(STARS, time, c.ambienceDensity.get(), intensity, rgb);
-                if (stars == null) stars = new Renderer3D(MeteorRenderPipelines.WORLD_COLORED_LINES_DEPTH, MeteorRenderPipelines.CELESTIAL_STARS);
-                stars.begin(); CelestialRenderer.draw(STARS, stars, event.offsetX, 0, event.offsetZ, 0, 0); stars.render(event.matrices);
-            }
+            sky.begin();
+            // Sky shader takes direction-only vertices; Y is deliberately camera-relative here.
+            CelestialRenderer.draw(SHELL, sky, camera.x, 0, camera.z, 0, 0);
+            SkyUniforms.STORAGE.clear();
+            var uniform = SkyUniforms.STORAGE.write(new SkyUniforms.Data(accent.r / 255f, accent.g / 255f, accent.b / 255f,
+                c.skyIntensity.get().floatValue(), (float) time, c.celestialSky.get().ordinal()));
+            submitSky(sky, true, uniform);
         }
+        if (c.worldStars.get()) {
+            STARS.clear(); CelestialWorldGeometry.skyStars(STARS, time, c.ambienceDensity.get(), intensity, rgb);
+            if (stars == null) stars = new Renderer3D(MeteorRenderPipelines.WORLD_COLORED_LINES_DEPTH, MeteorRenderPipelines.CELESTIAL_STARS);
+            stars.begin(); CelestialRenderer.draw(STARS, stars, camera.x, 0, camera.z, 0, 0); submitSky(stars, false, null);
+        }
+    }
+
+    private static void submitSky(Renderer3D renderer, boolean background, com.mojang.blaze3d.buffers.GpuBufferSlice skyData) {
+        var mesh = renderer.triangles;
+        renderer.lines.end(); mesh.end();
+        if (mesh.getIndicesCount() == 0) return;
+        var transforms = RenderSystem.getDynamicUniforms().write(RenderSystem.getModelViewMatrix(), new Vector4f(1), new Vector3f(), new Matrix4f());
+        var target = mc.getFramebuffer();
+        try (var pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Ember celestial sky",
+            target.getColorAttachmentView(), OptionalInt.empty(), target.getDepthAttachmentView(), OptionalDouble.empty())) {
+            pass.setPipeline(background ? MeteorRenderPipelines.CELESTIAL_SKY : MeteorRenderPipelines.CELESTIAL_STARS);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform("DynamicTransforms", transforms);
+            if (background) pass.setUniform("SkyData", skyData);
+            pass.setVertexBuffer(0, mesh.getVertexBuffer());
+            pass.setIndexBuffer(mesh.getIndexBuffer(), VertexFormat.IndexType.INT);
+            pass.drawIndexed(0, 0, mesh.getIndicesCount(), 1);
+        }
+    }
+
+    @EventHandler private static void onRender(Render3DEvent event) {
+        if (!enabled()) { previous = 0; world = null; return; }
+        advance();
+        if (!clearAir()) return;
+        var c = Config.get(); var accent = EmberPalette.accent();
+        int rgb = accent.r << 16 | accent.g << 8 | accent.b;
+        double intensity = c.ambienceIntensity.get();
         if (c.worldStars.get()) {
             MOTES.clear(); CelestialWorldGeometry.motes(MOTES, event.offsetX, event.offsetY, event.offsetZ, time, c.ambienceDensity.get(), intensity, rgb);
             if (motes == null) motes = new Renderer3D(MeteorRenderPipelines.WORLD_COLORED_LINES_DEPTH, MeteorRenderPipelines.WORLD_ACCENT_LIGHT);
@@ -101,9 +161,9 @@ public final class EmberWorldAtmosphere {
 
     private static final class SkyUniforms {
         static final DynamicUniformStorage<Data> STORAGE = new DynamicUniformStorage<>("Ember - Celestial sky", 32, 2);
-        private record Data(float r, float g, float b, float opacity, float time, float style) implements DynamicUniformStorage.Uploadable {
+        private record Data(float r, float g, float b, float intensity, float time, float style) implements DynamicUniformStorage.Uploadable {
             @Override public void write(ByteBuffer buffer) {
-                Std140Builder.intoBuffer(buffer).putVec4(r, g, b, opacity).putVec4(time, style, 0, 0);
+                Std140Builder.intoBuffer(buffer).putVec4(r, g, b, intensity).putVec4(time, style, 0, 0);
             }
         }
     }

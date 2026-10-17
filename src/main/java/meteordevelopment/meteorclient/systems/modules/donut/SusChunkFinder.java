@@ -23,6 +23,7 @@ import meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.misc.ChunkFindIndex;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.EmberStrip;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
@@ -605,6 +606,10 @@ public class SusChunkFinder extends Module {
 
     // Render
 
+    private final Setting<Integer> planeRange = sgRender.add(new IntSetting.Builder()
+        .name("plane-range").description("Draw chunk planes within this range. Distant finds remain saved, counted and available to tracers.")
+        .defaultValue(512).range(64, 8192).sliderRange(64, 2048).build());
+
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
         .description("How flagged chunks are drawn.")
@@ -736,6 +741,8 @@ public class SusChunkFinder extends Module {
     private final LongSet announced = new LongOpenHashSet();
     private final LongSet pendingRescan = new LongOpenHashSet();
     private final Long2IntMap structureContext = new Long2IntOpenHashMap();
+    private final ChunkFindIndex<FlaggedChunk> renderIndex = new ChunkFindIndex<>();
+    private int indexedFilter;
 
     /** Bumped whenever results are thrown away, so scans queued before that point drop their result. */
     private final AtomicInteger scanGeneration = new AtomicInteger();
@@ -780,7 +787,11 @@ public class SusChunkFinder extends Module {
         synchronized (flagged) {
             for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) {
                 long key = ChunkPos.toLong(find.x >> 4, find.z >> 4);
-                if (!saved.containsKey(key)) saved.put(key, FlaggedChunk.fromSave(find.x >> 4, find.z >> 4, find.note));
+                if (!saved.containsKey(key)) {
+                    var fc = FlaggedChunk.fromSave(find.x >> 4, find.z >> 4, find.note);
+                    saved.put(key, fc);
+                    if (savedVisible(fc)) renderIndex.put(fc.chunkX, fc.chunkZ, fc);
+                }
             }
         }
 
@@ -803,6 +814,8 @@ public class SusChunkFinder extends Module {
             announced.clear();
             pendingRescan.clear();
             structureContext.clear();
+            renderIndex.clear();
+            indexedFilter = filterState();
         }
         hovered = null;
         cardChunk = null;
@@ -917,6 +930,20 @@ public class SusChunkFinder extends Module {
             return;
         }
 
+        int filter = filterState();
+        if (filter != indexedFilter) {
+            synchronized (flagged) {
+                renderIndex.clear();
+                for (var entry : saved.long2ObjectEntrySet()) {
+                    if (!flagged.containsKey(entry.getLongKey()) && !cleared.contains(entry.getLongKey()) && savedVisible(entry.getValue())) {
+                        var fc = entry.getValue(); renderIndex.put(fc.chunkX, fc.chunkZ, fc);
+                    }
+                }
+                for (var fc : flagged.values()) renderIndex.put(fc.chunkX, fc.chunkZ, fc);
+                indexedFilter = filter;
+            }
+        }
+
         if (++rescanTimer < 20) return;
         rescanTimer = 0;
 
@@ -1016,6 +1043,7 @@ public class SusChunkFinder extends Module {
                     if (isNewFind ? saveFinds.get() : firstFullLook && saved.containsKey(key)) saved.put(key, result);
                 }
                 checkedNote = firstFullLook ? (result != null ? result : prior.checked()).toNote() : null;
+                refreshIndexedFind(key);
             }
 
             int blockX = chunk.getPos().getStartX() + 8;
@@ -1092,6 +1120,25 @@ public class SusChunkFinder extends Module {
 
         if (!intelligentChunks.get() || !hideLikelyFalsePositives.get()) return true;
         return !(fc.falsePositiveProb > maxFalsePositiveProb.get() && fc.baseConfidence < minBaseConfidence.get());
+    }
+
+    private int filterState() {
+        int state = 31 * (31 * (31 * Boolean.hashCode(intelligentChunks.get()) + Boolean.hashCode(hideLikelyFalsePositives.get()))
+            + maxFalsePositiveProb.get()) + minBaseConfidence.get();
+        state = 31 * state + Boolean.hashCode(limitHeight.get());
+        state = 31 * state + heightMin.get();
+        return 31 * state + heightMax.get();
+    }
+
+    /** Called under the result lock. Partial scans keep an eligible saved fallback visible. */
+    private void refreshIndexedFind(long key) {
+        FlaggedChunk fc = flagged.get(key);
+        if (fc == null && !cleared.contains(key)) {
+            fc = saved.get(key);
+            if (fc != null && !savedVisible(fc)) fc = null;
+        }
+        if (fc == null) renderIndex.remove(key);
+        else renderIndex.put(fc.chunkX, fc.chunkZ, fc);
     }
 
     // Block kinds. Looked up once per block through an identity map, which keeps a full chunk pass cheap.
@@ -2608,19 +2655,15 @@ public class SusChunkFinder extends Module {
 
         double planeY = followPlayerY.get() ? Math.floor(mc.player.getY()) : renderY.get();
 
-        List<FlaggedChunk> visible = new ArrayList<>();
+        double queryRange = Math.max(planeRange.get(), Math.max(renderCenterDot.get() ? dotRange.get() : 0, tracers.get() ? tracerRange.get() : 0));
+        List<FlaggedChunk> visible;
         synchronized (flagged) {
-            for (FlaggedChunk fc : flagged.values()) {
-                visible.add(fc);
-                drawChunk(event, fc, planeY);
-            }
-            for (Long2ObjectMap.Entry<FlaggedChunk> entry : saved.long2ObjectEntrySet()) {
-                long key = entry.getLongKey();
-                FlaggedChunk fc = entry.getValue();
-                if (flagged.containsKey(key) || cleared.contains(key) || !savedVisible(fc)) continue;
-                visible.add(fc);
-                drawChunk(event, fc, planeY);
-            }
+            visible = renderIndex.nearby(mc.player.getChunkPos().x, mc.player.getChunkPos().z, (int) Math.ceil(queryRange / 16) + 2);
+        }
+        double planeDistance = (double) planeRange.get() * planeRange.get();
+        for (var fc : visible) {
+            double dx = (fc.chunkX * 16.0 + 8) - mc.player.getX(), dz = (fc.chunkZ * 16.0 + 8) - mc.player.getZ();
+            if (dx * dx + dz * dz <= planeDistance) drawChunk(event, fc, planeY);
         }
 
         if (tracers.get()) drawTracers(event, visible);
@@ -2966,13 +3009,6 @@ public class SusChunkFinder extends Module {
 
     @Override
     public String getInfoString() {
-        synchronized (flagged) {
-            int n = flagged.size();
-            for (Long2ObjectMap.Entry<FlaggedChunk> entry : saved.long2ObjectEntrySet()) {
-                long key = entry.getLongKey();
-                if (!flagged.containsKey(key) && !cleared.contains(key) && savedVisible(entry.getValue())) n++;
-            }
-            return n == 0 ? null : String.valueOf(n);
-        }
+        return renderIndex.info();
     }
 }

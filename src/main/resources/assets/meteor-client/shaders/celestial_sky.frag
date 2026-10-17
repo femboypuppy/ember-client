@@ -13,22 +13,24 @@ void main() {
     vec3 d=normalize(v_Direction), accent=u_AccentStrength.rgb;
     float t=u_Motion.x*.025, style=u_Motion.y;
     float height=clamp(d.y,0.,1.);
-    vec3 base=mix(accent*.27+vec3(.018),accent*.035+vec3(.006,.008,.015),pow(height,.5));
+    vec3 base=mix(accent*.27+vec3(.018),accent*.035+vec3(.008),pow(height,.5));
     float cloud=fbm(d*4. + vec3(t*.15,0.,t*.08));
     float band=exp(-pow((d.y-.3-.18*sin(d.x*2.8+d.z*1.6)),2.)*16.);
     if(style<.5) {
         float nebula=smoothstep(.25,.75,cloud)*band;
-        base+=mix(accent,vec3(.6,.65,.75),.18)*nebula*.43;
+        base+=mix(accent,vec3(.72),.14)*nebula*.43;
         base+=accent*pow(max(0.,1.-abs(cloud-.5)*4.),3.)*band*.055;
     } else if(style<1.5) {
         float curtains=sin(d.x*11.+sin(d.z*6.+t)*2.+cloud*5.+t);
         float veil=pow(max(0.,curtains),3.)*band*(.35+cloud*.65);
-        base+=mix(accent,vec3(.65,.8,.75),.18)*veil*.5;
+        base+=mix(accent,vec3(.8),.16)*veil*.5;
     } else {
         float sunset=exp(-pow(d.y-.08,2.)*18.)*(.55+.45*sin(d.x*2.+d.z+t*.12));
-        base+=mix(accent,vec3(.65,.4,.3),.16)*sunset*.17;
+        base+=mix(accent,vec3(.65),.12)*sunset*.17;
         base+=accent*cloud*.035;
     }
     // Spherical noise avoids UV seams and singularities at the zenith.
-    color=vec4(base,u_AccentStrength.a);
+    // Intensity changes the sky's brightness, never its coverage. A translucent
+    // replacement would leave the original blue daytime sky mixed into every pixel.
+    color=vec4(base*(.35+.65*u_AccentStrength.a),1.);
 }

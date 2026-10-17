@@ -43,13 +43,23 @@ a separate, faint 2D overlay.
   intensity control. The procedural sky changes color smoothly with Ember's
   accent or the current album cover. Nebula uses layered clouds of light;
   Aurora uses luminous curtains; Dusk gives a softer gradient. No downloaded
-  textures or shader pack are required.
+  textures or shader pack are required. Intensity changes its brightness rather
+  than its opacity: the original blue sky cannot bleed through at lower values.
+  Zero restores the original sky.
+- **Match world lighting:** changes Minecraft's actual daylight lightmap so
+  blocks and entities take the accent color. **World darkness** dims full daytime
+  lighting (42% by default); **Light color strength** controls the tint (80% by
+  default). Torch and other block-light colors remain independent. Turning the
+  option off restores the ordinary lightmap. This mode takes precedence over
+  Ember's gamma Fullbright shortcut and caps gamma boosting while active.
 - **3D starlight:** distant, softly twinkling stars plus nearby light motes.
   Motes are anchored to world-space cells and drift slowly. Walking produces
   parallax rather than moving a screen overlay. They fade at the range limit
   and stay hidden behind blocks.
 - **Accent fog:** subtly colors existing fog and adds distant atmospheric haze.
-  Adjust **Fog amount** independently; zero restores the original fog settings.
+  Adjust **Fog amount** independently; zero removes the extra haze. With the
+  accent sky enabled, the regular fog and clear color still match its horizon
+  to avoid blue distance fringes.
   Nearby terrain remains clear and the render-distance cutoff is retained.
 - **Light shimmer:** slow brightness waves travel across the existing terrain
   light, including exposed block sides. Zero gives steady lighting. **Drift
@@ -63,8 +73,12 @@ No Render's fog switch still controls whether fog is rendered. Shader packs or
 other mods that replace the sky/fog renderer may change the result; each effect
 can be disabled independently.
 
-The sky uses a direction-only sphere pinned to the far depth plane. It ignores
-camera translation and is occluded by scene depth at any view distance. The
+The sky replaces the background inside Minecraft's sky pass, before terrain,
+cutouts and translucency are composited. This prevents grass and block edges
+from retaining the old blue background. It uses the current native projection
+and view uniforms rather than a previous frame's overlay matrices.
+The direction-only sphere is pinned to the far depth plane and ignores camera
+translation. The
 starfield uses the same sky-depth rule; motes use actual scene depth. These are
 local visual effects, not global light propagation or server-side particles.
 
@@ -121,6 +135,14 @@ the production sky/star shaders with the real exported meshes using ModernGL.
 It verifies color response, sky styles, motion, camera-translation invariance,
 zero intensity and terrain-depth occlusion, and writes
 `build/visual-preview/world-sky-preview.png`.
+
+`python scripts/check_world_lighting.py` renders the actual cached Minecraft
+1.21.11 lightmap shader with parameters exported by Ember's production lighting
+math. It checks daytime tint and darkness, preserves torch colors under changing
+accents, and verifies that unlit caves receive no fabricated skylight. It writes
+`build/visual-preview/world-lightmap-preview.png`.
+The BadOptimizations lightmap-cache hook also invalidates on accent, lighting
+control and enabled-state changes, including the transition back to vanilla.
 
 `./gradlew checkMeshCapacity` exercises the production CPU mesh allocator with
 the reported startup-crash reservation, maximum effect sizes, independent vertex

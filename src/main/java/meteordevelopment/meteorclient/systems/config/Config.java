@@ -103,7 +103,13 @@ public class Config extends System<Config> {
     public final Setting<CelestialSky> celestialSky = sgVisual.add(new EnumSetting.Builder<CelestialSky>()
         .name("celestial-sky-style").description("Choose a nebula, aurora or soft dusk skybox.").defaultValue(CelestialSky.Nebula).build());
     public final Setting<Double> skyIntensity = sgVisual.add(new DoubleSetting.Builder()
-        .name("accent-sky-intensity").description("Strength of the custom sky and its accent color.").defaultValue(0.75).range(0, 1).sliderRange(0, 1).build());
+        .name("accent-sky-intensity").description("Brightness of the complete custom sky. Zero restores the original sky.").defaultValue(0.75).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Boolean> worldLighting = sgVisual.add(new BoolSetting.Builder()
+        .name("accent-world-lighting").description("Match daylight on blocks and entities to the accent sky using Minecraft's lightmap.").defaultValue(true).build());
+    public final Setting<Double> worldDarkness = sgVisual.add(new DoubleSetting.Builder()
+        .name("accent-world-darkness").description("Dim daylight to suit the celestial sky. Torch and other block lighting remain independent.").defaultValue(0.42).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> worldLightTint = sgVisual.add(new DoubleSetting.Builder()
+        .name("accent-world-light-tint").description("How strongly daylight takes the accent color.").defaultValue(0.8).range(0, 1).sliderRange(0, 1).build());
     public final Setting<Boolean> worldStars = sgVisual.add(new BoolSetting.Builder()
         .name("world-stars").description("Distant celestial stars and world-anchored, depth-tested starlight motes.").defaultValue(true).build());
     public final Setting<Boolean> accentFog = sgVisual.add(new BoolSetting.Builder()

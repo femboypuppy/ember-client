@@ -22,7 +22,7 @@ def main():
         raise SystemExit("Set JAVA_HOME to a Java 21 JDK.")
     package = Path("meteordevelopment/meteorclient/utils/render")
     classes = ROOT / "build" / "visual-checks"
-    sources = [ROOT / "src/main/java" / package / f"{name}.java" for name in ("CelestialMesh", "CelestialGeometry", "TerrainLightSurfaces", "CelestialWorldGeometry")]
+    sources = [ROOT / "src/main/java" / package / f"{name}.java" for name in ("CelestialMesh", "CelestialGeometry", "TerrainLightSurfaces", "CelestialWorldGeometry", "CelestialLighting")]
     sources.append(ROOT / "src/lyricsChecks/java" / package / "CelestialVisualChecks.java")
     sources.append(ROOT / "src/lyricsChecks/java" / package / "CelestialPreviewImage.java")
     subprocess.run([javac, "-d", str(classes), *map(str, sources)], check=True)

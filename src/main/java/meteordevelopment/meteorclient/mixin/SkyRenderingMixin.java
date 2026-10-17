@@ -25,11 +25,22 @@ public class SkyRenderingMixin {
     @Inject(method = "updateRenderState", at = @At("TAIL"))
     private void updateRenderState(ClientWorld world, float tickProgress, Camera camera, SkyRenderState state, CallbackInfo ci) {
         state.skyColor = EmberWorldAtmosphere.skyTint(state.skyColor);
+        if (EmberWorldAtmosphere.skyActive()) { state.shouldRenderSkyDark = false; state.sunriseAndSunsetColor = 0; }
         Ambience ambience = Modules.get().get(Ambience.class);
         if (!ambience.isActive()) return;
 
         if (ambience.endSky.get()) state.skybox = DimensionType.Skybox.END;
         if (ambience.customSkyColor.get()) state.skyColor = ambience.skyColor().getPacked();
+    }
+
+    @Inject(method = "renderTopSky", at = @At("HEAD"), cancellable = true)
+    private void ember$replaceSky(int color, CallbackInfo ci) {
+        if (EmberWorldAtmosphere.skyActive()) { EmberWorldAtmosphere.renderSky(true); ci.cancel(); }
+    }
+
+    @Inject(method = "renderTopSky", at = @At("TAIL"))
+    private void ember$starsOverVanilla(int color, CallbackInfo ci) {
+        if (!EmberWorldAtmosphere.skyActive()) EmberWorldAtmosphere.renderSky(false);
     }
 
     @ModifyArg(method = "renderEndSky", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gl/DynamicUniforms;write(Lorg/joml/Matrix4fc;Lorg/joml/Vector4fc;Lorg/joml/Vector3fc;Lorg/joml/Matrix4fc;)Lcom/mojang/blaze3d/buffers/GpuBufferSlice;"))

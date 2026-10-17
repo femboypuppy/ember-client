@@ -8,6 +8,7 @@ public final class CelestialVisualChecks {
     public static void main(String[] args) throws Exception {
         terrainSurfaces();
         worldAtmosphere();
+        worldLighting();
         var mesh = new CelestialMesh(90000);
         for (var style : CelestialGeometry.WingStyle.values()) {
             for (double time : new double[]{0, 0.1, 1.2, 10000}) {
@@ -70,6 +71,17 @@ public final class CelestialVisualChecks {
         System.out.println("Visual checks passed: wing symmetry and folding, pulse lifetime, stable stars, colored terrain light, finite geometry, FPS independence and mesh budgets.");
     }
 
+    private static void worldLighting() {
+        require(CelestialLighting.skyFactor(1, 0.42) < 0.7, "Daytime must actually dim when world darkness is enabled");
+        require(CelestialLighting.skyFactor(1, 0) == 1, "Zero darkness must preserve daytime light power");
+        require(CelestialLighting.skyFactor(0, 1) == 0, "World lighting cannot create sunlight in an unlit cave");
+        require(CelestialLighting.gamma(100, 0.42) < 0.5, "An external gamma boost must not erase the requested darkness");
+        float red = CelestialLighting.channel(1, 255, 255, 1, 1), blue = CelestialLighting.channel(1, 16, 255, 1, 1);
+        require(red > blue * 4 && blue > 0, "Red illumination must be strongly red while retaining texture readability");
+        require(CelestialLighting.channel(0.6f, 255, 255, 1, 0) == 0.6f, "Zero tint must preserve the original daylight color");
+        require(CelestialLighting.horizon(255, 0.75) > CelestialLighting.horizon(16, 0.75) * 5, "Fog horizon must be colored by the sky without a blue background mix");
+        System.out.println("World lighting passed: dimmed daylight, colored light, gamma bounds, cave darkness and horizon matching.");
+    }
     private static void valid(CelestialMesh mesh) {
         require(mesh.size % 3 == 0 && mesh.size <= mesh.colors.length, "Triangle count must remain valid");
         for (int i = 0; i < mesh.size * 3; i++) require(Float.isFinite(mesh.positions[i]), "Every generated vertex must be finite");
@@ -181,8 +193,20 @@ public final class CelestialVisualChecks {
             CelestialGeometry.groundTile(mesh, x, y, z, 0.985, 0.985, 3.4, 0.44, 0xA78BE0);
         }
         append(json, mesh, "floor", "Ground illumination", baseVertices);
+        json.append(",{\"kind\":\"lighting\",\"name\":\"Vanilla\",\"sky\":1,\"gamma\":0.7,\"tint\":[1,1,1]}");
+        lightFixture(json, "Red", 0xFF2020, 0.42);
+        lightFixture(json, "Blue", 0x2020FF, 0.42);
+        lightFixture(json, "Dark", 0xFF2020, 1);
         json.append(']');
         Files.createDirectories(path.toAbsolutePath().getParent()); Files.writeString(path, json);
+    }
+    private static void lightFixture(StringBuilder json, String name, int rgb, double darkness) {
+        int r = rgb >> 16 & 255, g = rgb >> 8 & 255, b = rgb & 255, max = Math.max(r, Math.max(g, b));
+        json.append(",{\"kind\":\"lighting\",\"name\":\"").append(name).append("\",\"sky\":")
+            .append(CelestialLighting.skyFactor(1, darkness)).append(",\"gamma\":").append(CelestialLighting.gamma(0.7f, darkness)).append(",\"tint\":[")
+            .append(CelestialLighting.channel(1, r, max, 1, 0.8)).append(',')
+            .append(CelestialLighting.channel(1, g, max, 1, 0.8)).append(',')
+            .append(CelestialLighting.channel(1, b, max, 1, 0.8)).append("]}");
     }
     private static void append(StringBuilder json, CelestialMesh mesh, String kind, String name) {
         append(json, mesh, kind, name, 0);
