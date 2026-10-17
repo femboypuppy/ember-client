@@ -33,6 +33,13 @@ public class Config extends System<Config> {
     private final SettingGroup sgMisc = settings.createGroup("Misc");
     public final SettingGroup sgLyrics = settings.createGroup("Lyrics");
 
+    public final Setting<Boolean> emberBackgrounds = sgVisual.add(new BoolSetting.Builder()
+        .name("ember-backgrounds")
+        .description("Ember's own menu background, title logo and server loading screens.")
+        .defaultValue(true)
+        .build()
+    );
+
     public final Setting<Boolean> lyricsEnabled = sgLyrics.add(new BoolSetting.Builder()
         .name("lyrics-pill")
         .description("Show timed lyrics for the current music player beside the main status pill.")
