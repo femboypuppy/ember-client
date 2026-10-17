@@ -74,3 +74,8 @@ geometry budgets. `python scripts/preview_celestial.py` exports the production
 meshes to `build/visual-preview/index.html`, an offline WebGL sheet with accent
 selection and wing rotation. Add `--screenshot` for an isolated headless Chromium
 capture. This sheet previews geometry, not a running Minecraft world.
+
+`./gradlew checkMeshCapacity` exercises the production CPU mesh allocator with
+the reported startup-crash reservation, maximum effect sizes, independent vertex
+and index reservations, and buffer growth with existing data. It requires no GPU
+uploads. Both regression tasks run as part of `./gradlew build`.

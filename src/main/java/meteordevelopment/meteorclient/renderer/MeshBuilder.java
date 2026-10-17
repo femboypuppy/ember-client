@@ -175,7 +175,9 @@ public class MeshBuilder {
         }
 
         if (vertices == null || indices == null) {
-            allocateBuffers(256 * 4, 512 * 4);
+            // A cold renderer can reserve an entire effect in one call. Honor that
+            // request before any native writes, rather than returning undersized buffers.
+            allocateBuffers(Math.max(256 * 4, vertexCount), Math.max(512 * 4, indexCount));
             return;
         }
 
