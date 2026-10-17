@@ -1509,6 +1509,9 @@ public class SusChunkFinder extends Module {
         }
 
         if (!intelligentChunks.get() || !hideLikelyFalsePositives.get()) return true;
+        // Activity finds scored by this version (false positive 50% at most) are never hidden, like in the
+        // scan. Older saves scored growth far higher, and those mostly were the noisy kelp finds.
+        if (fc.measured && fc.falsePositiveProb <= 50 && fc.reasons.stream().anyMatch(r -> r.contains("grown") || r.contains("active bee nest"))) return true;
         return !(fc.falsePositiveProb > maxFalsePositiveProb.get() && fc.baseConfidence < minBaseConfidence.get());
     }
 
@@ -2109,7 +2112,6 @@ public class SusChunkFinder extends Module {
             }
 
             List<Signal> signals = new ArrayList<>();
-            boolean naturalAmethystOnly = false;
 
             // Classic signals.
 
@@ -2142,29 +2144,16 @@ public class SusChunkFinder extends Module {
                 signals.add(new Signal(parts + " redstone parts", CAT_REDSTONE, 0.2, false, false, redstoneY()));
             }
 
-            if (grownKelp.get() && anyKelp) addIfPresent(signals, checkKelp());
-            if (caveVines.get() && !caveVineTips.isEmpty()) addIfPresent(signals, checkCaveVines(lush));
-            if (vines.get() && !vinePositions.isEmpty()) addIfPresent(signals, checkVines());
+            // Activity: growth that only happens while a player keeps the chunk loaded. The main reason a
+            // chunk is sus, since it shows from the surface even when the base below is hidden.
+            boolean hivesCounted = activitySignals(signals) && includeBeehives.get();
 
-            if (amethyst.get() && geoMaxX >= 0) {
-                Signal am = checkAmethyst();
-                if (am != null) {
-                    signals.add(am);
-                    naturalAmethystOnly = am.category == CAT_GROWTH;
-                }
-            }
-
-            if (bamboo.get() && anyBamboo) addIfPresent(signals, checkBamboo());
-            if (cocoa.get() && cocoaTotal > 0) addIfPresent(signals, checkCocoa());
-
-            boolean hivesCounted = false;
-            if (beeNest.get()) {
-                Signal bees = checkBees();
-                if (bees != null) {
-                    signals.add(bees);
-                    hivesCounted = includeBeehives.get();
-                }
-            }
+            // Farms built around the same plants, on top of that.
+            if (grownKelp.get() && anyKelp) addFarm(signals, checkKelp());
+            if (caveVines.get() && !caveVineTips.isEmpty()) addFarm(signals, checkCaveVines(lush));
+            if (amethyst.get() && geoMaxX >= 0) addFarm(signals, checkAmethyst());
+            if (bamboo.get() && anyBamboo) addFarm(signals, checkBamboo());
+            if (cocoa.get() && cocoaTotal > 0) addFarm(signals, checkCocoa());
 
             // Dug-out space from light data. Sure when some dark section can't be explained away; only
             // possible when every one went dark after being seen lit, or sits in hidden solid fill.
@@ -2265,8 +2254,8 @@ public class SusChunkFinder extends Module {
             } else {
                 if (strongestBuilt >= 0.3) falsePositive = 30;
                 else if (strongestBuilt > 0) falsePositive = 45;
-                else if (naturalAmethystOnly && growthSignals == 1) falsePositive = 82;
-                else falsePositive = Math.max(50, 72 - 7 * (growthSignals - 1));
+                // Activity alone: natural terrain can grow some of it, but several kinds at once is rare.
+                else falsePositive = Math.max(20, 50 - 10 * (growthSignals - 1));
 
                 int contexts = count(trial, ancient, mineshaft, lush, dungeon, stronghold, igloo, jungle, temple,
                     village, trail, netherStruct, endCity, pyramid, ruinedPortal);
@@ -2291,8 +2280,9 @@ public class SusChunkFinder extends Module {
             }
 
             // Only a main signal (one with its own setting) flags a chunk; the clues just score it.
+            // Activity is never hidden: it is exactly the "might be something under here" hint to dig on.
             boolean keep = legacyFired;
-            if (intelligentChunks.get() && hideLikelyFalsePositives.get()
+            if (intelligentChunks.get() && hideLikelyFalsePositives.get() && growthSignals == 0
                 && falsePositive > maxFalsePositiveProb.get() && confidence < minBaseConfidence.get()) keep = false;
             if (!keep) return null;
 
@@ -2311,6 +2301,125 @@ public class SusChunkFinder extends Module {
             focusY = MathHelper.clamp(focusY, minY + 1, topY);
 
             return new FlaggedChunk(chunkX, chunkZ, reasons, confidence, falsePositive, griefed, griefReasons, focusY, false, true, hiddenSections > 0);
+        }
+
+        /**
+         * The original activity checks, as they found bases before any scoring existed, driven by the
+         * Growth Signals settings.
+         *
+         * @return whether bee nests or hives fired
+         */
+        boolean activitySignals(List<Signal> signals) {
+            int growthY = mean(growthYSum, growthYCount);
+
+            if (grownKelp.get() && anyKelp) {
+                int tall = 0, atSurface = 0;
+                long ySum = 0;
+                for (int column = 0; column < 256; column++) {
+                    if (kelpTop[column] == Integer.MIN_VALUE) continue;
+                    if (kelpTop[column] - kelpBottom[column] + 1 < kelpMinHeight.get()) continue;
+                    tall++;
+                    // Nothing liquid above the tip: it grew all the way up.
+                    BlockState above = at(column >> 4, kelpTop[column] + 1, column & 15);
+                    if (above != null && above.getFluidState().isEmpty()) {
+                        atSurface++;
+                        ySum += kelpTop[column];
+                    }
+                }
+                if (tall > 0 && tall >= kelpMinColumns.get() && (double) atSurface / tall >= kelpSurfaceRatio.get()) {
+                    signals.add(new Signal(atSurface + "/" + tall + " kelp grown to surface", CAT_GROWTH, 0.45, false, true,
+                        atSurface > 0 ? (int) (ySum / atSurface) : growthY));
+                }
+            }
+
+            if (caveVines.get() && !caveVineTips.isEmpty()) {
+                int longStrands = 0;
+                long ySum = 0;
+                for (int i = 0; i < caveVineTips.size(); i++) {
+                    int p = caveVineTips.getInt(i);
+                    int lx = px(p), lz = pz(p), y = py(p);
+                    int len = 1;
+                    for (int yy = y + 1; yy <= topY; yy++) {
+                        Block b = at(lx, yy, lz).getBlock();
+                        if (b != Blocks.CAVE_VINES_PLANT && b != Blocks.CAVE_VINES) break;
+                        len++;
+                    }
+                    if (len >= caveVinesMinLength.get()) {
+                        longStrands++;
+                        ySum += y;
+                    }
+                }
+                if (longStrands > 0 && longStrands >= caveVinesMinColumns.get()) {
+                    signals.add(new Signal(longStrands + " grown cave vines", CAT_GROWTH, 0.35, false, true, (int) (ySum / longStrands)));
+                }
+            }
+
+            if (vines.get() && !vinePositions.isEmpty()) {
+                int longColumns = 0, grounded = 0;
+                long ySum = 0;
+                for (int i = 0; i < vinePositions.size(); i++) {
+                    int p = vinePositions.getInt(i);
+                    int lx = px(p), lz = pz(p), y = py(p);
+                    BlockState below = at(lx, y - 1, lz);
+                    // Measure each vertical run once, from its bottom vine.
+                    if (below != null && below.isOf(Blocks.VINE)) continue;
+
+                    int len = 1;
+                    for (int yy = y + 1; yy <= topY && at(lx, yy, lz).isOf(Blocks.VINE); yy++) len++;
+                    if (len < vinesMinLength.get()) continue;
+
+                    longColumns++;
+                    ySum += y;
+                    if (below != null && !below.isAir()) grounded++;
+                }
+                double ratio = vinesGroundRatio.get();
+                if (longColumns > 0 && longColumns >= vinesMinColumns.get() && (ratio <= 0 || (double) grounded / longColumns >= ratio)) {
+                    signals.add(new Signal(longColumns + " grown vines", CAT_GROWTH, 0.3, false, true, (int) (ySum / longColumns)));
+                }
+            }
+
+            if (amethyst.get()) {
+                int clusters = count[K_AM_CLUSTER];
+                int grownCount = clusters + (amethystIncludeLargeBuds.get() ? count[K_AM_LARGE] : 0);
+                int totalGrowth = clusters + count[K_AM_LARGE] + count[K_AM_SMALL];
+                if (grownCount > 0 && grownCount >= amethystMinClusters.get() && totalGrowth > 0
+                    && ((double) grownCount / totalGrowth >= amethystClusterRatio.get() || count[K_BUDDING] == 0)) {
+                    signals.add(new Signal(grownCount + "/" + totalGrowth + " grown amethyst", CAT_GROWTH, 0.4, false, true,
+                        geoMaxX >= 0 ? (geoMinY + geoMaxY) / 2 : growthY));
+                }
+            }
+
+            if (bamboo.get() && anyBamboo) {
+                int matched = 0;
+                for (int column = 0; column < 256; column++) {
+                    if (bambooTop[column] == Integer.MIN_VALUE) continue;
+                    if (bambooTop[column] - bambooBottom[column] + 1 < bambooMinHeight.get()) continue;
+                    if (bambooRequireMaxStage.get() && !bambooMaxStage[column]) continue;
+                    matched++;
+                }
+                if (matched > 0 && matched >= bambooMinColumns.get()) {
+                    signals.add(new Signal(matched + " grown bamboo", CAT_GROWTH, 0.3, false, true, growthY));
+                }
+            }
+
+            if (cocoa.get() && cocoaTotal > 0 && cocoaMature > 0 && cocoaMature >= cocoaMinPods.get()
+                && (double) cocoaMature / cocoaTotal >= cocoaMatureRatio.get()) {
+                signals.add(new Signal(cocoaMature + "/" + cocoaTotal + " grown cocoa", CAT_GROWTH, 0.35, false, true, growthY));
+            }
+
+            if (beeNest.get()) {
+                int matched = nestsHoney + (includeBeehives.get() ? count[K_BEEHIVE] : 0);
+                if (matched > 0 && matched >= beeNestMinCount.get()) {
+                    signals.add(new Signal(matched + (matched == 1 ? " active bee nest" : " active bee nests"), CAT_GROWTH, 0.35, false, true, growthY));
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** Keeps only the farm half of a plant check; the activity half comes from {@link #activitySignals}. */
+        void addFarm(List<Signal> signals, Signal signal) {
+            if (signal != null && signal.category == CAT_FARM) signals.add(signal);
         }
 
         /** Lets a structure explain all of its natural kinds, except {@code limitedKind}, which it explains {@code limit} of. */
@@ -2520,54 +2629,6 @@ public class SusChunkFinder extends Module {
             return new Signal(longStrands + " grown cave vines", CAT_GROWTH, 0.15, false, true, (int) (ySum / longStrands));
         }
 
-        /**
-         * Jungle trunks and cliffs generate long vine runs pressed against logs, leaves or stone.
-         * Vines that grew while loaded hang free, so mostly-attached runs above Y 55 are skipped.
-         */
-        Signal checkVines() {
-            int minLen = vinesMinLength.get();
-            int longColumns = 0, groundedColumns = 0;
-            long ySum = 0;
-
-            for (int i = 0; i < vinePositions.size(); i++) {
-                int p = vinePositions.getInt(i);
-                int lx = px(p), lz = pz(p), y = py(p);
-
-                // Only start measuring from the bottom-most vine of a vertical run.
-                BlockState below = at(lx, y - 1, lz);
-                if (below != null && below.getBlock() == Blocks.VINE) continue;
-
-                int len = 0, attached = 0;
-                for (int yy = y; yy <= topY; yy++) {
-                    if (at(lx, yy, lz).getBlock() != Blocks.VINE) break;
-                    len++;
-                    if (naturallyAttached(lx, yy, lz)) attached++;
-                }
-
-                if (len < minLen) continue;
-                if (y + len - 1 > 55 && attached >= len * 0.6) continue;
-
-                longColumns++;
-                ySum += y;
-                if (below != null && !below.isAir()) groundedColumns++;
-            }
-
-            if (longColumns < vinesMinColumns.get() || longColumns == 0) return null;
-            if (vinesGroundRatio.get() > 0 && (double) groundedColumns / longColumns < vinesGroundRatio.get()) return null;
-
-            return new Signal(longColumns + " grown vines", CAT_GROWTH, 0.15, false, true, (int) (ySum / longColumns));
-        }
-
-        boolean naturallyAttached(int lx, int y, int lz) {
-            for (Direction dir : Direction.Type.HORIZONTAL) {
-                BlockState side = at(lx + dir.getOffsetX(), y, lz + dir.getOffsetZ());
-                if (side == null) continue;
-                if (side.isIn(BlockTags.LOGS) || side.getBlock() instanceof LeavesBlock
-                    || side.isIn(BlockTags.BASE_STONE_OVERWORLD) || side.isIn(BlockTags.DIRT)) return true;
-            }
-            return false;
-        }
-
         /** Geodes generate with every bud size mixed; a harvesting setup inside or beside one is what marks a farm. */
         Signal checkAmethyst() {
             int automation = 0;
@@ -2706,20 +2767,6 @@ public class SusChunkFinder extends Module {
                 return state.getBlock() instanceof LeavesBlock;
             }
             return false;
-        }
-
-        /** Natural nests start empty. Honey alone only means the chunk ticked; it takes backup to count. */
-        Signal checkBees() {
-            int hives = includeBeehives.get() ? effAll[K_BEEHIVE] : 0;
-            boolean helpers = count[K_CAMPFIRE] > 0 || effAll[K_DISPENSER] > 0 || effAll[K_HOPPER] > 0 || count[K_HONEYCOMB] > 0;
-            boolean nestsCount = nestsFull >= 2 || (nestsHoney > 0 && helpers) || nestsUG > 0;
-            int matched = (nestsCount ? nestsHoney : 0) + hives;
-
-            if (matched == 0 || matched < beeNestMinCount.get()) return null;
-
-            String label = matched + (matched == 1 ? " active bee nest" : " active bee nests");
-            if (hives > 0) return new Signal(label, CAT_FARM, 0.55, true, true, mean(growthYSum, growthYCount));
-            return new Signal(label, CAT_FARM, nestsUG > 0 || helpers ? 0.4 : 0.25, false, true, mean(growthYSum, growthYCount));
         }
 
         /**
