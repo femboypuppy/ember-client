@@ -9,17 +9,19 @@
         if (busy) return;
         const player = Spicetify.Player;
         const item = player.data?.item;
-        const match = /^spotify:track:([A-Za-z0-9]{22})$/.exec(item?.uri || "");
+        const id = [item?.uri, item?.metadata?.uri, item?.id]
+            .map(value => /^(?:spotify:track:)?([A-Za-z0-9]{22})$/.exec(value || "")?.[1])
+            .find(Boolean) || "";
         const artwork = [item?.metadata?.image_url, item?.metadata?.image_large_url,
             item?.album?.images?.[0]?.url, item?.images?.[0]?.url, item?.images?.[0]?.uri]
-            .find(value => typeof value === "string" && value.length > 0) || "";
+            .find(value => typeof value === "string" && /^(?:https:\/\/[^/]*scdn\.co\/|spotify:image:)/.test(value)) || "";
         busy = true;
         try {
             await fetch("http://127.0.0.1:18527/playback", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    id: match?.[1] || "",
+                    id,
                     title: item?.name || item?.metadata?.title || "",
                     artist: item?.artists?.[0]?.name || item?.metadata?.artist_name || "",
                     artworkUrl: artwork,

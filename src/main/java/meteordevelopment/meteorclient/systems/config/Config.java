@@ -81,6 +81,8 @@ public class Config extends System<Config> {
         .name("spicy-lyrics-client-key")
         .description("Your publishable sl_pk_ key, configured to allow native clients without an Origin header.")
         .defaultValue("").build());
+    public final Setting<Boolean> spotifyBridgeEnabled = sgLyrics.add(new BoolSetting.Builder()
+        .name("spotify-local-bridge").description("Automatically accept local playback updates from the Ember Spicetify extension, including after restarting Minecraft.").defaultValue(true).build());
     public final Setting<String> spotifyClientId = sgLyrics.add(new StringSetting.Builder()
         .name("spotify-client-id")
         .description("Public Spotify app client ID. Redirect URI: http://127.0.0.1:18527/callback. No client secret is needed.")

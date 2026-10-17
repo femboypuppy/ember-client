@@ -58,6 +58,23 @@ final class LyricsSourceChecks {
              {"track_name":"Synthetic Song","artist_name":"Example Artist","spotify_track_ids":["bad/id", "%s", "%s"]}]
             """.formatted(id, id)), query);
         require(candidates.equals(List.of(id)), "Candidates must match metadata, be valid base62 IDs and be deduplicated");
+        var manyIds = new com.google.gson.JsonArray();
+        for (int i = 0; i < 20; i++) manyIds.add("%022d".formatted(i));
+        var row = new com.google.gson.JsonObject();
+        row.addProperty("track_name", query.title()); row.addProperty("artist_name", query.artist());
+        row.add("spotify_track_ids", manyIds);
+        var rows = new com.google.gson.JsonArray(); rows.add(row);
+        var expanded = SpotifyTrackResolver.candidates(rows, query);
+        require(expanded.size() == 16 && expanded.contains("%022d".formatted(11)),
+            "Regional catalog IDs beyond the first four must be considered, with a bounded candidate count");
+        var known = new MusicPlayback.Playback("known", id, query.title(), query.artist(), "", "Spotify", "",
+            new PlaybackClock(0, query.durationMs(), true, System.nanoTime()));
+        SpotifyTrackResolver.remember(known);
+        var corrected = new MusicPlayback.Playback("desktop", "", query.title(), query.artist(), "Late album", "Desktop", "",
+            new PlaybackClock(0, query.durationMs() + 250, true, System.nanoTime()));
+        require(SpotifyTrackResolver.update(corrected).id().equals(id),
+            "A verified Spotify ID is reusable without a network request despite duration jitter and late album metadata");
+        SpotifyTrackResolver.stop();
         String fixture = """
             <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"state":{"data":{"entity":
             {"type":"track","id":"%s","name":"Synthetic Song","artists":[{"name":"Example Artist"}],"duration":180000,"isMusicVideo":false}

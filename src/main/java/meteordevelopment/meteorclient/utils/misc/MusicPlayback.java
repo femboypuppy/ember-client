@@ -44,6 +44,7 @@ public final class MusicPlayback {
                     boundDesktop = null; boundSpotifyId = boundArtwork = "";
                 }
             }
+            if (sameRecording && spotify != null && !spotify.artworkUrl().isEmpty()) boundArtwork = spotify.artworkUrl();
             boolean same = sameRecording;
             return new Playback(same ? "spotify:" + boundSpotifyId : "desktop:" + desktopKey,
                 same ? boundSpotifyId : "", desktop.title(), desktop.artist(), desktop.album(),

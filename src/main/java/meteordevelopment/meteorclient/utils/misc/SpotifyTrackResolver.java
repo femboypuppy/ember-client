@@ -8,12 +8,15 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 /** Keyless, best-effort metadata matching. Never treats an unverified candidate as an exact ID. */
 public final class SpotifyTrackResolver {
     public record Lookup(String id, String status, boolean pending) {}
-    private record Cached(Lookup result, long retryAt) {}
+    private record Cached(LrclibLyrics.Query query, String album, Lookup result, long retryAt) {}
     private static final Map<String, Cached> CACHE = new LinkedHashMap<>(32, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Cached> entry) { return size() > 32; }
     };
@@ -25,11 +28,30 @@ public final class SpotifyTrackResolver {
     });
     private static final Pattern NEXT_DATA = Pattern.compile("<script\\b(?=[^>]*\\bid=[\"']__NEXT_DATA__[\"'])[^>]*>(.*?)</script>", Pattern.DOTALL);
     private static volatile String wanted = "";
+    private static LrclibLyrics.Query wantedQuery;
     private static boolean busy;
     private static long nextLookupAt;
     private SpotifyTrackResolver() {}
 
-    public static void stop() { wanted = ""; }
+    public static synchronized void stop() { wanted = ""; wantedQuery = null; }
+
+    public static synchronized void remember(MusicPlayback.Playback playback) {
+        if (!playback.spotifyId().matches("[A-Za-z0-9]{22}")) return;
+        // A direct sample supersedes any metadata search still finishing in the background.
+        wanted = ""; wantedQuery = null;
+        var query = LrclibLyrics.query(playback.title(), playback.artist(), playback.clock().durationMs());
+        if (query.durationMs() > 0) CACHE.put(identity(query), new Cached(query, playback.album(),
+            new Lookup(playback.spotifyId(), "Previously verified Spotify recording", false), Long.MAX_VALUE));
+    }
+
+    private static String identity(LrclibLyrics.Query query) {
+        return query.title().toLowerCase(Locale.ROOT) + '\u0001' + query.artist().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean sameRecording(LrclibLyrics.Query first, LrclibLyrics.Query second) {
+        return first != null && LrclibLyrics.matches(first.title(), first.artist(), first.durationMs(),
+            second.title(), second.artist(), second.durationMs());
+    }
 
     public static synchronized Lookup update(MusicPlayback.Playback playback) {
         var query = LrclibLyrics.query(playback.title(), playback.artist(), playback.clock().durationMs());
@@ -37,22 +59,29 @@ public final class SpotifyTrackResolver {
             return new Lookup("", "Spotify ID matching needs the song title, artist and duration", false);
         if (query.title().length() > 500 || query.artist().length() > 500 || playback.album().length() > 500)
             return new Lookup("", "Song metadata is too long to match safely", false);
-        String key = query.title() + '\u0001' + query.artist() + '\u0001' + playback.album() + '\u0001' + query.durationMs();
-        wanted = key;
+        String cacheKey = identity(query);
+        // Late album metadata and millisecond duration corrections must not cancel work
+        // or miss a successful cache entry on every render frame.
+        if (!sameRecording(wantedQuery, query)) {
+            wantedQuery = query;
+            wanted = cacheKey + '\u0001' + query.durationMs();
+        }
+        String key = wanted;
         long now = System.currentTimeMillis();
-        Cached cached = CACHE.get(key);
-        if (cached != null && now < cached.retryAt) return cached.result;
+        Cached cached = CACHE.get(cacheKey);
+        if (cached != null && sameRecording(cached.query, query) && now < cached.retryAt
+            && (!cached.result.id.isEmpty() || cached.album.equals(playback.album()))) return cached.result;
         if (now < nextLookupAt) return new Lookup("", "Spotify ID matching is waiting to retry", false);
         if (!busy) {
             busy = true;
-            WORKER.execute(() -> resolve(key, query, playback.album()));
+            WORKER.execute(() -> resolve(key, cacheKey, query, playback.album()));
         }
         return new Lookup("", "Finding a Spotify ID from song metadata", true);
     }
 
-    private static void resolve(String key, LrclibLyrics.Query query, String album) {
+    private static void resolve(String key, String cacheKey, LrclibLyrics.Query query, String album) {
         Lookup result = new Lookup("", "No verified Spotify ID for this recording", false);
-        long retry = 600_000, throttle = 1200;
+        long retry = 60_000, throttle = 1200;
         long deadline = System.nanoTime() + 8_000_000_000L;
         try {
             if (!key.equals(wanted)) return;
@@ -65,15 +94,10 @@ public final class SpotifyTrackResolver {
                 JsonObject withoutAlbum = row.deepCopy(); withoutAlbum.addProperty("release_name", ""); body.add(withoutAlbum);
             }
             var response = request("https://labs.api.listenbrainz.org/spotify-id-from-metadata/json", body.toString(), deadline);
-            for (String id : candidates(JsonParser.parseString(response), query)) {
-                if (!key.equals(wanted)) return;
-                String html = request("https://open.spotify.com/embed/track/" + id, null, deadline);
-                String verified = verifiedId(html, id, query);
-                if (!verified.isEmpty()) {
-                    result = new Lookup(verified, "Matched Spotify track metadata", false);
-                    retry = Long.MAX_VALUE;
-                    break;
-                }
+            String verified = verifyCandidates(candidates(JsonParser.parseString(response), query), query, key, deadline);
+            if (!verified.isEmpty()) {
+                result = new Lookup(verified, "Matched Spotify track metadata", false);
+                retry = Long.MAX_VALUE;
             }
         } catch (RateLimited limited) {
             throttle = limited.delay; retry = throttle;
@@ -83,11 +107,47 @@ public final class SpotifyTrackResolver {
             result = new Lookup("", "Spotify ID matching unavailable; using enabled sources", false);
         } finally {
             synchronized (SpotifyTrackResolver.class) {
-                if (key.equals(wanted)) CACHE.put(key, new Cached(result,
+                if (key.equals(wanted)) CACHE.put(cacheKey, new Cached(query, album, result,
                     retry == Long.MAX_VALUE ? Long.MAX_VALUE : System.currentTimeMillis() + retry));
                 nextLookupAt = System.currentTimeMillis() + throttle;
                 busy = false;
             }
+        }
+    }
+
+    private static String verifyCandidates(List<String> candidates, LrclibLyrics.Query query, String key, long deadline) throws Exception {
+        // Catalog results include re-releases, regional IDs and unavailable embeds.
+        // Check four at a time so one bad candidate cannot hide the right recording.
+        var executor = Executors.newVirtualThreadPerTaskExecutor();
+        var completed = new ExecutorCompletionService<String>(executor);
+        List<Future<String>> tasks = new ArrayList<>();
+        var remaining = candidates.iterator();
+        int active = 0;
+        Exception failure = null;
+        try {
+            while (active > 0 || remaining.hasNext()) {
+                if (!key.equals(wanted) || System.nanoTime() >= deadline) break;
+                while (active < 4 && remaining.hasNext()) {
+                    String id = remaining.next();
+                    tasks.add(completed.submit(() -> verifiedId(request("https://open.spotify.com/embed/track/" + id, null, deadline), id, query)));
+                    active++;
+                }
+                var ready = completed.poll(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                if (ready == null) break;
+                active--;
+                try {
+                    String id = ready.get();
+                    if (!id.isEmpty()) return id;
+                } catch (java.util.concurrent.ExecutionException error) {
+                    if (error.getCause() instanceof RateLimited limited) throw limited;
+                    failure = new java.io.IOException("Spotify candidate unavailable", error.getCause());
+                }
+            }
+            if (failure != null) throw failure;
+            return "";
+        } finally {
+            for (var task : tasks) task.cancel(true);
+            executor.shutdownNow();
         }
     }
 
@@ -121,7 +181,7 @@ public final class SpotifyTrackResolver {
                 if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) continue;
                 String id = value.getAsString();
                 if (id.matches("[A-Za-z0-9]{22}")) ids.add(id);
-                if (ids.size() >= 4) return List.copyOf(ids);
+                if (ids.size() >= 16) return List.copyOf(ids);
             }
         }
         return List.copyOf(ids);

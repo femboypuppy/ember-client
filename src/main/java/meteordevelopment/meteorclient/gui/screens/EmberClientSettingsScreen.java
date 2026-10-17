@@ -323,7 +323,9 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = field(r, y, "Spicy Lyrics client key", c.spicyLyricsKey, true);
         label(r, "Enable 'No origin header' in the key's client-access settings.", contentX, y, 0.62, EmberUI.TEXT_DIM, contentW); y += 28;
         action(r, contentX, y, contentW, 34, "Open Spicy Lyrics key dashboard", () -> open("https://developers.spicylyrics.org/dashboard/applications"), false, dt); y += 54;
-        y = section(r, y, "OPTIONAL SPICETIFY BRIDGE", "Use the Ember extension for local playback updates.");
+        y = section(r, y, "OPTIONAL SPICETIFY BRIDGE", "The Ember extension reconnects automatically when Minecraft starts.");
+        y = toggle(r, y, "Automatic local bridge", "Remembered across restarts; accepts playback from Spicetify.", c.spotifyBridgeEnabled.get(),
+            () -> c.spotifyBridgeEnabled.set(!c.spotifyBridgeEnabled.get()), dt);
         action(r, contentX, y, contentW, 34, "Enable local bridge", SpotifyPlayback::enableBridge, false, dt);
         return y + 42;
     }

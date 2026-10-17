@@ -59,6 +59,7 @@ public final class MusicLyricsService {
         String key = config.spicyLyricsKey.get().trim();
         if (!key.startsWith("sl_pk_") || key.length() < 12) return new LyricsSourcePolicy.Response(null, "Add a Spicy Lyrics client key", false);
         String id = playback.spotifyId();
+        if (!id.isEmpty()) SpotifyTrackResolver.remember(playback);
         if (id.isEmpty() && config.lyricsResolveSpotify.get()) {
             var lookup = SpotifyTrackResolver.update(playback);
             if (lookup.pending() || lookup.id().isEmpty()) return new LyricsSourcePolicy.Response(null, lookup.status(), lookup.pending());

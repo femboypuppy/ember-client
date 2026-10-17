@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -36,7 +37,7 @@ public class MediaInfo {
     private static final Pattern SEP = Pattern.compile("");
 
     /** Bump when SOURCE changes so a stale compiled helper is replaced. */
-    private static final String VERSION = "v4-desktop-lyrics";
+    private static final String VERSION = "v5-keyed-artwork";
 
     private static volatile String title = "";
     private static volatile String artist = "";
@@ -52,8 +53,9 @@ public class MediaInfo {
     private static volatile int artFlag = 0;
     private static int loadedArtFlag = -1;
 
-    private static volatile NativeImage pendingArt = null;
-    private static volatile boolean artReady = false;
+    private record Artwork(String key, NativeImage image) {}
+    private static Artwork pendingArt;
+    private static volatile String uploadedArtKey = "";
     private static NativeImageBackedTexture artTexture = null;
 
     private static Thread worker = null;
@@ -67,7 +69,10 @@ public class MediaInfo {
     public static boolean isPlaying() { return playing; }
     public static boolean isAvailable() { return available; }
     public static int getDuration() { return duration; }
-    public static boolean hasArt() { return artReady; }
+    public static boolean hasArt() {
+        var current = current();
+        return current != null && current.key().equals(uploadedArtKey);
+    }
     public static int getArtworkAccent() {
         var current = current();
         return current != null && current.key().equals(artworkKey) ? artworkAccent : -1;
@@ -120,17 +125,19 @@ public class MediaInfo {
     }
 
     /** Must be called from the render thread. Uploads newly fetched art. */
-    public static void uploadPendingArt() {
-        NativeImage img = pendingArt;
-        if (img == null) return;
+    public static synchronized void uploadPendingArt() {
+        Artwork next = pendingArt;
+        if (next == null) return;
         pendingArt = null;
+        var current = current();
+        if (current == null || !next.key.equals(current.key())) { next.image.close(); return; }
 
         NativeImageBackedTexture old = artTexture;
-        artTexture = new NativeImageBackedTexture(() -> "ember-media-art", img);
+        artTexture = new NativeImageBackedTexture(() -> "ember-media-art", next.image);
         mc.getTextureManager().registerTexture(ART_ID, artTexture);
         if (old != null) old.close();
 
-        artReady = true;
+        uploadedArtKey = next.key;
     }
 
     private static void run() {
@@ -162,6 +169,7 @@ public class MediaInfo {
     }
 
     private static void pump(Path exe) throws Exception {
+        loadedArtFlag = -1;
         ProcessBuilder pb = new ProcessBuilder(exe.toString(), artPath.toString());
         pb.redirectErrorStream(false);
 
@@ -200,22 +208,29 @@ public class MediaInfo {
         available = !t.isEmpty();
 
         int flag = parseInt(parts[5]);
-        if (flag != artFlag) {
-            artFlag = flag;
-            loadArt();
+        artFlag = flag;
+        if (parts.length > 8 && session != null) {
+            try {
+                String key = new String(Base64.getDecoder().decode(parts[8]), StandardCharsets.UTF_8);
+                if (key.equals(session.key()) && flag != loadedArtFlag) loadArt(key, flag);
+            } catch (IllegalArgumentException ignored) { }
         }
     }
 
-    private static void loadArt() {
-        if (artFlag == loadedArtFlag) return;
+    private static void loadArt(String key, int flag) {
         try {
             byte[] data = Files.readAllBytes(artPath);
             if (data.length < 16 || data.length > 2_000_000) return;
 
-            pendingArt = NativeImage.read(data);
-            artworkAccent = SongAccentService.extract(data);
-            artworkKey = session == null ? "" : session.key();
-            loadedArtFlag = artFlag;
+            NativeImage image = NativeImage.read(data);
+            int accent = SongAccentService.extract(data);
+            synchronized (MediaInfo.class) {
+                if (pendingArt != null) pendingArt.image.close();
+                pendingArt = new Artwork(key, image);
+                artworkAccent = accent;
+                artworkKey = key;
+                loadedArtFlag = flag;
+            }
         } catch (Throwable ignored) {
         }
     }
@@ -307,6 +322,7 @@ public class MediaInfo {
         using System.IO;
         using System.Text;
         using System.Threading;
+        using System.Security.Cryptography;
         using Windows.Foundation;
         using Windows.Media.Control;
         using Windows.Storage.Streams;
@@ -315,6 +331,8 @@ public class MediaInfo {
             const char SEP = (char)1;
 
             static string lastArtKey = "";
+            static string observedArtKey = "", lastArtHash = "";
+            static DateTime nextArtAttempt = DateTime.MinValue;
             static int artFlag = 0;
 
             // Waits without System.Runtime.WindowsRuntime, which is unusable here: it is
@@ -401,32 +419,47 @@ public class MediaInfo {
                 // Publish metadata before fetching the thumbnail so lyric lookup starts immediately.
                 Write(title, artist, (long)(pos * 1000), (long)(dur * 1000), status,
                     s.SourceAppUserModelId ?? "", p.AlbumTitle ?? "");
-                string key = title + "###" + artist + "###" + s.SourceAppUserModelId + "###" + p.AlbumTitle;
-                if (key != lastArtKey) {
-                    lastArtKey = key;
-                    if (TryWriteArt(p, artPath)) artFlag++;
+                string key = Clean(s.SourceAppUserModelId) + SEP + Clean(title) + SEP + Clean(artist) + SEP + Clean(p.AlbumTitle);
+                if (key != observedArtKey) {
+                    observedArtKey = key;
+                    // Spotify can publish the title before its new thumbnail is ready.
+                    nextArtAttempt = DateTime.UtcNow.AddMilliseconds(400);
+                }
+                if (DateTime.UtcNow >= nextArtAttempt) {
+                    bool success = TryWriteArt(p, artPath, key);
+                    nextArtAttempt = DateTime.UtcNow.AddMilliseconds(success ? 3000 : 1000);
+                    if (success) Write(title, artist, (long)(pos * 1000), (long)(dur * 1000), status,
+                        s.SourceAppUserModelId ?? "", p.AlbumTitle ?? "");
                 }
 
             }
 
-            static bool TryWriteArt(GlobalSystemMediaTransportControlsSessionMediaProperties p, string artPath) {
+            static bool TryWriteArt(GlobalSystemMediaTransportControlsSessionMediaProperties p, string artPath, string key) {
                 if (string.IsNullOrEmpty(artPath) || p.Thumbnail == null) return false;
                 try {
-                    var stream = Wait(p.Thumbnail.OpenReadAsync());
+                    using (var stream = Wait(p.Thumbnail.OpenReadAsync())) {
                     uint size = (uint)stream.Size;
                     if (size == 0 || size > 2000000) return false;
 
-                    var reader = new DataReader(stream.GetInputStreamAt(0));
+                    using (var reader = new DataReader(stream.GetInputStreamAt(0))) {
                     Wait(reader.LoadAsync(size));
 
                     var bytes = new byte[size];
                     reader.ReadBytes(bytes);
+                    string hash;
+                    using (var sha = SHA256.Create()) hash = Convert.ToBase64String(sha.ComputeHash(bytes));
+                    if (lastArtKey == key && lastArtHash == hash && File.Exists(artPath)) return true;
 
                     string tmp = artPath + ".tmp";
                     File.WriteAllBytes(tmp, bytes);
-                    if (File.Exists(artPath)) File.Delete(artPath);
-                    File.Move(tmp, artPath);
+                    if (File.Exists(artPath)) File.Replace(tmp, artPath, null);
+                    else File.Move(tmp, artPath);
+                    lastArtKey = key;
+                    lastArtHash = hash;
+                    artFlag++;
                     return true;
+                    }
+                    }
                 } catch (Exception) {
                     return false;
                 }
@@ -441,6 +474,7 @@ public class MediaInfo {
                 sb.Append(status).Append(SEP);
                 sb.Append(artFlag);
                 sb.Append(SEP).Append(Clean(app)).Append(SEP).Append(Clean(album));
+                sb.Append(SEP).Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(lastArtKey)));
 
                 Console.Out.WriteLine(sb.ToString());
                 Console.Out.Flush();

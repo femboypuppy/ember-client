@@ -47,7 +47,8 @@ public final class SpotifyPlayback {
     private static volatile String refreshToken = "", accessToken = "", sessionClient = "";
     private static volatile long expiresAt, nextPoll, bridgeUntil;
     private static volatile Pending pending;
-    private static HttpServer server;
+    private static volatile HttpServer server;
+    private static long nextBridgeAttempt;
     private static boolean started;
 
     public record Playback(String trackId, String title, String artist, String artworkUrl, PlaybackClock clock, long receivedAtNanos) {
@@ -105,6 +106,7 @@ public final class SpotifyPlayback {
 
     public static void enableBridge() {
         start();
+        Config.get().spotifyBridgeEnabled.set(true);
         WORKER.execute(() -> {
             try { ensureServer(); status = "Waiting for the Ember Spicetify bridge"; }
             catch (IOException ignored) { status = "Local port 18527 is unavailable"; }
@@ -113,6 +115,7 @@ public final class SpotifyPlayback {
 
     public static void disconnect() {
         start();
+        Config.get().spotifyBridgeEnabled.set(false);
         WORKER.execute(() -> {
             accessToken = refreshToken = sessionClient = "";
             playback = null; bridgeUntil = 0; pending = null;
@@ -123,6 +126,17 @@ public final class SpotifyPlayback {
     }
 
     private static void poll() {
+        // The extension keeps publishing while Minecraft is closed. Reopen the listener
+        // automatically, and retry an occupied port without requiring another button click.
+        var config = Config.get();
+        if (config != null && config.spotifyBridgeEnabled.get() && server == null
+            && System.currentTimeMillis() >= nextBridgeAttempt) {
+            try { ensureServer(); status = "Waiting for the Ember Spicetify bridge"; }
+            catch (IOException ignored) {
+                nextBridgeAttempt = System.currentTimeMillis() + 10_000;
+                status = "Local port 18527 is unavailable; retrying";
+            }
+        }
         if (System.nanoTime() < bridgeUntil || System.currentTimeMillis() < nextPoll) return;
         if (Config.get() == null || (!Config.get().lyricsEnabled.get() && !Config.get().songAccent.get())) return;
         String client = Config.get().spotifyClientId.get().trim();
@@ -134,6 +148,8 @@ public final class SpotifyPlayback {
             HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.spotify.com/v1/me/player/currently-playing"))
                 .timeout(Duration.ofSeconds(8)).header("Authorization", "Bearer " + accessToken).GET().build();
             HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            // A bridge sample may arrive while the Web API request is in flight.
+            if (System.nanoTime() < bridgeUntil) return;
             if (response.statusCode() == 204) { playback = null; status = "Play a song in Spotify"; return; }
             if (response.statusCode() == 401) { accessToken = ""; playback = null; return; }
             if (response.statusCode() == 429) {
@@ -152,9 +168,11 @@ public final class SpotifyPlayback {
             accept(item.get("id").getAsString(), item.get("name").getAsString(), artist,
                 body.get("progress_ms").getAsLong(), item.get("duration_ms").getAsLong(), body.get("is_playing").getAsBoolean(), artwork(item));
         } catch (AuthorizationException ignored) {
+            if (System.nanoTime() < bridgeUntil) return;
             playback = null;
             status = "Reconnect Spotify in Lyrics settings";
         } catch (Exception ignored) {
+            if (System.nanoTime() < bridgeUntil) return;
             nextPoll = System.currentTimeMillis() + 15_000;
             playback = null; status = "Spotify is offline; waiting to reconnect";
         }
@@ -221,6 +239,9 @@ public final class SpotifyPlayback {
 
     private static void bridge(HttpExchange exchange) throws IOException {
         try (exchange) {
+            if (Config.get() == null || !Config.get().spotifyBridgeEnabled.get()) {
+                respond(exchange, 403, "Local bridge disabled"); return;
+            }
             String origin = exchange.getRequestHeaders().getFirst("Origin");
             if (origin != null && !BRIDGE_ORIGINS.contains(origin)) { respond(exchange, 403, "Origin not allowed"); return; }
             if (origin != null) exchange.getResponseHeaders().set("Access-Control-Allow-Origin", origin);
@@ -267,7 +288,9 @@ public final class SpotifyPlayback {
         PlaybackClock clock = previous != null && previous.trackId.equals(id)
             ? previous.clock.corrected(position, duration, playing, now)
             : new PlaybackClock(Math.max(0, position), Math.max(0, duration), playing, now);
-        playback = new Playback(id, title, artist, ArtworkAccent.normalizeUrl(artwork), clock, now);
+        String cover = ArtworkAccent.normalizeUrl(artwork);
+        if (cover.isEmpty() && previous != null && previous.trackId.equals(id)) cover = previous.artworkUrl;
+        playback = new Playback(id, title, artist, cover, clock, now);
         status = playing ? "Spotify connected" : "Spotify paused";
     }
     private static void respond(HttpExchange exchange, int status, String text) throws IOException {

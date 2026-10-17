@@ -22,6 +22,12 @@ public final class DesktopMusicChecks {
         var direct = new SpotifyPlayback.Playback("0000000000000000000000", session.title(), session.artist(), "", session.clock(), now);
         var exact = MusicPlayback.choose(direct, session);
         require(exact.spotifyId().equals(direct.trackId()), "Matching desktop songs retain the exact Spotify ID");
+        var withCover = new SpotifyPlayback.Playback(direct.trackId(), session.title(), session.artist(),
+            "https://i.scdn.co/image/updated", session.clock(), now + 1);
+        require(MusicPlayback.choose(withCover, session).artworkUrl().equals(withCover.artworkUrl()),
+            "Artwork arriving after the Spotify ID must refresh even if song metadata did not change");
+        require(MusicPlayback.choose(null, session).artworkUrl().equals(withCover.artworkUrl()),
+            "Late artwork survives a temporary Spotify dropout");
         for (int i = 0; i < 200; i++) {
             var jitter = new DesktopMediaSession(session.title(), session.artist(), i % 2 == 0 ? "" : session.album(), session.appId(),
                 new PlaybackClock(60000 + i, 180000 + i % 4 * 100, true, now + i), now + i);

@@ -32,6 +32,9 @@ jobs:
       - name: Build
         run: ./gradlew build
 
+      - name: Check music bridge and artwork lifecycle
+        run: python3 scripts/check_music_connection.py
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:

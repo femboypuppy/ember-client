@@ -35,8 +35,12 @@ Ember then checks public Spotify embed metadata against the title, artist and
 duration before using an ID. This is a best-effort internet lookup, not an ID
 derived locally: catalog coverage is incomplete and Spotify's public metadata
 format may change. Invalid, mismatched and music-video results are rejected.
-Matching runs in the background with a shared eight-second budget, bounded
-responses and an in-memory cache. The desktop player continues to supply timing.
+Matching checks up to sixteen regional/re-release IDs, four at a time, in the
+background with a shared eight-second budget and bounded responses. One unavailable
+embed no longer stops the other candidates. Directly supplied IDs and successful
+matches are cached for the session; small duration corrections and late album labels
+reuse them. Misses retry after one minute, and temporary network failures retry
+after thirty seconds. The desktop player continues to supply timing.
 Disable **Find Spotify track IDs** to keep only exact IDs from Spotify/Spicetify.
 Your own Spicy Lyrics client key is still required for the lyrics themselves.
 
@@ -120,12 +124,14 @@ millisecond playback position without a Spotify developer application:
 1. Copy `integrations/spicetify/ember-lyrics-bridge.js` to your Spicetify `Extensions` folder.
 2. Enable it using `spicetify config extensions ember-lyrics-bridge.js`, then
    `spicetify apply`.
-3. On Ember's **Music & lyrics** page, click **Enable local bridge**.
+3. Leave **Automatic local bridge** enabled on Ember's **Music & lyrics** page
+   (the default). The extension reconnects when Minecraft starts.
 
 The bridge posts only track ID, title, artist, artwork URL, position, duration, and playback
 state to `127.0.0.1:18527`. It sends no Spotify access token or lyric API key.
-It is not installed automatically. Enable the bridge again after restarting
-Minecraft. The Spicy Lyrics client key is required for Spicy Lyrics with either
+It is not installed automatically. Ember remembers the bridge setting across
+restarts and retries if its local port is temporarily busy. **Disconnect** also
+disables the bridge; **Enable local bridge** enables it again. The Spicy Lyrics client key is required for Spicy Lyrics with either
 connection method. LRCLIB metadata search does not require a client key.
 
 ## Timing and checks
@@ -179,6 +185,9 @@ it sends artwork URLs. Old bridge versions still provide lyrics.
 
 Desktop players use their Windows-provided thumbnail for the same artwork accent,
 decoded locally on a worker thread without downloading a cover from another service.
+The music widget associates each thumbnail with its song, hides the previous cover
+on a track change, and retries missing or unreadable images. The helper also checks
+for delayed thumbnail updates without re-uploading an unchanged cover.
 
 Cover downloads and image decoding run on a worker thread and cache 32 artwork
 colors. Missing artwork falls back to the chosen manual theme. Selecting a manual
