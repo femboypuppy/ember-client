@@ -118,6 +118,11 @@ public class Font {
     }
 
     public double render(MeshBuilder mesh, String string, double x, double y, Color color, double scale) {
+        return renderClipped(mesh, string, x, y, color, scale, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY);
+    }
+
+    /** Clip glyph geometry and UVs together without flushing other HUD text batches. */
+    public double renderClipped(MeshBuilder mesh, String string, double x, double y, Color color, double scale, double left, double right) {
         y += ascent * this.scale * scale;
 
         int length = string.length();
@@ -128,12 +133,18 @@ public class Font {
             CharData c = charMap.get(cp);
             if (c == null) c = charMap.get(32);
 
-            mesh.quad(
-                mesh.vec2(x + c.x0 * scale, y + c.y0 * scale).vec2(c.u0, c.v0).color(color).next(),
-                mesh.vec2(x + c.x0 * scale, y + c.y1 * scale).vec2(c.u0, c.v1).color(color).next(),
-                mesh.vec2(x + c.x1 * scale, y + c.y1 * scale).vec2(c.u1, c.v1).color(color).next(),
-                mesh.vec2(x + c.x1 * scale, y + c.y0 * scale).vec2(c.u1, c.v0).color(color).next()
-            );
+            double gx0 = x + c.x0 * scale, gx1 = x + c.x1 * scale;
+            double clipped0 = Math.max(left, gx0), clipped1 = Math.min(right, gx1);
+            if (clipped1 > clipped0) {
+                double u0 = c.u0 + (c.u1 - c.u0) * (clipped0 - gx0) / (gx1 - gx0);
+                double u1 = c.u0 + (c.u1 - c.u0) * (clipped1 - gx0) / (gx1 - gx0);
+                mesh.quad(
+                    mesh.vec2(clipped0, y + c.y0 * scale).vec2(u0, c.v0).color(color).next(),
+                    mesh.vec2(clipped0, y + c.y1 * scale).vec2(u0, c.v1).color(color).next(),
+                    mesh.vec2(clipped1, y + c.y1 * scale).vec2(u1, c.v1).color(color).next(),
+                    mesh.vec2(clipped1, y + c.y0 * scale).vec2(u1, c.v0).color(color).next()
+                );
+            }
 
             x += c.xAdvance * scale;
         }

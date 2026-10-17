@@ -7,590 +7,383 @@ import meteordevelopment.meteorclient.renderer.Fonts;
 import meteordevelopment.meteorclient.renderer.text.FontFace;
 import meteordevelopment.meteorclient.renderer.text.FontFamily;
 import meteordevelopment.meteorclient.renderer.text.FontInfo;
+import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.screens.HudEditorScreen;
+import meteordevelopment.meteorclient.utils.misc.SpicyLyricsService;
+import meteordevelopment.meteorclient.utils.misc.SpotifyPlayback;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
+import meteordevelopment.meteorclient.utils.render.EmberAppearance;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.gui.Click;
-import net.minecraft.util.math.MathHelper;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.input.CharInput;
+import net.minecraft.client.input.KeyInput;
+import net.minecraft.util.Util;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.DoubleConsumer;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 import static meteordevelopment.meteorclient.utils.Utils.getWindowHeight;
 import static meteordevelopment.meteorclient.utils.Utils.getWindowWidth;
-import static org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
+import static org.lwjgl.glfw.GLFW.*;
 
-/**
- * Ember's own client settings screen: theme, font and widgets in one place, styled like the
- * rest of the client rather than falling back to Meteor's stock setting screens.
- */
+/** A single, categorized settings surface with clipped content and consistent controls. */
 public class EmberClientSettingsScreen extends WidgetScreen {
-    // Refreshed from EmberPalette every frame, so this screen follows the selected theme.
-    private static Color PANEL_BG, HEADER_BG, DIVIDER, ROW_BG, LIST_BG, TEXT_WHITE, TEXT_DIM, ON_ACCENT;
-
-    static {
-        syncPalette();
+    public enum Page {
+        Appearance("Appearance", "Surfaces, accent colors and glass"),
+        Typography("Typography", "Choose a readable font for Ember"),
+        Widgets("HUD widgets", "Choose what appears in your game"),
+        Music("Spotify & lyrics", "Connections, vocals and synchronization");
+        final String title, subtitle;
+        Page(String title, String subtitle) { this.title = title; this.subtitle = subtitle; }
     }
-
-    private static final double PW = 560;
-    /** Starting height only; the panel is sized to whatever the left column actually needs. */
-    private static final double PH_MIN = 300;
-    private static final double PR = 10;
-    private static final double ROW_H = 32;
-    private static final double HEADER_H = 44;
-    private static final double LIST_W = 210;
-
-    /** A clickable area recorded while drawing, so click handling never re-derives the layout. */
     private record Hit(double x, double y, double w, double h, Runnable action) {
-        boolean contains(double px, double py) {
-            return px >= x && px < x + w && py >= y && py < y + h;
-        }
+        boolean contains(double mx, double my) { return mx >= x && mx < x + w && my >= y && my < y + h; }
     }
-
+    private static final double NAV = 164, ROW = 48;
     private final List<Hit> hits = new ArrayList<>();
-    private final Map<Object, Float> anims = new HashMap<>();
+    private final Map<String, Float> animations = new HashMap<>();
+    private final Map<Setting<String>, Double> fieldPositions = new HashMap<>();
     private final EmberAnim.Clock clock = new EmberAnim.Clock();
+    private Page page;
+    private double px, py, pw, ph, mx, my, contentX, contentY, contentW, viewportH;
+    private double scroll, scrollTarget, contentHeight, pageFade = 1;
+    private String dragging;
+    private Setting<String> editing;
+    private String editBuffer = "";
+    private boolean selectAll, confirmReset;
+    private double openFade;
 
-    private double px, py, mx, my;
-    private float fade;
-    private int fontScroll;
-
-    /**
-     * The panel grows to fit its rows instead of assuming a height. Rows have been added to
-     * this screen repeatedly, and a fixed height simply let the later ones spill out the
-     * bottom with no sign anything was wrong.
-     */
-    private double panelH = 430;
-    private double measuredLeftH;
-    private double leftScroll, leftScrollTarget;
-
-    /** Recorded while laying out, so section headings cannot drift away from their rows. */
-    private double widgetsLabelY = -1;
-
-    /** Which slider is being held, so several on one screen can drag independently. */
-    private Object draggingSlider;
-
-    public EmberClientSettingsScreen(GuiTheme theme) {
-        // WidgetScreen already records the screen this was opened from as `parent`.
-        super(theme, "Client Settings");
+    public EmberClientSettingsScreen(GuiTheme theme) { this(theme, Page.Appearance); }
+    public EmberClientSettingsScreen(GuiTheme theme, Page page) { super(theme, "Ember settings"); this.page = page; }
+    @Override public void initWidgets() { clear(); }
+    @Override public void mouseMoved(double x, double y) {
+        mx = x * mc.getWindow().getScaleFactor(); my = y * mc.getWindow().getScaleFactor();
+        super.mouseMoved(x, y);
+    }
+    private void selectPage(Page next) {
+        if (page == next) return;
+        commitField(); dragging = null; confirmReset = false;
+        page = next; scroll = scrollTarget = contentHeight = 0; pageFade = 0;
     }
 
-    /**
-     * Shared with the module menu, so this screen is flat black and follows the appearance
-     * setting like everything else. It used to fill from the accent-tinted palette, which left
-     * it looking purple next to a menu that had already moved to black.
-     */
-    private static void syncPalette() {
-        PANEL_BG = EmberUI.bg();
-        HEADER_BG = EmberUI.raised();
-        DIVIDER = EmberUI.DIVIDER;
-        ROW_BG = EmberUI.WELL;
-        LIST_BG = new Color(EmberUI.WELL.r, EmberUI.WELL.g, EmberUI.WELL.b, 190);
-        TEXT_WHITE = EmberUI.TEXT;
-        TEXT_DIM = EmberUI.TEXT_DIM;
-        // Dark text for use on top of accent-coloured fills.
-        ON_ACCENT = meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid() ? TEXT_WHITE : new Color(10, 10, 13, 255);
-    }
-
-    @Override
-    public void initWidgets() {
-        clear();
-    }
-
-    /** This branch hands onRenderBefore no mouse position, so track the cursor here. */
-    @Override
-    public void mouseMoved(double mouseX, double mouseY) {
-        double s = mc.getWindow().getScaleFactor();
-        mx = mouseX * s;
-        my = mouseY * s;
-        super.mouseMoved(mouseX, mouseY);
-    }
-    private Color accent() {
-        return EmberPalette.accent();
-    }
-
-    private Color accentAlpha(int a) {
-        Color c = accent();
-        return new Color(c.r, c.g, c.b, Math.max(0, Math.min(255, a)));
-    }
-
-    private float anim(Object key, float target, float dt) {
-        float cur = EmberAnim.approach(anims.getOrDefault(key, target), target, dt, 0.065);
-        anims.put(key, cur);
-        return cur;
-    }
-
-    @Override
-    protected void onRenderBefore(DrawContext graphics, float delta) {
-        syncPalette();
-        float dt = clock.tick();
-        leftScrollTarget = Math.max(0, Math.min(leftScrollTarget, Math.max(0, measuredLeftH - (panelH - HEADER_H - 18))));
-        leftScroll = EmberAnim.approach(leftScroll, leftScrollTarget, dt, 0.06);
-
-        hits.clear();
-
-        fade = Math.min(1f, fade + dt / 0.22f);
-        float f = 1f - (1f - fade) * (1f - fade) * (1f - fade);
-
-        // Sized from what the previous frame actually laid out, clamped to the screen. The
-        // correction lands during the open fade, so it is never visible as a resize.
-        if (measuredLeftH > 0) {
-            panelH = Math.max(PH_MIN, Math.min(getWindowHeight() - 40, HEADER_H + measuredLeftH + 18));
+    @Override protected void onRenderBefore(DrawContext graphics, float delta) {
+        double dt = clock.tick();
+        openFade = Math.min(1, openFade + dt / 0.18); pageFade = Math.min(1, pageFade + dt / 0.16);
+        pw = Math.min(760, getWindowWidth() - 32); ph = Math.min(600, getWindowHeight() - 32);
+        px = (getWindowWidth() - pw) / 2.0; py = (getWindowHeight() - ph) / 2.0;
+        contentX = px + NAV + 24; contentY = py + 104; contentW = pw - NAV - 48; viewportH = ph - 132;
+        scrollTarget = Math.clamp(scrollTarget, 0, Math.max(0, contentHeight - viewportH));
+        scroll = EmberAnim.approach(scroll, scrollTarget, dt, 0.065);
+        hits.clear(); fieldPositions.clear();
+        GuiRenderer r = new GuiRenderer(); r.theme = theme; r.begin(graphics);
+        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (145 * openFade)));
+        EmberUI.shadow(r, px, py, pw, ph, (float) openFade);
+        EmberUI.rim(r, px, py, pw, ph, 14, (float) openFade);
+        r.roundedRect(px, py, pw, ph, 14, EmberUI.bg());
+        EmberUI.gloss(r, px, py, pw, ph, 14, (float) openFade);
+        r.roundedRect(px + 9, py + 9, NAV - 10, ph - 18, 9, EmberUI.raised());
+        label(r, "EMBER", px + 24, py + 26, 1.04, EmberUI.TEXT, NAV - 40);
+        label(r, "CLIENT SETTINGS", px + 24, py + 51, 0.58, EmberUI.TEXT_DIM, NAV - 40);
+        double ny = py + 100;
+        for (Page option : Page.values()) {
+            boolean selected = page == option;
+            double hover = anim("nav-" + option, selected || hovered(px + 17, ny, NAV - 26, 42) ? 1 : 0, dt);
+            if (hover > 0.01) r.roundedRect(px + 17, ny, NAV - 26, 42, 7, accent((int) ((selected ? 44 : 20) * hover)));
+            if (selected) r.roundedRect(px + 17, ny + 12, 3, 18, 1.5, EmberPalette.accent());
+            label(r, option.title, px + 29, ny + 12, 0.81, selected ? EmberUI.TEXT : EmberUI.TEXT_DIM, NAV - 45);
+            hits.add(new Hit(px + 17, ny, NAV - 26, 42, () -> selectPage(option))); ny += 48;
         }
-
-        px = (getWindowWidth() - PW) / 2;
-        py = (getWindowHeight() - panelH) / 2;
-
-        GuiRenderer r = new GuiRenderer();
-        r.theme = theme;
-        r.begin(graphics);
-
-        // Dim backdrop in its own batch so it does not darken the panel's glow.
-        r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
-        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (150 * f)));
+        label(r, "Changes save automatically", px + 24, py + ph - 45, 0.53, EmberUI.TEXT_DIM, NAV - 36);
+        label(r, page.title, contentX, py + 24, 1.2, EmberUI.TEXT, contentW - 30);
+        label(r, page.subtitle, contentX, py + 58, 0.73, EmberUI.TEXT_DIM, contentW);
+        r.quad(contentX, py + 88, contentW, 1, EmberUI.DIVIDER);
+        action(r, px + pw - 45, py + 18, 28, 28, "X", this::close, false, dt);
+        int firstContentHit = hits.size();
+        r.scissorStart(contentX, contentY, contentW, viewportH);
+        double start = contentY - scroll + (1 - pageFade) * 6;
+        double end = switch (page) {
+            case Appearance -> appearance(r, start, dt);
+            case Typography -> typography(r, start, dt);
+            case Widgets -> widgets(r, start, dt);
+            case Music -> music(r, start, dt);
+        };
+        contentHeight = end - start;
         r.scissorEnd();
-
-        // Shadow, not an accent halo - the menu dropped those and this should match.
-        EmberUI.shadow(r, px, py, PW, panelH, f);
-        EmberUI.rim(r, px, py, PW, panelH, EmberUI.RADIUS, f);
-        r.roundedRect(px, py, PW, panelH, EmberUI.RADIUS, PANEL_BG);
-        EmberUI.gloss(r, px, py, PW, panelH, EmberUI.RADIUS, f);
-
-        // Header
-        r.roundedRect(px, py, PW, HEADER_H + PR, PR, HEADER_BG);
-        r.quad(px, py + HEADER_H, PW, PR, HEADER_BG);
-        r.quad(px, py + HEADER_H, PW, 1, DIVIDER);
-
-        double cbX = px + PW - 34, cbY = py + 13;
-        boolean closeHover = mx >= cbX - 6 && mx < cbX + 20 && my >= cbY - 5 && my < cbY + 21;
-        float ca = anim("close", closeHover ? 1f : 0f, dt);
-        if (ca > 0.01f) r.roundedRect(cbX - 6, cbY - 5, 26, 26, 6, new Color(222, 86, 86, (int) (60 * ca)));
-        hits.add(new Hit(cbX - 6, cbY - 5, 26, 26, this::close));
-
-        double leftW = PW - 36 - LIST_W - 14;
-        double clipTop = py + HEADER_H + 32, clipBottom = py + panelH - 12;
-        int firstLeftHit = hits.size();
-        r.scissorStart(px + 18, clipTop, leftW, Math.max(0, clipBottom - clipTop));
-        drawLeftColumn(r, dt);
-        r.scissorEnd();
-        for (int i = hits.size() - 1; i >= firstLeftHit; i--) {
+        for (int i = hits.size() - 1; i >= firstContentHit; i--) {
             Hit hit = hits.get(i);
-            if (hit.y < clipTop || hit.y + hit.h > clipBottom) hits.remove(i);
+            if (hit.y < contentY || hit.y + hit.h > contentY + viewportH) hits.remove(i);
         }
-        if (measuredLeftH > panelH - HEADER_H - 18) {
-            double trackH = clipBottom - clipTop;
-            double thumbH = Math.max(24, trackH * trackH / measuredLeftH);
-            double maxScroll = Math.max(1, measuredLeftH - (panelH - HEADER_H - 18));
-            r.roundedRect(px + 18 + leftW + 3, clipTop + (trackH - thumbH) * leftScroll / maxScroll, 3, thumbH, 1.5, accentAlpha(130));
+        if (contentHeight > viewportH) {
+            double thumb = Math.max(28, viewportH * viewportH / contentHeight);
+            r.roundedRect(px + pw - 13, contentY + (viewportH - thumb) * scroll / Math.max(1, contentHeight - viewportH), 3, thumb, 1.5, accent(145));
         }
-        drawFontList(r, dt);
-
         r.end();
-
-        drawText(graphics, closeHover);
     }
 
-    // --- Left column: theme, font toggle, widgets ---
-
-    private void drawLeftColumn(GuiRenderer r, float dt) {
-        double x = px + 18;
-        double w = PW - 36 - LIST_W - 14;
-        double y = py + HEADER_H + 16 - leftScroll;
-
-        y += 18; // section label
-        y = themeRow(r, dt, x, y, w);
-        y += 8;
-
-        y = appearanceRow(r, dt, x, y, w);
-        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) {
-            r.roundedRect(x, y, w, ROW_H, 7, accentAlpha(38));
-            texts.add(new Label("Arrange HUD like reference", x + 12, y + ROW_H / 2, TEXT_WHITE, 0.84));
-            hits.add(new Hit(x, y, w, ROW_H, this::arrangeGlassHud));
-            y += ROW_H + 8;
-        }
-
-        // Only meaningful while frosted, so it stays out of the way otherwise.
-        if (meteordevelopment.meteorclient.utils.render.EmberAppearance.frosted()) {
-            y = sliderRow(r, dt, x, y, w, "Glass", Config.get().glass.get(),
-                v -> Config.get().glass.set(v));
-            y = sliderRow(r, dt, x, y, w, "Blur", Config.get().glassBlur.get(),
-                v -> Config.get().glassBlur.set(v));
-            y = sliderRow(r, dt, x, y, w, "Liquidity", Config.get().glassLiquid.get(),
-                v -> Config.get().glassLiquid.set(v));
-            y = sliderRow(r, dt, x, y, w, "Tint", Config.get().glassTint.get(),
-                v -> Config.get().glassTint.set(v));
-            y = toggleRow(r, dt, x, y, w, "Accent tint", Config.get().glassAccent.get(),
-                () -> Config.get().glassAccent.set(!Config.get().glassAccent.get()));
-            if (meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid()) {
-                y = sliderRow(r, dt, x, y, w, "Motion", Config.get().liquidMotion.get() / 2,
-                    v -> Config.get().liquidMotion.set(v * 2));
-            }
-        }
-
-        // The master switch for the HUD. Without this the only ways to reach it are Meteor's
-        // own HUD tab, the .toggle command or a keybind, none of which live in Ember's UI.
-        y = toggleRow(r, dt, x, y, w, "HUD enabled", Hud.get().active,
-            () -> Hud.get().active = !Hud.get().active);
-        y = toggleRow(r, dt, x, y, w, "Lyrics pill", Config.get().lyricsEnabled.get(),
-            () -> Config.get().lyricsEnabled.set(!Config.get().lyricsEnabled.get()));
-        r.roundedRect(x, y, w, ROW_H, 7, ROW_BG);
-        texts.add(new Label("Spotify / Lyrics setup", x + 12, y + ROW_H / 2, TEXT_WHITE, 0.86));
-        hits.add(new Hit(x, y, w, ROW_H, () -> mc.setScreen(new EmberLyricsSettingsScreen(theme))));
-        y += ROW_H + 8;
-
-        boolean custom = Config.get().customFont.get();
-        y = toggleRow(r, dt, x, y, w, "Custom font", custom,
-            () -> Config.get().customFont.set(!Config.get().customFont.get()));
-        y += 16;
-
-        // Recorded rather than recomputed: the heading used to be placed by an arithmetic
-        // expression that assumed how many rows sat above it, so every row added since landed
-        // it on top of one of them.
-        widgetsLabelY = y;
-        y += 18;
-
-        y = widgetRow(r, dt, x, y, w, "Status bar", "ember-status-bar");
-        y = widgetRow(r, dt, x, y, w, "Info pill", "ember-bubbles");
-        y = widgetRow(r, dt, x, y, w, "Keybinds", "ember-keybinds");
-        y = widgetRow(r, dt, x, y, w, "Staff detector", "ember-staff");
-        y = widgetRow(r, dt, x, y, w, "Region map", "ember-region-map");
-        y = widgetRow(r, dt, x, y, w, "Armor", "ember-armor");
-        y = widgetRow(r, dt, x, y, w, "Target", "ember-target");
-        y = widgetRow(r, dt, x, y, w, "Module list", "ember-module-list");
-        y = widgetRow(r, dt, x, y, w, "Notifications", "ember-notifications");
-        y = widgetRow(r, dt, x, y, w, "Music widget", "spotify");
-        y += 10;
-
-        // Action rows
-        float ha = anim("hudedit", hovered(x, y, w, ROW_H) ? 1f : 0f, dt);
-        r.roundedRect(x, y, w, ROW_H, 7, new Color(
-            (int) MathHelper.lerp(ha * 0.35f, ROW_BG.r, accent().r),
-            (int) MathHelper.lerp(ha * 0.35f, ROW_BG.g, accent().g),
-            (int) MathHelper.lerp(ha * 0.35f, ROW_BG.b, accent().b), 235));
-        hits.add(new Hit(x, y, w, ROW_H, () -> mc.setScreen(new HudEditorScreen(theme))));
-        texts.add(new Label("Edit HUD positions", x + 12, y + (ROW_H - 0) / 2, TEXT_WHITE, 0.92));
-
-        y += ROW_H + 8;
-
-        // Wipes every widget back to Ember's layout, which is the only way to clear leftovers
-        // from a config saved before it - saved elements always win over new defaults.
-        float hr = anim("hudreset", hovered(x, y, w, ROW_H) ? 1f : 0f, dt);
-        r.roundedRect(x, y, w, ROW_H, 7, new Color(
-            (int) MathHelper.lerp(hr * 0.35f, ROW_BG.r, 222),
-            (int) MathHelper.lerp(hr * 0.35f, ROW_BG.g, 86),
-            (int) MathHelper.lerp(hr * 0.35f, ROW_BG.b, 86), 235));
-        hits.add(new Hit(x, y, w, ROW_H, () -> Hud.get().resetToDefaultElements()));
-        texts.add(new Label("Reset HUD to Ember defaults", x + 12, y + (ROW_H - 0) / 2, TEXT_WHITE, 0.92));
-
-        // What the panel has to be tall enough to hold, measured from below the header.
-        measuredLeftH = (y + ROW_H + leftScroll) - (py + HEADER_H);
-    }
-
-    /**
-     * A 0..1 slider. Clicking the track jumps to that value and keeps following the cursor
-     * until the button comes up, so it can be dragged as well as tapped.
-     */
-    private double sliderRow(GuiRenderer r, float dt, double x, double y, double w, String label,
-                             double value, java.util.function.DoubleConsumer onChange) {
-        r.roundedRect(x, y, w, ROW_H, 7, ROW_BG);
-
-        double trackW = 150, trackH = 4;
-        double tx = x + w - 12 - trackW;
-        double ty = y + (ROW_H - trackH) / 2;
-
-        boolean dragging = label.equals(draggingSlider);
-        boolean over = hovered(tx - 8, y, trackW + 16, ROW_H);
-        float a = anim("slider-" + label, over || dragging ? 1f : 0f, dt);
-
-        // Follow the cursor while held, which is what makes it feel like a slider rather
-        // than a row of steps.
-        if (dragging) {
-            double next = Math.max(0, Math.min(1, (mx - tx) / trackW));
-            if (Math.abs(next - value) > 0.001) {
-                onChange.accept(next);
-                value = next;
-            }
-        }
-
-        r.roundedRect(tx, ty, trackW, trackH, trackH / 2, new Color(44, 44, 53, 255));
-        double filled = trackW * value;
-        if (filled > trackH) r.roundedRect(tx, ty, filled, trackH, trackH / 2, accent());
-
-        double knob = 11 + 2 * a;
-        r.roundedRect(tx + filled - knob / 2, y + (ROW_H - knob) / 2, knob, knob, knob / 2, TEXT_WHITE);
-
-        hits.add(new Hit(tx - 8, y, trackW + 16, ROW_H, () -> draggingSlider = label));
-
-        texts.add(new Label(label, x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));
-        texts.add(new Label(String.format("%.0f%%", value * 100), x + w - 12 - trackW - 46,
-            y + ROW_H / 2, TEXT_DIM, 0.84));
-
-        return y + ROW_H + 8;
-    }
-
-    /** All styles remain visible without overlapping the row label. */
-    private double appearanceRow(GuiRenderer r, float dt, double x, double y, double w) {
-        r.roundedRect(x, y, w, 62, 8, ROW_BG);
-
-        var options = meteordevelopment.meteorclient.utils.render.EmberAppearance.values();
-        var current = meteordevelopment.meteorclient.utils.render.EmberAppearance.current();
-
-        double gap = 4;
-        double bw = (w - 16 - (options.length - 1) * gap) / options.length;
-        double sx = x + 8, by = y + 28, bh = 26;
-        double selected = anim("appearance-position", current.ordinal(), dt);
-        r.roundedRect(sx + selected * (bw + gap), by, bw, bh, 6, accentAlpha(230));
-
+    private double appearance(GuiRenderer r, double y, double dt) {
+        y = section(r, y, "SURFACE STYLE", "Choose the material used across menus and HUD.");
+        EmberAppearance[] options = EmberAppearance.values();
+        double gap = 8, cardW = (contentW - gap * (options.length - 1)) / options.length;
         for (int i = 0; i < options.length; i++) {
-            var option = options[i];
-            double bx = sx + i * (bw + gap);
-            boolean sel = current == option;
-            float a = anim("appearance" + i, hovered(bx, by, bw, bh) ? 1f : 0f, dt);
-            if (!sel && a > 0.01f) r.roundedRect(bx, by, bw, bh, 6, new Color(255, 255, 255, (int) (18 * a)));
-            hits.add(new Hit(bx, by, bw, bh, () -> Config.get().appearance.set(option)));
-            texts.add(new Label(option.toString(), bx + 6, by + bh / 2, sel ? ON_ACCENT : TEXT_WHITE, 0.66));
+            EmberAppearance option = options[i]; double x = contentX + i * (cardW + gap);
+            boolean selected = option == EmberAppearance.current();
+            r.roundedRect(x, y, cardW, 84, 9, selected ? accent(55) : EmberUI.WELL);
+            if (selected) r.roundedRect(x + 12, y + 11, cardW - 24, 3, 1.5, EmberPalette.accent());
+            label(r, option.toString(), x + 12, y + 28, 0.83, EmberUI.TEXT, cardW - 20);
+            label(r, switch (option) { case Solid -> "Clean & opaque"; case Frosted -> "Soft & blurred"; case LiquidGlass -> "Refractive glass"; }, x + 12, y + 55, 0.58, EmberUI.TEXT_DIM, cardW - 20);
+            hits.add(new Hit(x, y, cardW, 84, () -> Config.get().appearance.set(option)));
         }
-
-        texts.add(new Label("Surface style", x + 10, y + 13, TEXT_WHITE, 0.86));
-        return y + 70;
-    }
-
-    private double themeRow(GuiRenderer r, float dt, double x, double y, double w) {
-        r.roundedRect(x, y, w, ROW_H, 7, ROW_BG);
-
-        // Swatches, so the theme is picked by eye rather than by cycling a name.
+        y += 104;
+        y = section(r, y, "ACCENT COLOR", "Used for selections, switches and lyric highlights.");
         int count = EmberPalette.NAMES.length;
-        double sw = 20, gap = 6;
-        double total = count * sw + (count - 1) * gap;
-        double sx = x + w - 12 - total;
-
+        double sw = Math.min(40, (contentW - 8 * (count - 1)) / count);
         for (int i = 0; i < count; i++) {
-            double bx = sx + i * (sw + gap);
-            boolean sel = i == EmberPalette.selected();
-            boolean hover = hovered(bx, y + 6, sw, ROW_H - 12);
-            float a = anim("sw" + i, sel || hover ? 1f : 0f, dt);
-
-            Color c = EmberPalette.swatch(i);
-            if (a > 0.01f) r.glow(bx, y + 6, sw, ROW_H - 12, 8, new Color(c.r, c.g, c.b, (int) (150 * a)), false);
-            r.roundedRect(bx, y + 6, sw, ROW_H - 12, 5, new Color(c.r, c.g, c.b, sel ? 255 : (int) (170 + 60 * a)));
-
-            int index = i;
-            hits.add(new Hit(bx, y + 6, sw, ROW_H - 12, () -> EmberPalette.select(index)));
+            double x = contentX + i * (sw + 8); Color c = EmberPalette.swatch(i);
+            if (EmberPalette.selected() == i) r.roundedRect(x - 2, y - 2, sw + 4, 34, 8, EmberUI.TEXT);
+            r.roundedRect(x, y, sw, 30, 6, c);
+            int index = i; hits.add(new Hit(x, y, sw, 30, () -> EmberPalette.select(index)));
         }
-
-        texts.add(new Label("Theme", x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));
-        return y + ROW_H + 8;
+        y += 52;
+        if (EmberAppearance.frosted()) {
+            y = section(r, y, "GLASS DETAILS", "Fine-tune the surface against your game background.");
+            Config c = Config.get();
+            y = slider(r, y, "Opacity", c.glass.get(), percent(c.glass.get()), c.glass::set, dt);
+            y = slider(r, y, "Blur", c.glassBlur.get(), percent(c.glassBlur.get()), c.glassBlur::set, dt);
+            y = slider(r, y, "Refraction", c.glassLiquid.get(), percent(c.glassLiquid.get()), c.glassLiquid::set, dt);
+            y = slider(r, y, "Lightness", c.glassTint.get(), percent(c.glassTint.get()), c.glassTint::set, dt);
+            y = toggle(r, y, "Accent tint", "Blend your accent color into the glass.", c.glassAccent.get(), () -> c.glassAccent.set(!c.glassAccent.get()), dt);
+            if (EmberAppearance.liquid()) y = slider(r, y, "Animation speed", c.liquidMotion.get() / 2, percent(c.liquidMotion.get()), v -> c.liquidMotion.set(v * 2), dt);
+        }
+        return y;
     }
 
-    private double toggleRow(GuiRenderer r, float dt, double x, double y, double w, String label, boolean on, Runnable toggle) {
-        boolean hover = hovered(x, y, w, ROW_H);
-        float ha = anim("tg" + label, hover ? 1f : 0f, dt);
-        float oa = anim("on" + label, on ? 1f : 0f, dt);
-
-        r.roundedRect(x, y, w, ROW_H, 7, new Color(
-            (int) MathHelper.lerp(ha * 0.25f, ROW_BG.r, accent().r),
-            (int) MathHelper.lerp(ha * 0.25f, ROW_BG.g, accent().g),
-            (int) MathHelper.lerp(ha * 0.25f, ROW_BG.b, accent().b), 235));
-
-        // The same switch the module menu uses, spring and all, rather than a second one
-        // drawn by hand that has to be kept in step by eye.
-        double tw = 34, th = 16;
-        double tx = x + w - 12 - tw, ty = y + (ROW_H - th) / 2;
-        EmberUI.toggle(r, tx, ty, tw, th, oa, 1f);
-
-        hits.add(new Hit(x, y, w, ROW_H, toggle));
-        texts.add(new Label(label, x + 12, y + ROW_H / 2, TEXT_WHITE, 0.92));
-        return y + ROW_H + 6;
-    }
-
-    private void arrangeGlassHud() {
-        int screenW = getWindowWidth(), screenH = getWindowHeight();
-        for (HudElement element : Hud.get()) {
-            switch (element.info.name) {
-                case "ember-status-bar" -> element.setPos((int) (screenW * 0.12), 16);
-                case "spotify" -> element.setPos(Math.max(16, screenW - Math.max(280, element.getWidth()) - 20), 16);
-                case "ember-keybinds" -> element.setPos((int) (screenW * 0.18), (int) (screenH * 0.32));
-                case "ember-target" -> element.setPos((screenW - element.getWidth()) / 2, (int) (screenH * 0.64));
-                default -> { }
+    private double typography(GuiRenderer r, double y, double dt) {
+        Config c = Config.get();
+        y = toggle(r, y, "Custom font", "Apply your chosen font to the client interface.", c.customFont.get(), () -> c.customFont.set(!c.customFont.get()), dt);
+        y += 12;
+        String family = c.font.get() == null ? "Default" : c.font.get().info.family();
+        y = section(r, y, "FONT LIBRARY", "Selected: " + family);
+        for (FontFamily font : Fonts.FONT_FAMILIES) {
+            if (y + 42 >= contentY && y < contentY + viewportH) {
+                boolean selected = font.getName().equalsIgnoreCase(family);
+                r.roundedRect(contentX, y, contentW, 40, 7, selected ? accent(40) : EmberUI.WELL);
+                label(r, font.getName(), contentX + 12, y + 10, 0.88, EmberUI.TEXT, contentW - 95);
+                if (selected) label(r, "Selected", contentX + contentW - 80, y + 13, 0.65, EmberPalette.accent(), 70);
+                hits.add(new Hit(contentX, y, contentW, 40, () -> {
+                    FontFace face = font.get(FontInfo.Type.Regular);
+                    if (face != null) { c.font.set(face); c.customFont.set(true); }
+                }));
             }
+            y += 46;
         }
+        return y;
     }
 
-    private double widgetRow(GuiRenderer r, float dt, double x, double y, double w, String label, String elementName) {
-        HudElement element = element(elementName);
-        boolean on = element != null && element.isActive();
+    private double widgets(GuiRenderer r, double y, double dt) {
+        y = toggle(r, y, "HUD enabled", "Show your enabled widgets while playing.", Hud.get().active, () -> Hud.get().active = !Hud.get().active, dt);
+        action(r, contentX, y, contentW, 36, "Open HUD layout editor", () -> mc.setScreen(new HudEditorScreen(theme)), true, dt); y += 54;
+        y = section(r, y, "WIDGETS", "Switch each element on or off independently.");
+        String[][] widgets = {{"Status bar", "ember-status-bar"}, {"Info pill", "ember-bubbles"}, {"Keybinds", "ember-keybinds"},
+            {"Staff detector", "ember-staff"}, {"Region map", "ember-region-map"}, {"Armor", "ember-armor"},
+            {"Target", "ember-target"}, {"Module list", "ember-module-list"}, {"Notifications", "ember-notifications"}, {"Music player", "spotify"}};
+        for (String[] entry : widgets) {
+            HudElement element = element(entry[1]);
+            y = toggle(r, y, entry[0], "", element != null && element.isActive(), () -> { HudElement el = element(entry[1]); if (el != null) el.toggle(); }, dt);
+        }
+        y += 12;
+        y = section(r, y, "LAYOUT", "Presets reposition widgets; reset restores the default HUD.");
+        action(r, contentX, y, contentW, 36, "Apply compact glass layout", this::arrangeGlassHud, false, dt); y += 44;
+        action(r, contentX, y, contentW, 36, confirmReset ? "Confirm reset of HUD widgets and positions" : "Reset HUD to Ember defaults", () -> {
+            if (confirmReset) { Hud.get().resetToDefaultElements(); confirmReset = false; } else confirmReset = true;
+        }, false, dt);
+        return y + 44;
+    }
 
-        return toggleRow(r, dt, x, y, w, label, on, () -> {
-            HudElement el = element(elementName);
-            if (el != null) el.toggle();
+    private double music(GuiRenderer r, double y, double dt) {
+        Config c = Config.get();
+        y = section(r, y, "PLAYBACK", "Spotify and lyrics have separate connection settings.");
+        y = status(r, y, "Spotify", SpotifyPlayback.status());
+        SpicyLyricsService.Result lyrics = SpicyLyricsService.update();
+        y = status(r, y, "Lyrics", !c.lyricsEnabled.get() ? "Lyric pill disabled" : lyrics.status().isEmpty() ? "Timed lyrics ready" : lyrics.status());
+        y += 12;
+        y = section(r, y, "DISPLAY", "Steady text size and smooth scrolling between lines.");
+        y = toggle(r, y, "Lyrics pill", "Show synced words beside the main status pill.", c.lyricsEnabled.get(), () -> c.lyricsEnabled.set(!c.lyricsEnabled.get()), dt);
+        y = toggle(r, y, "Backing vocals", "Show background lyrics underneath the lead voice.", c.lyricsBackground.get(), () -> c.lyricsBackground.set(!c.lyricsBackground.get()), dt);
+        y = slider(r, y, "Timing offset", (c.lyricsOffset.get() + 3000) / 6000, String.format("%+.0f ms", c.lyricsOffset.get()), v -> c.lyricsOffset.set(Math.rint((v * 6000 - 3000) / 10) * 10), dt);
+        label(r, "Positive advances lyrics. Negative delays them.", contentX + 2, y, 0.63, EmberUI.TEXT_DIM, contentW); y += 30;
+        action(r, contentX, y, contentW, 32, "Reset timing offset", () -> c.lyricsOffset.set(0.0), false, dt); y += 52;
+        y = section(r, y, "SPOTIFY CONNECTION", "Paste your app client ID, then connect in the browser.");
+        y = field(r, y, "Spotify client ID", c.spotifyClientId, false);
+        double half = (contentW - 8) / 2;
+        action(r, contentX, y, half, 36, "Connect Spotify", SpotifyPlayback::connect, true, dt);
+        action(r, contentX + half + 8, y, half, 36, "Disconnect", SpotifyPlayback::disconnect, false, dt); y += 46;
+        action(r, contentX, y, contentW, 32, "Open Spotify app dashboard", () -> open("https://developer.spotify.com/dashboard"), false, dt); y += 42;
+        label(r, "Redirect URI (must match your Spotify app):", contentX, y, 0.65, EmberUI.TEXT_DIM, contentW); y += 22;
+        label(r, SpotifyPlayback.REDIRECT, contentX, y, 0.75, EmberUI.TEXT, contentW); y += 28;
+        action(r, contentX, y, contentW, 30, "Copy redirect URI", () -> mc.keyboard.setClipboard(SpotifyPlayback.REDIRECT), false, dt); y += 50;
+        y = section(r, y, "LYRICS PROVIDER", "Use a publishable sl_pk_ key with native-client access enabled.");
+        y = field(r, y, "Spicy Lyrics client key", c.spicyLyricsKey, true);
+        label(r, "Enable 'No origin header' in the key's client-access settings.", contentX, y, 0.62, EmberUI.TEXT_DIM, contentW); y += 28;
+        action(r, contentX, y, contentW, 34, "Open Spicy Lyrics key dashboard", () -> open("https://developers.spicylyrics.org/dashboard/applications"), false, dt); y += 54;
+        y = section(r, y, "OPTIONAL SPICETIFY BRIDGE", "Use the Ember extension for local playback updates.");
+        action(r, contentX, y, contentW, 34, "Enable local bridge", SpotifyPlayback::enableBridge, false, dt);
+        return y + 42;
+    }
+
+    private double section(GuiRenderer r, double y, String title, String description) {
+        label(r, title, contentX + 1, y, 0.68, EmberUI.TEXT, contentW);
+        label(r, description, contentX + 1, y + 22, 0.64, EmberUI.TEXT_DIM, contentW);
+        return y + 48;
+    }
+    private double status(GuiRenderer r, double y, String name, String status) {
+        r.roundedRect(contentX, y, contentW, 48, 8, EmberUI.WELL);
+        label(r, name, contentX + 12, y + 6, 0.66, EmberUI.TEXT_DIM, contentW - 24);
+        label(r, status, contentX + 12, y + 24, 0.76, EmberUI.TEXT, contentW - 24);
+        return y + 56;
+    }
+    private double toggle(GuiRenderer r, double y, String title, String description, boolean enabled, Runnable change, double dt) {
+        r.roundedRect(contentX, y, contentW, ROW, 8, EmberUI.WELL);
+        label(r, title, contentX + 12, description.isEmpty() ? y + 14 : y + 6, 0.84, EmberUI.TEXT, contentW - 76);
+        if (!description.isEmpty()) label(r, description, contentX + 12, y + 27, 0.6, EmberUI.TEXT_DIM, contentW - 76);
+        EmberUI.toggle(r, contentX + contentW - 48, y + 16, 34, 16, (float) anim("toggle-" + title, enabled ? 1 : 0, dt), 1);
+        hits.add(new Hit(contentX, y, contentW, ROW, () -> { commitField(); change.run(); }));
+        return y + ROW + 7;
+    }
+    private double slider(GuiRenderer r, double y, String title, double value, String shown, DoubleConsumer change, double dt) {
+        double trackW = Math.min(210, contentW * 0.43), tx = contentX + contentW - trackW - 16, ty = y + 31;
+        r.roundedRect(contentX, y, contentW, 52, 8, EmberUI.WELL);
+        if (title.equals(dragging)) { value = Math.clamp((mx - tx) / trackW, 0, 1); change.accept(value); }
+        label(r, title, contentX + 12, y + 16, 0.8, EmberUI.TEXT, contentW - trackW - 40);
+        label(r, shown, tx, y + 4, 0.66, EmberUI.TEXT_DIM, trackW);
+        r.roundedRect(tx, ty, trackW, 4, 2, new Color(61, 64, 73, 255));
+        if (trackW * value > 4) r.roundedRect(tx, ty, trackW * value, 4, 2, EmberPalette.accent());
+        r.roundedRect(tx + trackW * value - 5, ty - 3, 10, 10, 5, EmberUI.TEXT);
+        hits.add(new Hit(tx - 7, y + 19, trackW + 14, 30, () -> { commitField(); dragging = title; }));
+        return y + 59;
+    }
+    private double field(GuiRenderer r, double y, String title, Setting<String> setting, boolean secret) {
+        fieldPositions.put(setting, y - contentY + scroll);
+        label(r, title, contentX + 1, y, 0.76, EmberUI.TEXT, contentW); y += 25;
+        boolean active = editing == setting;
+        r.roundedRect(contentX, y, contentW, 36, 7, active ? accent(44) : EmberUI.WELL);
+        String value = active ? editBuffer : setting.get();
+        String shown = value.isEmpty() ? "Paste here" : secret ? "*".repeat(Math.min(24, value.length())) : value;
+        if (active) shown += selectAll ? "  [selected]" : " |";
+        label(r, shown, contentX + 11, y + 8, 0.78, value.isEmpty() ? EmberUI.TEXT_DIM : EmberUI.TEXT, contentW - 22);
+        hits.add(new Hit(contentX, y, contentW, 36, () -> {
+            if (editing != setting) { commitField(); editing = setting; editBuffer = setting.get(); selectAll = false; }
+        }));
+        return y + 48;
+    }
+    private void action(GuiRenderer r, double x, double y, double w, double h, String title, Runnable action, boolean primary, double dt) {
+        double amount = anim("button-" + title, hovered(x, y, w, h) ? 1 : 0, dt);
+        r.roundedRect(x, y, w, h, 7, primary ? accent((int) (85 + amount * 35)) : new Color(45, 47, 56, (int) (185 + amount * 50)));
+        label(r, title, x + 10, y + (h - 17) / 2, 0.77, EmberUI.TEXT, w - 20);
+        hits.add(new Hit(x, y, w, h, () -> { commitField(); dragging = null; action.run(); }));
+    }
+
+    /** Text is rendered within the same scissor as the controls it labels. */
+    private void label(GuiRenderer r, String text, double x, double y, double scale, Color color, double maxW) {
+        if (y + 26 < py || y > py + ph) return;
+        r.post(() -> {
+            var renderer = theme.textRenderer(); renderer.begin(theme.scale(scale));
+            String shown = text;
+            if (renderer.getWidth(shown) > maxW) {
+                int low = 0, high = shown.codePointCount(0, shown.length());
+                while (low < high) {
+                    int mid = (low + high + 1) >>> 1;
+                    String candidate = text.substring(0, text.offsetByCodePoints(0, mid)) + "\u2026";
+                    if (renderer.getWidth(candidate) <= maxW) low = mid; else high = mid - 1;
+                }
+                shown = low == 0 ? "" : text.substring(0, text.offsetByCodePoints(0, low)) + "\u2026";
+            }
+            renderer.render(shown, x, y, color, false); renderer.end();
         });
     }
-
-    private static HudElement element(String name) {
-        for (HudElement el : Hud.get()) {
-            if (el.info.name.equals(name)) return el;
+    private double anim(String key, double target, double dt) {
+        float next = EmberAnim.approach(animations.getOrDefault(key, (float) target), (float) target, dt, 0.07);
+        animations.put(key, next); return next;
+    }
+    private boolean hovered(double x, double y, double w, double h) { return mx >= x && mx < x + w && my >= y && my < y + h; }
+    private static String percent(double value) { return String.format("%.0f%%", value * 100); }
+    private static Color accent(int alpha) { Color c = EmberPalette.accent(); return new Color(c.r, c.g, c.b, alpha); }
+    private static void open(String url) { Util.getOperatingSystem().open(url); }
+    private static HudElement element(String name) { for (HudElement el : Hud.get()) if (el.info.name.equals(name)) return el; return null; }
+    private void arrangeGlassHud() {
+        int w = getWindowWidth(), h = getWindowHeight();
+        for (HudElement element : Hud.get()) switch (element.info.name) {
+            case "ember-status-bar" -> element.setPos((int) (w * 0.12), 16);
+            case "spotify" -> element.setPos(Math.max(16, w - Math.max(280, element.getWidth()) - 20), 16);
+            case "ember-keybinds" -> element.setPos((int) (w * 0.18), (int) (h * 0.32));
+            case "ember-target" -> element.setPos((w - element.getWidth()) / 2, (int) (h * 0.64));
+            default -> { }
         }
-        return null;
     }
-
-    // --- Right column: font list ---
-
-    private void drawFontList(GuiRenderer r, float dt) {
-        double x = px + PW - 18 - LIST_W;
-        double y = py + HEADER_H + 16 + 18;
-        double h = py + panelH - 18 - y;
-
-        r.roundedRect(x, y, LIST_W, h, 8, LIST_BG);
-
-        List<FontFamily> families = Fonts.FONT_FAMILIES;
-        String current = currentFamily();
-
-        double rowH = 26;
-        int visible = (int) (h / rowH);
-        fontScroll = Math.max(0, Math.min(fontScroll, Math.max(0, families.size() - visible)));
-
-        r.scissorStart(x, y, LIST_W, h);
-
-        for (int i = 0; i < visible && i + fontScroll < families.size(); i++) {
-            FontFamily family = families.get(i + fontScroll);
-            double ry = y + i * rowH;
-
-            boolean sel = family.getName().equalsIgnoreCase(current);
-            boolean hover = hovered(x + 4, ry + 2, LIST_W - 8, rowH - 4);
-            float a = anim("f" + family.getName(), hover ? 1f : 0f, dt);
-
-            if (sel) r.roundedRect(x + 4, ry + 2, LIST_W - 8, rowH - 4, 6, accentAlpha(210));
-            else if (a > 0.01f) r.roundedRect(x + 4, ry + 2, LIST_W - 8, rowH - 4, 6, accentAlpha((int) (60 * a)));
-
-            hits.add(new Hit(x + 4, ry + 2, LIST_W - 8, rowH - 4, () -> selectFont(family)));
-            texts.add(new Label(family.getName(), x + 14, ry + rowH / 2, sel ? ON_ACCENT : TEXT_WHITE, 0.88));
-        }
-
-        r.scissorEnd();
+    private void commitField() {
+        if (editing != null) editing.set(editBuffer.trim());
+        editing = null; editBuffer = ""; selectAll = false;
     }
-
-    private static String currentFamily() {
-        FontFace face = Config.get().font.get();
-        return face != null ? face.info.family() : "";
-    }
-
-    private void selectFont(FontFamily family) {
-        FontFace face = family.get(FontInfo.Type.Regular);
-        if (face == null) return;
-
-        Config.get().font.set(face);
-        Fonts.load(face);
-    }
-
-    // --- Text ---
-
-    /** Text is queued while drawing and flushed afterwards, so it never sits under a panel. */
-    private record Label(String text, double x, double centerY, Color color, double scale) {}
-
-    private final List<Label> texts = new ArrayList<>();
-
-    private void drawText(DrawContext graphics, boolean closeHover) {
-        theme.textRenderer().begin(theme.scale(1.1));
-        theme.textRenderer().render("Client Settings", px + 20, py + (HEADER_H - theme.textHeight()) / 2, TEXT_WHITE, false);
-        theme.textRenderer().end();
-
-        theme.textRenderer().begin(theme.scale(1.0));
-        theme.textRenderer().render("X", px + PW - 34 + 4, py + 13 + 4,
-            closeHover ? new Color(255, 140, 140, 255) : TEXT_DIM, false);
-        theme.textRenderer().end();
-
-        // Section labels
-        theme.textRenderer().begin(theme.scale(0.82));
-        double lx = px + 18;
-        theme.textRenderer().render("APPEARANCE", lx, py + HEADER_H + 16, TEXT_DIM, false);
-        if (widgetsLabelY >= py + HEADER_H + 32 && widgetsLabelY < py + panelH - 28) theme.textRenderer().render("WIDGETS", lx, widgetsLabelY, TEXT_DIM, false);
-        theme.textRenderer().render("FONT", px + PW - 18 - LIST_W, py + HEADER_H + 16, TEXT_DIM, false);
-        theme.textRenderer().end();
-
-        for (Label label : texts) {
-            if (label.x < px + PW - 18 - LIST_W && (label.centerY < py + HEADER_H + 42 || label.centerY > py + panelH - 20)) continue;
-            theme.textRenderer().begin(theme.scale(label.scale()));
-            theme.textRenderer().render(label.text(), label.x(), label.centerY() - theme.textHeight() / 2, label.color(), false);
-            theme.textRenderer().end();
-        }
-        texts.clear();
-    }
-
-    private boolean hovered(double x, double y, double w, double h) {
-        return mx >= x && mx < x + w && my >= y && my < y + h;
-    }
-
-    // --- Input ---
-
-    @Override
-    public boolean mouseReleased(Click click) {
-        draggingSlider = null;
-        return super.mouseReleased(click);
-    }
-
-    @Override
-    public boolean mouseClicked(Click click, boolean doubled) {
-        double s = mc.getWindow().getScaleFactor();
-        double cx = click.x() * s, cy = click.y() * s;
-
-        // Hits are recorded newest last, so walk backwards to let the topmost one win.
+    @Override public boolean mouseClicked(Click click, boolean doubled) {
+        if (click.button() != GLFW_MOUSE_BUTTON_LEFT) return true;
+        mx = click.x() * mc.getWindow().getScaleFactor(); my = click.y() * mc.getWindow().getScaleFactor();
         for (int i = hits.size() - 1; i >= 0; i--) {
             Hit hit = hits.get(i);
-            if (hit.contains(cx, cy)) {
-                hit.action().run();
-                return true;
+            if (hit.contains(mx, my)) { hit.action.run(); return true; }
+        }
+        commitField(); if (!hovered(px, py, pw, ph)) close(); return true;
+    }
+    @Override public boolean mouseReleased(Click click) { dragging = null; return super.mouseReleased(click); }
+    @Override public boolean mouseScrolled(double x, double y, double horizontal, double vertical) {
+        double sx = x * mc.getWindow().getScaleFactor(), sy = y * mc.getWindow().getScaleFactor();
+        if (sx >= contentX && sx < px + pw && sy >= contentY && sy < contentY + viewportH) {
+            commitField(); dragging = null; scrollTarget = Math.clamp(scrollTarget - vertical * 44, 0, Math.max(0, contentHeight - viewportH));
+        }
+        return true;
+    }
+    @Override public boolean keyPressed(KeyInput input) {
+        int key = input.key();
+        if (editing != null) {
+            boolean ctrl = (input.modifiers() & (GLFW_MOD_CONTROL | GLFW_MOD_SUPER)) != 0;
+            if (key == GLFW_KEY_ESCAPE) { editing = null; editBuffer = ""; selectAll = false; }
+            else if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) commitField();
+            else if (ctrl && key == GLFW_KEY_A) selectAll = true;
+            else if (ctrl && key == GLFW_KEY_V) {
+                String pasted = mc.keyboard.getClipboard().replaceAll("\\s+", "");
+                String next = (selectAll ? "" : editBuffer) + pasted;
+                editBuffer = next.substring(0, Math.min(512, next.length())); selectAll = false;
+            } else if (key == GLFW_KEY_BACKSPACE || key == GLFW_KEY_DELETE) {
+                if (selectAll) editBuffer = "";
+                else if (!editBuffer.isEmpty()) editBuffer = editBuffer.substring(0, editBuffer.offsetByCodePoints(editBuffer.length(), -1));
+                selectAll = false;
+            } else if (key == GLFW_KEY_TAB) {
+                Setting<String> next = editing == Config.get().spotifyClientId ? Config.get().spicyLyricsKey : Config.get().spotifyClientId;
+                commitField(); editing = next; editBuffer = next.get(); selectAll = true;
+                scrollTarget = Math.max(0, fieldPositions.getOrDefault(editing, 0.0) - 24);
             }
-        }
-
-        // A click outside the panel closes it, like the other Ember screens.
-        if (cx < px || cx >= px + PW || cy < py || cy >= py + panelH) {
-            close();
             return true;
         }
-
-        return super.mouseClicked(click, doubled);
+        if (key == GLFW_KEY_ESCAPE) close();
+        else if (key == GLFW_KEY_PAGE_DOWN) scrollTarget += viewportH * 0.8;
+        else if (key == GLFW_KEY_PAGE_UP) scrollTarget -= viewportH * 0.8;
+        else if (key == GLFW_KEY_HOME) scrollTarget = 0;
+        else if (key == GLFW_KEY_END) scrollTarget = Math.max(0, contentHeight - viewportH);
+        return true;
     }
-
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double h, double v) {
-        double s = mc.getWindow().getScaleFactor();
-        double cx = mouseX * s;
-
-        if (cx >= px + PW - 18 - LIST_W) {
-            fontScroll -= (int) v;
-            fontScroll = Math.max(0, fontScroll);
-            return true;
+    @Override public boolean charTyped(CharInput input) {
+        if (editing != null && input.codepoint() >= 32 && editBuffer.length() < 512) {
+            if (selectAll) editBuffer = "";
+            editBuffer += new String(Character.toChars(input.codepoint())); selectAll = false;
         }
-        if (cx >= px + 18 && cx < px + PW - 18 - LIST_W - 14) {
-            leftScrollTarget = Math.max(0, leftScrollTarget - v * 38);
-            return true;
-        }
-
-        return super.mouseScrolled(mouseX, mouseY, h, v);
+        return true;
     }
-
-    @Override
-    public boolean keyPressed(KeyInput event) {
-        if (event.key() == GLFW_KEY_ESCAPE) {
-            close();
-            return true;
-        }
-        return super.keyPressed(event);
-    }
-
-    @Override
-    public void close() {
-        // Go back to the ClickGUI this was opened from instead of closing to the game.
-        if (parent != null) mc.setScreen(parent);
-        else super.close();
-    }
+    @Override public void close() { commitField(); if (parent != null) mc.setScreen(parent); else super.close(); }
 }

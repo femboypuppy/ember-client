@@ -244,10 +244,14 @@ public final class SpotifyPlayback {
         }
     }
 
-    private static void accept(String id, String title, String artist, long position, long duration, boolean playing) {
+    private static synchronized void accept(String id, String title, String artist, long position, long duration, boolean playing) {
         if (!id.matches("[A-Za-z0-9]{22}")) throw new IllegalArgumentException("Invalid Spotify track");
         long now = System.nanoTime();
-        playback = new Playback(id, title, artist, new PlaybackClock(Math.max(0, position), Math.max(0, duration), playing, now), now);
+        Playback previous = playback;
+        PlaybackClock clock = previous != null && previous.trackId.equals(id)
+            ? previous.clock.corrected(position, duration, playing, now)
+            : new PlaybackClock(Math.max(0, position), Math.max(0, duration), playing, now);
+        playback = new Playback(id, title, artist, clock, now);
         status = playing ? "Spotify connected" : "Spotify paused";
     }
     private static void respond(HttpExchange exchange, int status, String text) throws IOException {

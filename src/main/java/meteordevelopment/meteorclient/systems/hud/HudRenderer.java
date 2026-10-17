@@ -411,6 +411,28 @@ public class HudRenderer {
         return text(text, x, y, color, shadow, -1);
     }
 
+    /** Horizontally bounded lyric text; keeps the normal font size and shared font batch. */
+    public void textClipped(String text, double x, double y, Color color, double scale, double left, double right) {
+        if (hud.hasCustomFont()) {
+            FontHolder holder = getFontHolder(scale, true);
+            holder.font.renderClipped(holder.getMesh(), text, x, y, color, renderScale(scale), left, right);
+        } else {
+            // Vanilla's immediate text batch has no per-glyph clip. Fade boundary glyphs
+            // inside the viewport instead of changing GL scissor state for the entire HUD.
+            for (int i = 0; i < text.length();) {
+                int end = text.offsetByCodePoints(i, 1);
+                String glyph = text.substring(i, end);
+                double advance = textWidth(glyph, false, scale);
+                if (x >= left && x + advance + scale <= right) {
+                    double edge = Math.min(x - left, right - x - advance) / Math.max(1, 6 * scale);
+                    text(glyph, x, y, new Color(color.r, color.g, color.b, (int) (color.a * Math.clamp(edge, 0, 1))), false, scale);
+                }
+                x += advance;
+                i = end;
+            }
+        }
+    }
+
     public double textWidth(String text, boolean shadow, double scale) {
         if (text.isEmpty()) return 0;
 

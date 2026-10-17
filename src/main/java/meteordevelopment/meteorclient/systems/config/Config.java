@@ -36,6 +36,10 @@ public class Config extends System<Config> {
         .name("lyrics-pill")
         .description("Show timed Spotify lyrics beside the main status pill.")
         .defaultValue(true).build());
+    public final Setting<Boolean> lyricsBackground = sgLyrics.add(new BoolSetting.Builder()
+        .name("lyrics-background-vocals")
+        .description("Show separately timed backing vocals below the lead lyrics.")
+        .defaultValue(true).build());
     public final Setting<String> spicyLyricsKey = sgLyrics.add(new StringSetting.Builder()
         .name("spicy-lyrics-client-key")
         .description("Your publishable sl_pk_ key, configured to allow native clients without an Origin header.")

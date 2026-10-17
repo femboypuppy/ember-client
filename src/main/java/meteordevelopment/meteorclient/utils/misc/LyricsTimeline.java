@@ -9,7 +9,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /** Spicy Lyrics' documented seconds-based timing, without fabricated word timestamps. */
-public record LyricsTimeline(String type, List<Line> lines, List<Credit> credits) {
+public record LyricsTimeline(String type, List<Line> lines, List<Line> background, List<Credit> credits) {
     public record Word(String text, double start, double end) {}
     public record Line(String text, double start, double end, List<Word> words) {
         public int activeWord(double seconds) {
@@ -21,6 +21,22 @@ public record LyricsTimeline(String type, List<Line> lines, List<Credit> credits
         }
     }
     public record Credit(String name, String url) {}
+
+    /** Keep the last lead phrase during breaths and instrumentals; seeking remains stateless. */
+    public Line displayAt(double seconds) {
+        int low = 0, high = lines.size() - 1, candidate = -1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            if (lines.get(mid).start <= seconds) { candidate = mid; low = mid + 1; }
+            else high = mid - 1;
+        }
+        Line active = at(seconds);
+        return active != null ? active : candidate < 0 ? null : lines.get(candidate);
+    }
+
+    public List<Line> backgroundAt(double seconds) {
+        return background.stream().filter(line -> seconds >= line.start && seconds < line.end + 0.45).toList();
+    }
 
     public Line at(double seconds) {
         int low = 0, high = lines.size() - 1, candidate = -1;
@@ -42,6 +58,7 @@ public record LyricsTimeline(String type, List<Line> lines, List<Credit> credits
         if (body == null) throw new IllegalArgumentException("Missing lyric body");
         String type = text(body, "Type");
         List<Line> lines = new ArrayList<>();
+        List<Line> background = new ArrayList<>();
         JsonArray content = body.has("Content") && body.get("Content").isJsonArray() ? body.getAsJsonArray("Content") : new JsonArray();
         if (content.size() > 5000) throw new IllegalArgumentException("Too many lyric lines");
         for (JsonElement element : content) {
@@ -49,39 +66,13 @@ public record LyricsTimeline(String type, List<Line> lines, List<Credit> credits
             JsonObject line = element.getAsJsonObject();
             if (!text(line, "Type").equals("Vocal")) continue;
             if (type.equals("Syllable")) {
-                if (!line.has("Lead") || !line.get("Lead").isJsonObject()) continue;
-                JsonObject lead = line.getAsJsonObject("Lead");
-                if (!lead.has("Syllables") || !lead.get("Syllables").isJsonArray()) continue;
-                JsonArray syllables = lead.getAsJsonArray("Syllables");
-                if (syllables.size() > 2000) continue;
-                List<Word> words = new ArrayList<>();
-                StringBuilder word = new StringBuilder();
-                double wordStart = -1, wordEnd = -1;
-                for (JsonElement syllable : syllables) {
-                    if (!syllable.isJsonObject()) continue;
-                    JsonObject item = syllable.getAsJsonObject();
-                    double start = number(item, "StartTime"), end = number(item, "EndTime");
-                    String value = text(item, "Text").strip();
-                    if (!valid(start, end) || value.isEmpty()) continue;
-                    if (wordStart < 0) wordStart = start;
-                    wordEnd = Math.max(wordEnd, end);
-                    word.append(value);
-                    if (!item.has("IsPartOfWord") || !item.get("IsPartOfWord").getAsBoolean()) {
-                        words.add(new Word(word.toString(), wordStart, wordEnd));
-                        word.setLength(0);
-                        wordStart = wordEnd = -1;
+                if (line.has("Lead") && line.get("Lead").isJsonObject()) addSyllables(lines, line.getAsJsonObject("Lead"));
+                if (line.has("Background") && line.get("Background").isJsonArray()) {
+                    JsonArray backing = line.getAsJsonArray("Background");
+                    for (int i = 0; i < Math.min(32, backing.size()); i++) {
+                        if (backing.get(i).isJsonObject()) addSyllables(background, backing.get(i).getAsJsonObject());
                     }
                 }
-                if (!word.isEmpty()) words.add(new Word(word.toString(), wordStart, wordEnd));
-                words.sort(Comparator.comparingDouble(Word::start));
-                if (words.isEmpty()) continue;
-                String joined = String.join(" ", words.stream().map(Word::text).toList());
-                double start = number(lead, "StartTime"), end = number(lead, "EndTime");
-                if (!valid(start, end)) {
-                    start = words.getFirst().start;
-                    end = words.stream().mapToDouble(Word::end).max().orElse(start);
-                }
-                if (valid(start, end)) lines.add(new Line(joined, start, end, List.copyOf(words)));
             } else if (type.equals("Line")) {
                 double start = number(line, "StartTime"), end = number(line, "EndTime");
                 String value = text(line, "Text").strip();
@@ -89,6 +80,7 @@ public record LyricsTimeline(String type, List<Line> lines, List<Credit> credits
             }
         }
         lines.sort(Comparator.comparingDouble(Line::start));
+        background.sort(Comparator.comparingDouble(Line::start));
         List<Credit> credits = new ArrayList<>();
         String source = text(body, "source");
         credits.add(switch (source) {
@@ -102,7 +94,40 @@ public record LyricsTimeline(String type, List<Line> lines, List<Credit> credits
             addCredit(credits, attribution, "Uploader", "Uploaded by ");
             addCredit(credits, attribution, "Maker", "Synced by ");
         }
-        return new LyricsTimeline(type, List.copyOf(lines), List.copyOf(credits));
+        return new LyricsTimeline(type, List.copyOf(lines), List.copyOf(background), List.copyOf(credits));
+    }
+
+    private static void addSyllables(List<Line> target, JsonObject vocal) {
+        if (!vocal.has("Syllables") || !vocal.get("Syllables").isJsonArray()) return;
+        JsonArray syllables = vocal.getAsJsonArray("Syllables");
+        if (syllables.size() > 2000) return;
+        List<Word> words = new ArrayList<>();
+        StringBuilder word = new StringBuilder();
+        double wordStart = -1, wordEnd = -1;
+        for (JsonElement syllable : syllables) {
+            if (!syllable.isJsonObject()) continue;
+            JsonObject item = syllable.getAsJsonObject();
+            double start = number(item, "StartTime"), end = number(item, "EndTime");
+            String value = text(item, "Text").strip();
+            if (!valid(start, end) || value.isEmpty()) continue;
+            if (wordStart < 0) wordStart = start;
+            wordEnd = Math.max(wordEnd, end);
+            word.append(value);
+            if (!item.has("IsPartOfWord") || !item.get("IsPartOfWord").getAsBoolean()) {
+                words.add(new Word(word.toString(), wordStart, wordEnd));
+                word.setLength(0);
+                wordStart = wordEnd = -1;
+            }
+        }
+        if (!word.isEmpty()) words.add(new Word(word.toString(), wordStart, wordEnd));
+        words.sort(Comparator.comparingDouble(Word::start));
+        if (words.isEmpty()) return;
+        // Some catalogues end the group before the last syllable; never drop that word.
+        double start = words.getFirst().start;
+        double end = words.stream().mapToDouble(Word::end).max().orElse(start);
+        double groupStart = number(vocal, "StartTime"), groupEnd = number(vocal, "EndTime");
+        if (valid(groupStart, groupEnd)) { start = Math.min(start, groupStart); end = Math.max(end, groupEnd); }
+        target.add(new Line(String.join(" ", words.stream().map(Word::text).toList()), start, end, List.copyOf(words)));
     }
 
     private static void addCredit(List<Credit> credits, JsonObject attribution, String key, String prefix) {
