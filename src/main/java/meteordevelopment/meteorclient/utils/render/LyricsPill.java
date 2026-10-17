@@ -51,7 +51,7 @@ public final class LyricsPill {
         List<LyricsTimeline.Line> pending = new ArrayList<>(backing);
         for (Lane lane : BACKING) pending.remove(lane.line);
         for (Lane lane : BACKING) {
-            var next = backing.contains(lane.line) ? lane.line : pending.isEmpty() ? null : pending.removeFirst();
+            var next = lane.line != null && backing.contains(lane.line) ? lane.line : pending.isEmpty() ? null : pending.removeFirst();
             lane.prepare(r, next, bs, dt, seek, animate);
         }
         String title = playback != null ? playback.title() : MediaInfo.isAvailable() ? MediaInfo.getTitle() : "Spotify lyrics";
