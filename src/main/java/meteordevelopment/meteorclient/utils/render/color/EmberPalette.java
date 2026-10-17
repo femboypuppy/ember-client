@@ -1,5 +1,9 @@
 package meteordevelopment.meteorclient.utils.render.color;
 
+import meteordevelopment.meteorclient.systems.config.Config;
+import meteordevelopment.meteorclient.utils.misc.ArtworkAccent;
+import meteordevelopment.meteorclient.utils.misc.SongAccentService;
+
 /**
  * Ember's colour theme. Every UI colour, not just the accent, is derived from the selected
  * theme's hue, so switching themes recolours backgrounds, headers, controls and text too.
@@ -14,6 +18,7 @@ public final class EmberPalette {
 
     private static int selected = 0;
     private static int cachedRgb = -1;
+    private static final ArtworkAccent.Transition TRANSITION = new ArtworkAccent.Transition();
 
     private static Color accent, panel, header, divider, rowActive, control, controlHover, track,
         toggleOff, dotOff, search, textBright, textDim, textFaint;
@@ -26,7 +31,10 @@ public final class EmberPalette {
     }
 
     public static void select(int index) {
-        if (index >= 0 && index < NAMES.length) selected = index;
+        if (index >= 0 && index < NAMES.length) {
+            selected = index;
+            if (Config.get() != null) Config.get().songAccent.set(false);
+        }
     }
 
     public static Color swatch(int index) {
@@ -64,6 +72,8 @@ public final class EmberPalette {
             rgb = RGB[selected];
         }
 
+        int song = SongAccentService.update();
+        rgb = TRANSITION.sample(song >= 0 ? song : rgb, System.nanoTime());
         if (rgb == cachedRgb) return;
         cachedRgb = rgb;
 

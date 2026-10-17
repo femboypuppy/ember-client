@@ -123,6 +123,10 @@ public class Font {
 
     /** Clip glyph geometry and UVs together without flushing other HUD text batches. */
     public double renderClipped(MeshBuilder mesh, String string, double x, double y, Color color, double scale, double left, double right) {
+        return renderClipped(mesh, string, x, y, color, scale, left, right, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY);
+    }
+
+    public double renderClipped(MeshBuilder mesh, String string, double x, double y, Color color, double scale, double left, double right, double top, double bottom) {
         y += ascent * this.scale * scale;
 
         int length = string.length();
@@ -134,15 +138,19 @@ public class Font {
             if (c == null) c = charMap.get(32);
 
             double gx0 = x + c.x0 * scale, gx1 = x + c.x1 * scale;
+            double gy0 = y + c.y0 * scale, gy1 = y + c.y1 * scale;
             double clipped0 = Math.max(left, gx0), clipped1 = Math.min(right, gx1);
-            if (clipped1 > clipped0) {
+            double clippedY0 = Math.max(top, gy0), clippedY1 = Math.min(bottom, gy1);
+            if (clipped1 > clipped0 && clippedY1 > clippedY0) {
                 double u0 = c.u0 + (c.u1 - c.u0) * (clipped0 - gx0) / (gx1 - gx0);
                 double u1 = c.u0 + (c.u1 - c.u0) * (clipped1 - gx0) / (gx1 - gx0);
+                double v0 = c.v0 + (c.v1 - c.v0) * (clippedY0 - gy0) / (gy1 - gy0);
+                double v1 = c.v0 + (c.v1 - c.v0) * (clippedY1 - gy0) / (gy1 - gy0);
                 mesh.quad(
-                    mesh.vec2(clipped0, y + c.y0 * scale).vec2(u0, c.v0).color(color).next(),
-                    mesh.vec2(clipped0, y + c.y1 * scale).vec2(u0, c.v1).color(color).next(),
-                    mesh.vec2(clipped1, y + c.y1 * scale).vec2(u1, c.v1).color(color).next(),
-                    mesh.vec2(clipped1, y + c.y0 * scale).vec2(u1, c.v0).color(color).next()
+                    mesh.vec2(clipped0, clippedY0).vec2(u0, v0).color(color).next(),
+                    mesh.vec2(clipped0, clippedY1).vec2(u0, v1).color(color).next(),
+                    mesh.vec2(clipped1, clippedY1).vec2(u1, v1).color(color).next(),
+                    mesh.vec2(clipped1, clippedY0).vec2(u1, v0).color(color).next()
                 );
             }
 

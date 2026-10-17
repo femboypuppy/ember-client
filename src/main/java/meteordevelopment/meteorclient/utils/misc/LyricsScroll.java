@@ -10,7 +10,7 @@ public final class LyricsScroll {
         for (int i = 0; i < line.words().size(); i++) {
             LyricsTimeline.Word word = line.words().get(i);
             if (seconds < word.start()) break;
-            double progress = Math.clamp((seconds - word.start()) / Math.max(0.001, word.end() - word.start()), 0, 1);
+            double progress = word.progress(seconds);
             focus = starts[i] + widths[i] * progress;
         }
         // Start with the whole beginning in view, then follow the voice through the line.

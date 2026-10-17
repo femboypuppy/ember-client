@@ -50,7 +50,7 @@ public final class SpotifyPlayback {
     private static HttpServer server;
     private static boolean started;
 
-    public record Playback(String trackId, String title, String artist, PlaybackClock clock, long receivedAtNanos) {
+    public record Playback(String trackId, String title, String artist, String artworkUrl, PlaybackClock clock, long receivedAtNanos) {
         public long positionMs() { return clock.positionAt(System.nanoTime()); }
     }
     private record Pending(String state, String verifier, String client, long createdAtNanos) {}
@@ -124,7 +124,7 @@ public final class SpotifyPlayback {
 
     private static void poll() {
         if (System.nanoTime() < bridgeUntil || System.currentTimeMillis() < nextPoll) return;
-        if (Config.get() == null || !Config.get().lyricsEnabled.get()) return;
+        if (Config.get() == null || (!Config.get().lyricsEnabled.get() && !Config.get().songAccent.get())) return;
         String client = Config.get().spotifyClientId.get().trim();
         if (refreshToken.isBlank() || !client.equals(sessionClient)) return;
         try {
@@ -150,7 +150,7 @@ public final class SpotifyPlayback {
             if (!"track".equals(item.get("type").getAsString())) { playback = null; return; }
             String artist = item.getAsJsonArray("artists").isEmpty() ? "" : item.getAsJsonArray("artists").get(0).getAsJsonObject().get("name").getAsString();
             accept(item.get("id").getAsString(), item.get("name").getAsString(), artist,
-                body.get("progress_ms").getAsLong(), item.get("duration_ms").getAsLong(), body.get("is_playing").getAsBoolean());
+                body.get("progress_ms").getAsLong(), item.get("duration_ms").getAsLong(), body.get("is_playing").getAsBoolean(), artwork(item));
         } catch (AuthorizationException ignored) {
             playback = null;
             status = "Reconnect Spotify in Lyrics settings";
@@ -237,21 +237,37 @@ public final class SpotifyPlayback {
                 JsonObject value = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
                 if (value.get("id").getAsString().isEmpty()) { playback = null; status = "Play a song in Spotify"; }
                 else accept(value.get("id").getAsString(), value.get("title").getAsString(), value.get("artist").getAsString(),
-                    value.get("positionMs").getAsLong(), value.get("durationMs").getAsLong(), value.get("playing").getAsBoolean());
+                    value.get("positionMs").getAsLong(), value.get("durationMs").getAsLong(), value.get("playing").getAsBoolean(),
+                    value.has("artworkUrl") && value.get("artworkUrl").isJsonPrimitive() ? value.get("artworkUrl").getAsString() : "");
                 bridgeUntil = System.nanoTime() + 3_000_000_000L;
                 respond(exchange, 200, "OK");
             } catch (RuntimeException ignored) { respond(exchange, 400, "Invalid playback update"); }
         }
     }
 
-    private static synchronized void accept(String id, String title, String artist, long position, long duration, boolean playing) {
+    private static String artwork(JsonObject item) {
+        try {
+            String chosen = "";
+            int closest = Integer.MAX_VALUE;
+            for (var image : item.getAsJsonObject("album").getAsJsonArray("images")) {
+                var object = image.getAsJsonObject();
+                String url = ArtworkAccent.normalizeUrl(object.get("url").getAsString());
+                int width = object.has("width") && !object.get("width").isJsonNull() ? object.get("width").getAsInt() : 300;
+                int distance = Math.abs(width - 300);
+                if (!url.isEmpty() && distance < closest) { chosen = url; closest = distance; }
+            }
+            return chosen;
+        } catch (RuntimeException ignored) { return ""; }
+    }
+
+    private static synchronized void accept(String id, String title, String artist, long position, long duration, boolean playing, String artwork) {
         if (!id.matches("[A-Za-z0-9]{22}")) throw new IllegalArgumentException("Invalid Spotify track");
         long now = System.nanoTime();
         Playback previous = playback;
         PlaybackClock clock = previous != null && previous.trackId.equals(id)
             ? previous.clock.corrected(position, duration, playing, now)
             : new PlaybackClock(Math.max(0, position), Math.max(0, duration), playing, now);
-        playback = new Playback(id, title, artist, clock, now);
+        playback = new Playback(id, title, artist, ArtworkAccent.normalizeUrl(artwork), clock, now);
         status = playing ? "Spotify connected" : "Spotify paused";
     }
     private static void respond(HttpExchange exchange, int status, String text) throws IOException {

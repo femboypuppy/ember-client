@@ -148,11 +148,14 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         double sw = Math.min(40, (contentW - 8 * (count - 1)) / count);
         for (int i = 0; i < count; i++) {
             double x = contentX + i * (sw + 8); Color c = EmberPalette.swatch(i);
-            if (EmberPalette.selected() == i) r.roundedRect(x - 2, y - 2, sw + 4, 34, 8, EmberUI.TEXT);
+            if (!Config.get().songAccent.get() && EmberPalette.selected() == i) r.roundedRect(x - 2, y - 2, sw + 4, 34, 8, EmberUI.TEXT);
             r.roundedRect(x, y, sw, 30, 6, c);
             int index = i; hits.add(new Hit(x, y, sw, 30, () -> EmberPalette.select(index)));
         }
         y += 52;
+        y = toggle(r, y, "Match song artwork", "Use the cover's dominant color across the whole client.", Config.get().songAccent.get(),
+            () -> Config.get().songAccent.set(!Config.get().songAccent.get()), dt);
+        y += 12;
         if (EmberAppearance.frosted()) {
             y = section(r, y, "GLASS DETAILS", "Fine-tune the surface against your game background.");
             Config c = Config.get();
@@ -215,9 +218,14 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         SpicyLyricsService.Result lyrics = SpicyLyricsService.update();
         y = status(r, y, "Lyrics", !c.lyricsEnabled.get() ? "Lyric pill disabled" : lyrics.status().isEmpty() ? "Timed lyrics ready" : lyrics.status());
         y += 12;
-        y = section(r, y, "DISPLAY", "Steady text size and smooth scrolling between lines.");
+        y = section(r, y, "DISPLAY", "Compact lyrics with a fixed text size and syllable highlighting.");
         y = toggle(r, y, "Lyrics pill", "Show synced words beside the main status pill.", c.lyricsEnabled.get(), () -> c.lyricsEnabled.set(!c.lyricsEnabled.get()), dt);
         y = toggle(r, y, "Backing vocals", "Show background lyrics underneath the lead voice.", c.lyricsBackground.get(), () -> c.lyricsBackground.set(!c.lyricsBackground.get()), dt);
+        y = slider(r, y, "Maximum width", (c.lyricsMaxWidth.get() - 180) / 420.0, c.lyricsMaxWidth.get() + " px",
+            v -> c.lyricsMaxWidth.set((int) Math.round((180 + 420 * v) / 10) * 10), dt);
+        y = slider(r, y, "Text size", (c.lyricsTextSize.get() - 0.45) / 0.45, percent(c.lyricsTextSize.get()),
+            v -> c.lyricsTextSize.set(Math.round((0.45 + 0.45 * v) * 100) / 100.0), dt);
+        y = toggle(r, y, "Match song artwork", "Smoothly recolor Ember using the current album cover.", c.songAccent.get(), () -> c.songAccent.set(!c.songAccent.get()), dt);
         y = slider(r, y, "Timing offset", (c.lyricsOffset.get() + 3000) / 6000, String.format("%+.0f ms", c.lyricsOffset.get()), v -> c.lyricsOffset.set(Math.rint((v * 6000 - 3000) / 10) * 10), dt);
         label(r, "Positive advances lyrics. Negative delays them.", contentX + 2, y, 0.63, EmberUI.TEXT_DIM, contentW); y += 30;
         action(r, contentX, y, contentW, 32, "Reset timing offset", () -> c.lyricsOffset.set(0.0), false, dt); y += 52;

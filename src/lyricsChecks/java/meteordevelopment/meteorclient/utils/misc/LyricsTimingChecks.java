@@ -43,6 +43,9 @@ public final class LyricsTimingChecks {
         var first = lyrics.at(1);
         require(first != null && first.text().equals("sunlight moves"), "Join syllables belonging to the same word");
         require(first.words().size() == 2, "Syllable splitting must not create extra words");
+        require(first.words().getFirst().syllables().size() == 2, "A joined word must retain both syllable clocks");
+        require(first.words().getFirst().syllables().getLast().text().equals("light"), "Syllable text must survive parsing");
+        require(Math.abs(first.words().getFirst().progress(1.2) - 0.25) < 0.0001, "The reveal must follow the first syllable's actual duration");
         require(first.activeWord(1.6) == 0, "Highlight the combined word for all its syllables");
         require(first.activeWord(1.8) == -1, "End times are exclusive; gaps have no active word");
         require(first.activeWord(2) == 1, "Use the next word's actual start");
@@ -94,6 +97,30 @@ public final class LyricsTimingChecks {
         require(backing.backgroundAt(4.5).isEmpty(), "Backing vocals must clear after their exit tail");
         require(backing.backgroundAt(6.1).getFirst().text().equals("solo"), "Background-only vocal groups must not be lost");
         require(backing.backgroundAt(1).isEmpty(), "Seeking back must clear later backing vocals");
+        require(backing.backgroundAt(2.2).getFirst().words().getFirst().syllables().size() == 2, "Backing words must retain their syllable animation");
+        LyricsTimeline cut = parse("""
+            {"Body":{"Type":"Syllable","Content":[{"Type":"Vocal","Lead":{"Syllables":[
+                {"Text":"he","StartTime":1,"EndTime":1.2,"IsPartOfWord":true},
+                {"Text":"'re","StartTime":1.8,"EndTime":2.2} ]}}]}}
+            """);
+        var cutWord = cut.lines().getFirst().words().getFirst();
+        require(cutWord.text().equals("he're"), "Keep supplied punctuation without inserting spaces inside a word");
+        require(cutWord.syllables().size() == 2, "A timed cut cannot be flattened into a single interval");
+        require(Math.abs(cutWord.progress(1.4) - 0.4) < 0.00001 && cutWord.progress(1.4) == cutWord.progress(1.7), "The sweep must pause during a cut between syllables");
+        require(cutWord.syllables().getLast().progress(1.7) == 0, "The second syllable cannot light before its timestamp");
+        require(cutWord.progress(2) > 0.4 && cutWord.progress(2) < 1, "The sweep must resume through the second syllable");
+
+        require(LyricMotion.fittedWidth(70, 360, 11, 1) == 112, "A short phrase needs only a compact minimum width");
+        require(LyricMotion.fittedWidth(200, 360, 11, 1) == 222, "Ordinary phrases must fit their actual text width");
+        require(LyricMotion.fittedWidth(900, 360, 11, 1) == 360, "Long phrases must stop growing at the configured maximum");
+        require(LyricMotion.fittedWidth(900, 230, 11, 1) == 230, "The pill must respect the remaining screen width");
+        var backingLine = backing.backgroundAt(2.2).getFirst();
+        require(LyricMotion.backingPresence(backingLine, 1.9) == 0, "Backing rows must reserve no space before their vocal");
+        require(LyricMotion.backingPresence(backingLine, 2.2) == 1, "A singing backing voice gets its readable row height");
+        require(Math.abs(LyricMotion.backingPresence(backingLine, 4.175) - 0.5) < 0.001, "Backing text and row space fade together");
+        require(LyricMotion.backingPresence(backingLine, 4.4) == 0, "Backing rows must fully collapse during instrumentals");
+        require(LyricMotion.activity(0.9, 1, 2) == 0 && LyricMotion.activity(2.3, 1, 2) == 0, "Glow must not appear before or linger after its syllable");
+        require(LyricMotion.activity(1.5, 1, 2) == 1, "Held syllables keep a steady glow without scaling text");
 
         var longLine = new LyricsTimeline.Line("one two three", 0, 6, java.util.List.of(
             new LyricsTimeline.Word("one", 0, 2), new LyricsTimeline.Word("two", 2, 4), new LyricsTimeline.Word("three", 4, 6)));
@@ -109,7 +136,41 @@ public final class LyricsTimingChecks {
         for (int i = 0; i < 144; i++) at144 = LyricsScroll.advance(at144, 100, 1.0 / 144);
         require(Math.abs(at30 - at144) < 0.00001, "Scrolling must settle identically at different frame rates");
         require(LyricsScroll.advance(42, 100, 0) == 42, "A zero-time frame cannot move the viewport");
-        System.out.println("Lyrics checks passed: playback, held phrases, seeking, backing vocals, continuous scrolling, frame-rate independence and attribution.");
+        artworkChecks();
+        System.out.println("Lyrics checks passed: playback, syllable cuts, fitted width, collapsing backing rows, scrolling, artwork accent, color transitions and attribution.");
+    }
+
+    private static void artworkChecks() {
+        var image = new java.awt.image.BufferedImage(100, 100, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < 100; y++) for (int x = 0; x < 100; x++) image.setRGB(x, y, x < 70 ? 0xFFE04040 : 0xFF3050D0);
+        int rgb = ArtworkAccent.extract(image);
+        require(((rgb >> 16) & 255) > (rgb & 255) + 60, "The dominant red region must beat a smaller blue region");
+        for (int y = 0; y < 100; y++) for (int x = 0; x < 100; x++) image.setRGB(x, y, x < 90 ? 0xFFFFFFFF : 0xFF248050);
+        rgb = ArtworkAccent.extract(image);
+        require(((rgb >> 8) & 255) > ((rgb >> 16) & 255) + 50, "A white artwork border must not wash out its colored subject");
+        for (int y = 0; y < 100; y++) for (int x = 0; x < 100; x++) image.setRGB(x, y, 0xFF202020);
+        rgb = ArtworkAccent.extract(image);
+        var hsv = java.awt.Color.RGBtoHSB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, null);
+        require(hsv[1] < 0.05 && hsv[2] >= 0.79, "Monochrome covers need a readable neutral accent");
+        for (int y = 0; y < 100; y++) for (int x = 0; x < 100; x++) image.setRGB(x, y, x < 90 ? 0x003030D0 : 0xFFE04040);
+        rgb = ArtworkAccent.extract(image);
+        require(((rgb >> 16) & 255) > (rgb & 255) + 60, "Transparent pixels cannot choose the artwork color");
+        String hash = "0123456789abcdef0123456789abcdef0123456789";
+        require(ArtworkAccent.normalizeUrl("spotify:image:" + hash).equals("https://i.scdn.co/image/" + hash), "Spicetify artwork URIs must resolve to the Spotify image CDN");
+        require(ArtworkAccent.normalizeUrl("http://127.0.0.1/image").isEmpty() && ArtworkAccent.normalizeUrl("https://example.com/image").isEmpty(), "Only Spotify CDN artwork should be fetched");
+        require(ArtworkAccent.normalizeUrl("https://i.scdn.co@127.0.0.1/image").isEmpty(), "URL user info cannot bypass the artwork host check");
+        var transition = new ArtworkAccent.Transition();
+        require(transition.sample(0x102030, 0) == 0x102030, "The initial manual accent must stay exact");
+        require(transition.sample(0xE08040, 0) == 0x102030, "A new artwork color cannot jump on the first frame");
+        int middle = transition.sample(0xE08040, 120_000_000);
+        require(middle != 0x102030 && middle != 0xE08040, "Artwork colors must blend through intermediate colors");
+        require(transition.sample(0xE08040, 10_000_000_000L) == 0xE08040, "The accent must reach its chosen artwork color");
+        var low = new ArtworkAccent.Transition(); var high = new ArtworkAccent.Transition();
+        low.sample(0, 0); high.sample(0, 0);
+        int lowRgb = 0, highRgb = 0;
+        for (int i = 1; i <= 30; i++) lowRgb = low.sample(0xF08040, i * 1_000_000_000L / 30);
+        for (int i = 1; i <= 144; i++) highRgb = high.sample(0xF08040, i * 1_000_000_000L / 144);
+        require(lowRgb == highRgb, "Artwork color transitions must be independent of FPS");
     }
 
     private static LyricsTimeline parse(String json) { return LyricsTimeline.parse(JsonParser.parseString(json).getAsJsonObject()); }

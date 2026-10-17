@@ -10,7 +10,23 @@ import java.util.List;
 
 /** Spicy Lyrics' documented seconds-based timing, without fabricated word timestamps. */
 public record LyricsTimeline(String type, List<Line> lines, List<Line> background, List<Credit> credits) {
-    public record Word(String text, double start, double end) {}
+    public record Syllable(String text, double start, double end) {
+        public double progress(double seconds) { return Math.clamp((seconds - start) / Math.max(0.001, end - start), 0, 1); }
+    }
+    public record Word(String text, double start, double end, List<Syllable> syllables) {
+        public Word { syllables = List.copyOf(syllables); }
+        public Word(String text, double start, double end) { this(text, start, end, List.of(new Syllable(text, start, end))); }
+
+        /** Keep pauses and independently timed cuts inside a single written word. */
+        public double progress(double seconds) {
+            double filled = 0, total = 0;
+            for (Syllable part : syllables) {
+                int length = part.text.codePointCount(0, part.text.length());
+                filled += length * part.progress(seconds); total += length;
+            }
+            return total == 0 ? 0 : filled / total;
+        }
+    }
     public record Line(String text, double start, double end, List<Word> words) {
         public int activeWord(double seconds) {
             for (int i = 0; i < words.size(); i++) {
@@ -102,6 +118,7 @@ public record LyricsTimeline(String type, List<Line> lines, List<Line> backgroun
         JsonArray syllables = vocal.getAsJsonArray("Syllables");
         if (syllables.size() > 2000) return;
         List<Word> words = new ArrayList<>();
+        List<Syllable> parts = new ArrayList<>();
         StringBuilder word = new StringBuilder();
         double wordStart = -1, wordEnd = -1;
         for (JsonElement syllable : syllables) {
@@ -113,13 +130,15 @@ public record LyricsTimeline(String type, List<Line> lines, List<Line> backgroun
             if (wordStart < 0) wordStart = start;
             wordEnd = Math.max(wordEnd, end);
             word.append(value);
+            parts.add(new Syllable(value, start, end));
             if (!item.has("IsPartOfWord") || !item.get("IsPartOfWord").getAsBoolean()) {
-                words.add(new Word(word.toString(), wordStart, wordEnd));
+                words.add(new Word(word.toString(), wordStart, wordEnd, parts));
                 word.setLength(0);
+                parts.clear();
                 wordStart = wordEnd = -1;
             }
         }
-        if (!word.isEmpty()) words.add(new Word(word.toString(), wordStart, wordEnd));
+        if (!word.isEmpty()) words.add(new Word(word.toString(), wordStart, wordEnd, parts));
         words.sort(Comparator.comparingDouble(Word::start));
         if (words.isEmpty()) return;
         // Some catalogues end the group before the last syllable; never drop that word.

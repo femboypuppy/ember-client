@@ -10,6 +10,9 @@
         const player = Spicetify.Player;
         const item = player.data?.item;
         const match = /^spotify:track:([A-Za-z0-9]{22})$/.exec(item?.uri || "");
+        const artwork = [item?.metadata?.image_url, item?.metadata?.image_large_url,
+            item?.album?.images?.[0]?.url, item?.images?.[0]?.url, item?.images?.[0]?.uri]
+            .find(value => typeof value === "string" && value.length > 0) || "";
         busy = true;
         try {
             await fetch("http://127.0.0.1:18527/playback", {
@@ -19,6 +22,7 @@
                     id: match?.[1] || "",
                     title: item?.name || item?.metadata?.title || "",
                     artist: item?.artists?.[0]?.name || item?.metadata?.artist_name || "",
+                    artworkUrl: artwork,
                     positionMs: player.getProgress(),
                     durationMs: player.getDuration(),
                     playing: player.isPlaying()

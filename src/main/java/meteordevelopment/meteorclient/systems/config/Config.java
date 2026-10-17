@@ -40,6 +40,18 @@ public class Config extends System<Config> {
         .name("lyrics-background-vocals")
         .description("Show separately timed backing vocals below the lead lyrics.")
         .defaultValue(true).build());
+    public final Setting<Integer> lyricsMaxWidth = sgLyrics.add(new IntSetting.Builder()
+        .name("lyrics-max-width")
+        .description("Maximum lyric pill width before long lines scroll. Short lines fit their text.")
+        .defaultValue(360).range(180, 600).sliderRange(180, 600).build());
+    public final Setting<Double> lyricsTextSize = sgLyrics.add(new DoubleSetting.Builder()
+        .name("lyrics-text-size")
+        .description("Lyric font size. Text keeps this size while scrolling and animating.")
+        .defaultValue(0.64).range(0.45, 0.9).sliderRange(0.45, 0.9).build());
+    public final Setting<Boolean> songAccent = sgVisual.add(new BoolSetting.Builder()
+        .name("song-artwork-accent")
+        .description("Use the current Spotify artwork's dominant color for the whole Ember client.")
+        .defaultValue(false).build());
     public final Setting<String> spicyLyricsKey = sgLyrics.add(new StringSetting.Builder()
         .name("spicy-lyrics-client-key")
         .description("Your publishable sl_pk_ key, configured to allow native clients without an Origin header.")
