@@ -12,6 +12,7 @@ import meteordevelopment.meteorclient.systems.hud.YAnchor;
 import meteordevelopment.meteorclient.systems.hud.elements.EmberRegionMapHud;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.world.World;
@@ -189,24 +190,51 @@ public class RegionMap extends Module {
     );
 
     private int lastRegionId = -1;
+    /** Set while this module is flipping the HUD element, so the element doesn't flip the module back. */
+    private boolean syncingHud;
 
     public RegionMap() {
         super(Categories.Donut, "region-map", "Displays the DonutSMP 9x9 region map and your current region.");
     }
 
+    /**
+     * The HUD element follows real toggles only. Leaving a server calls onDeactivate() without
+     * toggling (the module stays active so it resumes on the next join), and Module.toggle() runs
+     * onDeactivate() while isActive() is still true, so neither callback can tell the two apart.
+     */
+    @Override
+    public void toggle() {
+        super.toggle();
+        syncHud(isActive(), Utils.canUpdate());
+    }
+
     @Override
     public void onActivate() {
         lastRegionId = -1;
-        ensureHudElement(true);
+        syncHud(true, true);
     }
 
     @Override
     public void onDeactivate() {
         lastRegionId = -1;
-        ensureHudElement(false);
     }
 
-    private void ensureHudElement(boolean shouldBeActive) {
+    public boolean isSyncingHud() {
+        return syncingHud;
+    }
+
+    private void syncHud(boolean shouldBeActive, boolean allowAdd) {
+        if (syncingHud) return;
+        syncingHud = true;
+        try {
+            ensureHudElement(shouldBeActive, allowAdd);
+        } finally {
+            syncingHud = false;
+        }
+    }
+
+    /** @param allowAdd false while configs may still be loading, when adding could duplicate a saved element */
+    private void ensureHudElement(boolean shouldBeActive, boolean allowAdd) {
         if (Hud.get() == null) return;
         EmberRegionMapHud found = null;
         for (HudElement el : Hud.get()) {
@@ -215,7 +243,7 @@ public class RegionMap extends Module {
                 break;
             }
         }
-        if (found == null && shouldBeActive) {
+        if (found == null && shouldBeActive && allowAdd) {
             Hud.get().add(EmberRegionMapHud.INFO, 8, 224, XAnchor.Left, YAnchor.Top);
             for (HudElement el : Hud.get()) {
                 if (el instanceof EmberRegionMapHud rm) {

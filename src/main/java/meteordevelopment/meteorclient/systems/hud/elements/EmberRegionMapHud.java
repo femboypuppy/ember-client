@@ -114,7 +114,8 @@ public class EmberRegionMapHud extends HudElement {
     public void toggle() {
         super.toggle();
         RegionMap mod = Modules.get() != null ? Modules.get().get(RegionMap.class) : null;
-        if (mod != null && mod.isActive() != isActive()) {
+        // While the module is the one toggling us, toggling it back would undo its own change.
+        if (mod != null && !mod.isSyncingHud() && mod.isActive() != isActive()) {
             mod.toggle();
         }
     }

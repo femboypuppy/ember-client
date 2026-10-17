@@ -13,7 +13,6 @@ import meteordevelopment.meteorclient.systems.modules.donut.StaffDetector;
 import meteordevelopment.meteorclient.systems.modules.donut.StaffDetector.StaffEntry;
 import meteordevelopment.meteorclient.systems.modules.donut.StaffIntel;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
-import meteordevelopment.meteorclient.utils.render.EmberIcons;
 import meteordevelopment.meteorclient.utils.render.EmberStrip;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
@@ -37,8 +36,8 @@ public class EmberStaffHud extends HudElement {
         EmberStaffHud::new
     );
 
-    private static final Color SKIN_TINT = new Color(255, 255, 255, 255);
     private static final Color SAFE_GREEN = new Color(93, 217, 127, 255);
+    private static final Color LEFT_GREY = new Color(140, 140, 152, 255);
     private static final Color WARN_AMBER = new Color(231, 164, 80, 255);
     private static final Color ALERT_RED = new Color(222, 86, 86, 255);
 
@@ -123,109 +122,106 @@ public class EmberStaffHud extends HudElement {
         handleDirectChatDrag();
 
         int onlineCount = 0;
-        boolean anyNearby = false;
+        boolean anyUrgent = false;
         for (StaffEntry e : entries) {
             if (e.online) {
                 onlineCount++;
-                if (e.nearby || e.inRegion || e.spectator || e.vanished) anyNearby = true;
+                if (isUrgent(e)) anyUrgent = true;
             }
         }
 
         double s = scale.get();
-        double titleScale = 0.90 * s;
-        double rowScale = 0.84 * s;
-        double badgeScale = 0.68 * s;
+        double titleScale = 0.82 * s;
+        double nameScale = 0.78 * s;
+        double badgeScale = 0.62 * s;
 
         double titleH = renderer.textHeight(true, titleScale);
-        double rowTextH = renderer.textHeight(true, rowScale);
-        double badgeTextH = renderer.textHeight(true, badgeScale);
+        double nameH = renderer.textHeight(true, nameScale);
+        double badgeTextH = renderer.textHeight(false, badgeScale);
 
-        double padX = 10 * s;
-        double padY = 8.5 * s;
-        double headerH = titleH + 8 * s;
-        double rowH = Math.max(rowTextH + 9 * s, 21 * s);
-        double avatarSize = 14.5 * s;
+        double pad = 9 * s;
+        double headerH = Math.max(22 * s, titleH + 6 * s);
+        double rowH = Math.max(18 * s, nameH + 6 * s);
+        double rowGap = 2 * s;
+        double avatarSize = 12 * s;
+        double pillH = badgeTextH + 4 * s;
+        double radius = 7 * s;
 
         Color accent = EmberPalette.accent();
-        Color bg = EmberStrip.background();
-        Color bright = new Color(255, 255, 255, 255);
-        Color dim = new Color(160, 160, 174, 245);
+        Color bright = EmberPalette.textBright();
+        Color dim = EmberPalette.textDim();
+        Color statusColor = anyUrgent ? ALERT_RED : (onlineCount > 0 ? WARN_AMBER : SAFE_GREEN);
 
-        Color statusColor = anyNearby ? ALERT_RED : (onlineCount > 0 ? WARN_AMBER : SAFE_GREEN);
-        String countLabel = onlineCount + " ONLINE";
-        double countBadgeW = renderer.textWidth(countLabel, true, badgeScale) + 10 * s;
-        double countBadgeH = badgeTextH + 4 * s;
+        String countLabel = onlineCount > 0 ? onlineCount + " ONLINE" : "CLEAR";
+        double countDot = 4 * s;
+        double countPillW = countDot + 4 * s + renderer.textWidth(countLabel, badgeScale) + 12 * s;
 
-        double minW = 176 * s;
-        double widest = 12 * s + renderer.textWidth("Staff Detector", true, titleScale) + 14 * s + countBadgeW;
-
+        // Measure.
+        double widest = 8 * s + 6 * s + renderer.textWidth("STAFF", true, titleScale) + 16 * s + countPillW;
         if (entries.isEmpty()) {
-            widest = Math.max(widest, 12 * s + renderer.textWidth("No moderators online", true, rowScale));
+            widest = Math.max(widest, 12 * s + renderer.textWidth("No staff detected", nameScale));
         } else {
             for (StaffEntry entry : entries) {
-                String badgeText = primaryBadge(entry, nowMs);
-                double bw = renderer.textWidth(badgeText, true, badgeScale) + 10 * s;
-                String stateTag = secondaryBadge(entry, nowMs);
-                double sw = stateTag != null ? renderer.textWidth(stateTag, true, badgeScale) + 10 * s + 5 * s : 0;
-                double leftW = (showHeads.get() ? avatarSize + 6.5 * s : 10 * s) + renderer.textWidth(entry.name, true, rowScale);
-                widest = Math.max(widest, leftW + 16 * s + sw + bw);
+                double left = 6 * s + (showHeads.get() ? avatarSize : 6 * s) + 6 * s + renderer.textWidth(entry.name, true, nameScale);
+                double rankW = renderer.textWidth(rankLabel(entry), badgeScale) + 10 * s;
+                String tag = stateTag(entry, nowMs);
+                double tagW = tag != null ? renderer.textWidth(tag, badgeScale) + 10 * s + 4 * s : 0;
+                widest = Math.max(widest, left + 14 * s + tagW + rankW + 6 * s);
             }
         }
 
-        double bodyRowsH = 0;
+        double bodyH;
         if (entries.isEmpty()) {
-            bodyRowsH = rowH;
+            bodyH = rowH;
         } else {
-            for (StaffEntry entry : entries) {
-                bodyRowsH += rowH * Math.max(0.05f, entry.anim);
-            }
+            bodyH = 0;
+            for (StaffEntry entry : entries) bodyH += (rowH + rowGap) * Math.max(0.05f, entry.anim);
+            bodyH -= rowGap;
         }
 
-        double w = Math.max(minW, padX * 2 + widest);
-        double h = padY * 2 + headerH + 3 * s + bodyRowsH;
-        double radius = 8 * s;
+        double w = Math.max(168 * s, pad * 2 + widest);
+        double h = pad + headerH + 1 + 6 * s + bodyH + pad;
 
         setSize(w, h);
 
-        if (glow.get()) {
-            Color glowCol = onlineCount > 0 ? statusColor : accent;
-            renderer.softGlow(x, y, w, h, radius, 10 * s, new Color(glowCol.r, glowCol.g, glowCol.b, onlineCount > 0 ? 135 : 90));
-        }
-
+        if (glow.get()) renderer.softGlow(x, y, w, h, radius, 10 * s, new Color(accent.r, accent.g, accent.b, onlineCount > 0 ? 120 : 80));
         renderer.dropShadow(x, y, w, h, radius, 20 * s);
-
-        if (onlineCount > 0) {
-            double rim = 1.1 * s;
-            renderer.roundedQuad(x - rim, y - rim, w + rim * 2, h + rim * 2, radius + rim,
-                new Color(statusColor.r, statusColor.g, statusColor.b, anyNearby ? 155 : 95));
-        }
-
         EmberStrip.panel(renderer, x, y, w, h, radius, 1f);
 
-        // Header
-        double cy = y + padY;
-        double iconSize = 10.5 * s;
-        EmberIcons.Glyph headerGlyph = onlineCount > 0 ? EmberIcons.Glyph.WARNING : EmberIcons.Glyph.USER;
-        EmberIcons.draw(renderer, headerGlyph, x + padX, cy + (titleH - iconSize) / 2, iconSize, statusColor, bg);
-        renderer.text("Staff Detector", x + padX + iconSize + 6 * s, cy, bright, true, titleScale);
+        // Accent spine down the left edge.
+        renderer.roundedQuad(x + 1 * s, y + radius, 2 * s, h - radius * 2, 1 * s, new Color(accent.r, accent.g, accent.b, 200));
 
-        // Header count pill
-        double cbx = x + w - padX - countBadgeW;
-        double cby = cy + (titleH - countBadgeH) / 2;
-        renderer.roundedQuad(cbx, cby, countBadgeW, countBadgeH, countBadgeH / 2,
-            new Color(statusColor.r, statusColor.g, statusColor.b, 46));
-        double ctw = renderer.textWidth(countLabel, true, badgeScale);
-        renderer.text(countLabel, cbx + (countBadgeW - ctw) / 2, cby + (countBadgeH - badgeTextH) / 2, statusColor, true, badgeScale);
+        // Header.
+        double cy = y + pad;
+        double dotSize = 6 * s;
+        double dotX = x + pad, dotY = cy + (headerH - dotSize) / 2;
+        renderer.softGlow(dotX, dotY, dotSize, dotSize, dotSize / 2, 5 * s, new Color(accent.r, accent.g, accent.b, 150));
+        renderer.roundedQuad(dotX, dotY, dotSize, dotSize, dotSize / 2, accent);
+        renderer.text("STAFF", dotX + dotSize + 6 * s, cy + (headerH - titleH) / 2, bright, true, titleScale);
+
+        double cpx = x + w - pad - countPillW;
+        double cpy = cy + (headerH - pillH) / 2;
+        double rim = Math.max(1, s);
+        renderer.roundedQuad(cpx - rim, cpy - rim, countPillW + rim * 2, pillH + rim * 2, pillH / 2 + rim, withAlpha(statusColor, 70));
+        renderer.roundedQuad(cpx, cpy, countPillW, pillH, pillH / 2, EmberPalette.control());
+        double pulse = onlineCount > 0 ? 0.55 + 0.45 * Math.sin(nowMs / 220.0) : 1;
+        renderer.roundedQuad(cpx + 6 * s, cpy + (pillH - countDot) / 2, countDot, countDot, countDot / 2, withAlpha(statusColor, (int) (255 * pulse)));
+        renderer.text(countLabel, cpx + 6 * s + countDot + 4 * s, cpy + (pillH - badgeTextH) / 2, onlineCount > 0 ? bright : SAFE_GREEN, false, badgeScale);
 
         cy += headerH;
-        renderer.quad(x + padX, cy - 2 * s, w - padX * 2, 1, new Color(255, 255, 255, 20));
-        cy += 3 * s;
+        Color divider = EmberPalette.divider();
+        renderer.quad(x + pad, cy, w - pad * 2, 1, new Color(divider.r, divider.g, divider.b, 150));
+        double lead = Math.min((w - pad * 2) * 0.35, 50 * s);
+        Color clear = new Color(accent.r, accent.g, accent.b, 0);
+        Color hot = new Color(accent.r, accent.g, accent.b, 190);
+        renderer.quad(x + pad, cy, lead, 1, hot, clear, clear, hot);
+        cy += 1 + 6 * s;
 
         if (entries.isEmpty()) {
-            double dotSize = 5.5 * s;
-            double dotY = cy + (rowH - dotSize) / 2;
-            renderer.roundedQuad(x + padX + 2 * s, dotY, dotSize, dotSize, dotSize / 2, SAFE_GREEN);
-            renderer.text("No moderators online", x + padX + dotSize + 8 * s, cy + (rowH - rowTextH) / 2, dim, true, rowScale);
+            double d = 5 * s;
+            renderer.softGlow(x + pad + 2 * s, cy + (rowH - d) / 2, d, d, d / 2, 3 * s, withAlpha(SAFE_GREEN, 120));
+            renderer.roundedQuad(x + pad + 2 * s, cy + (rowH - d) / 2, d, d, d / 2, SAFE_GREEN);
+            renderer.text("No staff detected", x + pad + d + 8 * s, cy + (rowH - nameH) / 2, dim, true, nameScale);
             return;
         }
 
@@ -234,73 +230,69 @@ public class EmberStaffHud extends HudElement {
             if (a <= 0.02f) continue;
 
             double effRowH = rowH * a;
+            double rx = x + pad - 3 * s, rw = w - pad * 2 + 6 * s;
             double rowCenterY = cy + effRowH / 2;
+            Color barColor = !entry.online ? LEFT_GREY : (isUrgent(entry) ? ALERT_RED : WARN_AMBER);
 
+            // Row card, status bar, and a flash when the entry changes.
+            renderer.roundedQuad(rx, cy, rw, effRowH, 4 * s, withAlpha(EmberPalette.control(), (int) (120 * a)));
             if (entry.pulse > 0.01f) {
-                Color pulseCol = entry.online ? (entry.nearby ? ALERT_RED : SAFE_GREEN) : ALERT_RED;
-                renderer.roundedQuad(x + 4 * s, cy + 1 * s, w - 8 * s, effRowH - 2 * s, 5 * s,
-                    new Color(pulseCol.r, pulseCol.g, pulseCol.b, (int) (45 * entry.pulse * a)));
+                renderer.roundedQuad(rx, cy, rw, effRowH, 4 * s, withAlpha(barColor, (int) (50 * entry.pulse * a)));
             }
+            renderer.roundedQuad(rx, cy + 2 * s * a, 2 * s, Math.max(0, effRowH - 4 * s * a), 1 * s, withAlpha(barColor, (int) (235 * a)));
 
-            double textX = x + padX;
+            double textX = rx + 6 * s;
             if (showHeads.get()) {
-                double hy = rowCenterY - avatarSize / 2;
-                drawStaffAvatar(renderer, entry.skin, textX, hy, avatarSize, a, bg);
-                textX += avatarSize + 6.5 * s;
+                drawStaffAvatar(renderer, entry.skin, textX, rowCenterY - avatarSize / 2, avatarSize, a, accent);
+                textX += avatarSize + 6 * s;
             } else {
-                double dotSize = 5.5 * s;
-                Color dotCol = !entry.online ? ALERT_RED : (entry.nearby ? ALERT_RED : SAFE_GREEN);
-                renderer.roundedQuad(textX + 1 * s, rowCenterY - dotSize / 2, dotSize, dotSize, dotSize / 2,
-                    withAlpha(dotCol, (int) (245 * a)));
-                textX += dotSize + 6 * s;
+                double d = 5 * s;
+                renderer.roundedQuad(textX, rowCenterY - d / 2, d, d, d / 2, withAlpha(barColor, (int) (245 * a)));
+                textX += d + 6 * s;
             }
 
-            Color nameColor = entry.online
-                ? new Color(255, 255, 255, (int) (255 * a))
-                : new Color(165, 165, 175, (int) (200 * a));
-            renderer.text(entry.name, textX, rowCenterY - rowTextH / 2, nameColor, true, rowScale);
+            Color nameColor = entry.online ? withAlpha(bright, (int) (255 * a)) : withAlpha(dim, (int) (210 * a));
+            renderer.text(entry.name, textX, rowCenterY - nameH / 2, nameColor, true, nameScale);
 
-            // Primary right badge (Rank, SPECTATOR, VANISHED, or LEFT)
-            String primary = primaryBadge(entry, nowMs);
-            boolean urgentState = !entry.online || entry.nearby || entry.spectator || entry.vanished || entry.inRegion;
-            Color primaryCol = urgentState ? ALERT_RED : WARN_AMBER;
-            double pbW = renderer.textWidth(primary, true, badgeScale) + 9 * s;
-            double pbH = badgeTextH + 3.5 * s;
-            double pbX = x + w - padX - pbW;
-            double pbY = rowCenterY - pbH / 2;
+            // Rank pill in the theme accent, flush right.
+            String rank = rankLabel(entry);
+            double rankW = renderer.textWidth(rank, badgeScale) + 10 * s;
+            double pillX = rx + rw - 5 * s - rankW;
+            double pillY = rowCenterY - pillH / 2;
+            renderer.roundedQuad(pillX - rim, pillY - rim, rankW + rim * 2, pillH + rim * 2, pillH / 2 + rim, withAlpha(accent, (int) (95 * a)));
+            renderer.roundedQuad(pillX, pillY, rankW, pillH, pillH / 2, blend(withAlpha(EmberPalette.control(), (int) (255 * a)), accent, 0.13));
+            Color rankText = new Color((accent.r * 3 + 255 * 2) / 5, (accent.g * 3 + 255 * 2) / 5, (accent.b * 3 + 255 * 2) / 5, (int) (255 * a));
+            renderer.text(rank, pillX + 5 * s, pillY + (pillH - badgeTextH) / 2, rankText, false, badgeScale);
 
-            renderer.roundedQuad(pbX, pbY, pbW, pbH, pbH / 2, withAlpha(primaryCol, (int) (46 * a)));
-            double ptw = renderer.textWidth(primary, true, badgeScale);
-            renderer.text(primary, pbX + (pbW - ptw) / 2, pbY + (pbH - badgeTextH) / 2,
-                withAlpha(primaryCol, (int) (250 * a)), true, badgeScale);
-
-            // Optional secondary badge (JOINED, IN REGION, or NEARBY)
-            String secondary = secondaryBadge(entry, nowMs);
-            if (secondary != null) {
-                Color secCol = (entry.nearby || entry.inRegion || entry.spectator || entry.vanished) ? ALERT_RED : SAFE_GREEN;
-                double sbW = renderer.textWidth(secondary, true, badgeScale) + 9 * s;
-                double sbX = pbX - 5 * s - sbW;
-                renderer.roundedQuad(sbX, pbY, sbW, pbH, pbH / 2, withAlpha(secCol, (int) (52 * a)));
-                double stw = renderer.textWidth(secondary, true, badgeScale);
-                renderer.text(secondary, sbX + (sbW - stw) / 2, pbY + (pbH - badgeTextH) / 2,
-                    withAlpha(secCol, (int) (255 * a)), true, badgeScale);
+            // State tag: what the detector knows about where they are.
+            String tag = stateTag(entry, nowMs);
+            if (tag != null) {
+                Color tagColor = tagColor(entry, nowMs);
+                float tagAlpha = a;
+                if (tag.equals("NEW")) tagAlpha *= (float) (0.6 + 0.4 * Math.sin(nowMs / 160.0));
+                double tagW = renderer.textWidth(tag, badgeScale) + 10 * s;
+                double tagX = pillX - 4 * s - tagW;
+                renderer.roundedQuad(tagX, pillY, tagW, pillH, pillH / 2, withAlpha(tagColor, (int) (48 * tagAlpha)));
+                renderer.text(tag, tagX + 5 * s, pillY + (pillH - badgeTextH) / 2, withAlpha(tagColor, (int) (255 * tagAlpha)), false, badgeScale);
             }
 
-            cy += effRowH;
+            cy += (rowH + rowGap) * a;
         }
     }
 
-    private String primaryBadge(StaffEntry entry, long nowMs) {
-        if (!entry.online) return "LEFT";
-        if (entry.spectator) return "SPECTATOR";
-        if (entry.vanished) return "VANISHED";
-        return entry.rank != null && !entry.rank.isEmpty() ? entry.rank : "STAFF";
+    private static boolean isUrgent(StaffEntry entry) {
+        return entry.nearby || entry.inRegion || entry.spectator || entry.vanished;
     }
 
-    private String secondaryBadge(StaffEntry entry, long nowMs) {
-        if (!entry.online) return null;
+    private static String rankLabel(StaffEntry entry) {
+        return entry.rank != null && !entry.rank.isEmpty() ? entry.rank.toUpperCase() : "STAFF";
+    }
+
+    private String stateTag(StaffEntry entry, long nowMs) {
+        if (!entry.online) return "LEFT";
         if (entry.nearby) return String.format("NEAR %.0fm", entry.distance);
         if (StaffIntel.get().isWatching(entry.uuid)) return "WATCHING";
+        if (entry.spectator) return "SPECTATOR";
         if (entry.inRegion) {
             // Hidden staff only show up through a game mode leak, so say how old that proof is.
             long leakAge = StaffIntel.get().leakAgeMs(entry.uuid);
@@ -310,17 +302,29 @@ public class EmberStaffHud extends HudElement {
             }
             return "IN REGION";
         }
-        if (nowMs - entry.joinedAt < 4500) return "JOINED";
+        if (entry.vanished) return "VANISHED";
+        if (nowMs - entry.joinedAt < 5000) return "NEW";
         return null;
     }
 
-    private void drawStaffAvatar(HudRenderer renderer, Identifier skin, double hx, double hy, double size, float alpha, Color bg) {
-        double r = size * 0.24;
+    private Color tagColor(StaffEntry entry, long nowMs) {
+        if (!entry.online) return LEFT_GREY;
+        if (isUrgent(entry) || StaffIntel.get().isWatching(entry.uuid)) return ALERT_RED;
+        return SAFE_GREEN;
+    }
+
+    private void drawStaffAvatar(HudRenderer renderer, Identifier skin, double hx, double hy, double size, float alpha, Color accent) {
+        double r = size * 0.22;
+        double frame = Math.max(1, size / 12);
+        renderer.roundedQuad(hx - frame, hy - frame, size + frame * 2, size + frame * 2, r + frame, withAlpha(accent, (int) (90 * alpha)));
         renderer.roundedQuad(hx, hy, size, size, r, new Color(24, 24, 30, (int) (220 * alpha)));
 
         if (skin == null) {
-            EmberIcons.draw(renderer, EmberIcons.Glyph.USER, hx + size * 0.18, hy + size * 0.18,
-                size * 0.64, withAlpha(EmberPalette.accent(), (int) (245 * alpha)), bg);
+            // Diamond badge when the skin hasn't loaded.
+            double cx = hx + size / 2, cy = hy + size / 2, d = size * 0.3;
+            Color c = withAlpha(accent, (int) (235 * alpha));
+            renderer.triangle(cx - d, cy, cx + d, cy, cx, cy - d, c);
+            renderer.triangle(cx - d, cy, cx, cy + d, cx + d, cy, c);
             return;
         }
 
@@ -329,6 +333,14 @@ public class EmberStaffHud extends HudElement {
             renderer.roundedTextureRegion(skin, hx, hy, size, r, 0.125, 0.125, 0.25, 0.25, tint);
             renderer.roundedTextureRegion(skin, hx, hy, size, r, 0.625, 0.125, 0.75, 0.25, tint);
         });
+    }
+
+    private static Color blend(Color base, Color over, double t) {
+        return new Color(
+            (int) (base.r + (over.r - base.r) * t),
+            (int) (base.g + (over.g - base.g) * t),
+            (int) (base.b + (over.b - base.b) * t),
+            base.a);
     }
 
     /** Allows dragging the Staff Detector widget directly when the chat screen is open. */
