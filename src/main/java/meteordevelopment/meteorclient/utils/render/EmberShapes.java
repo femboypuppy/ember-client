@@ -15,6 +15,55 @@ public final class EmberShapes {
     private EmberShapes() {
     }
 
+    /** Rounded gradient with a small triangle fan; color interpolates vertically on the GPU. */
+    public static void roundedGradient(Renderer2D r, double x, double y, double w, double h, double radius, Color top, Color bottom) {
+        if (w <= 0 || h <= 0) return;
+        radius = Math.clamp(radius, 0, Math.min(w, h) / 2);
+        Color middle = interpolate(top, bottom, .5);
+        double firstX = 0, firstY = 0, lastX = 0, lastY = 0;
+        for (int corner = 0; corner < 4; corner++) for (int step = 0; step <= 8; step++) {
+            double angle = corner * Math.PI / 2 + step * Math.PI / 16;
+            double px = x + (corner == 0 || corner == 3 ? w - radius : radius) + Math.cos(angle) * radius;
+            double py = y + (corner < 2 ? h - radius : radius) + Math.sin(angle) * radius;
+            if (corner == 0 && step == 0) { firstX = px; firstY = py; }
+            else r.triangle(x + w / 2, y + h / 2, lastX, lastY, px, py, middle,
+                interpolate(top, bottom, (lastY - y) / h), interpolate(top, bottom, (py - y) / h));
+            lastX = px; lastY = py;
+        }
+        r.triangle(x + w / 2, y + h / 2, lastX, lastY, firstX, firstY, middle,
+            interpolate(top, bottom, (lastY - y) / h), interpolate(top, bottom, (firstY - y) / h));
+    }
+
+    private static Color interpolate(Color top, Color bottom, double t) {
+        t = Math.clamp(t, 0, 1);
+        return new Color((int) (top.r + (bottom.r - top.r) * t), (int) (top.g + (bottom.g - top.g) * t),
+            (int) (top.b + (bottom.b - top.b) * t), (int) (top.a + (bottom.a - top.a) * t));
+    }
+
+    /** A continuous rounded stroke, or four soft corner brackets, without square joins. */
+    public static void roundedOutline(Renderer2D r, double x, double y, double w, double h, double radius, double thickness, Color c, boolean corners) {
+        if (w <= 0 || h <= 0) return;
+        double t = Math.min(thickness, Math.min(w, h) / 3);
+        double rad = Math.clamp(radius, t, Math.min(w, h) / 2);
+        double inner = Math.max(0, rad - t);
+        for (int corner = 0; corner < 4; corner++) for (int step = 0; step < 8; step++) {
+            double a = corner * Math.PI / 2 + step * Math.PI / 16, b = a + Math.PI / 16;
+            double cx = x + (corner == 0 || corner == 3 ? w - rad : rad), cy = y + (corner < 2 ? h - rad : rad);
+            double ax = cx + Math.cos(a) * rad, ay = cy + Math.sin(a) * rad;
+            double bx = cx + Math.cos(b) * rad, by = cy + Math.sin(b) * rad;
+            double ix = cx + Math.cos(a) * inner, iy = cy + Math.sin(a) * inner;
+            double jx = cx + Math.cos(b) * inner, jy = cy + Math.sin(b) * inner;
+            r.triangle(ax, ay, bx, by, ix, iy, c); r.triangle(bx, by, jx, jy, ix, iy, c);
+        }
+        double horizontal = corners ? Math.max(0, w * .27 - rad) : Math.max(0, (w - rad * 2) / 2);
+        double vertical = corners ? Math.max(0, h * .20 - rad) : Math.max(0, (h - rad * 2) / 2);
+        for (int side = 0; side < 2; side++) {
+            double yy = side == 0 ? y : y + h - t, xx = side == 0 ? x : x + w - t;
+            r.quad(x + rad, yy, horizontal, t, c); r.quad(x + w - rad - horizontal, yy, horizontal, t, c);
+            r.quad(xx, y + rad, t, vertical, c); r.quad(xx, y + h - rad - vertical, t, vertical, c);
+        }
+    }
+
     /** Emits a rounded rectangle. The caller owns begin() and render(). */
     public static void roundedQuad(Renderer2D r, double x, double y, double w, double h, double radius, Color color) {
         if (w <= 0 || h <= 0) return;

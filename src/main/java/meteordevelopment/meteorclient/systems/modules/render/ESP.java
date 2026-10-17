@@ -22,6 +22,7 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
+import meteordevelopment.meteorclient.renderer.Fonts;
 import meteordevelopment.meteorclient.utils.render.EmberShapes;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
@@ -128,6 +129,13 @@ public class ESP extends Module {
     );
 
     // Ember style
+
+    private final Setting<Double> cornerRadius = sgEmber.add(new DoubleSetting.Builder()
+        .name("corner-radius").description("Soft, rounded corners for Ember boxes and brackets.").defaultValue(7).range(0, 18).sliderRange(0, 18).visible(this::isEmber).build());
+    private final Setting<Boolean> surfaceTexture = sgEmber.add(new BoolSetting.Builder()
+        .name("etched-fill").description("Faint horizontal detail inside the translucent fill.").defaultValue(true).visible(this::isEmber).build());
+    private final Setting<Boolean> smoothLabels = sgEmber.add(new BoolSetting.Builder()
+        .name("interface-font").description("Use Ember's smooth interface font for name and distance cards.").defaultValue(true).visible(this::isEmber).build());
 
     private final Setting<BoxStyle> boxStyle = sgEmber.add(new EnumSetting.Builder<BoxStyle>()
         .name("box-style")
@@ -468,7 +476,12 @@ public class ESP extends Module {
                 int fillAlpha = (int) (lineColor.a * fillOpacity.get());
                 fillTop.set(lineColor).a(fillAlpha);
                 fillBottom.set(lineColor).a(gradientFill.get() ? fillAlpha / 6 : fillAlpha);
-                r.quad(x1, y1, w, h, fillTop, fillTop, fillBottom, fillBottom);
+                EmberShapes.roundedGradient(r, x1, y1, w, h, cornerRadius.get(), fillTop, fillBottom);
+                if (surfaceTexture.get()) {
+                    Color etched = new Color(lineColor.r, lineColor.g, lineColor.b, (int) (fillAlpha * .35));
+                    double inset = Math.min(Math.min(w, h) * .2, cornerRadius.get() + 2);
+                    for (int i = 1; i < 5; i++) r.quad(x1 + inset, y1 + h * i / 5, Math.max(0, w - inset * 2), .7, etched);
+                }
             }
 
             if (shapeMode.get() != ShapeMode.Sides) {
@@ -519,6 +532,10 @@ public class ESP extends Module {
     private void emberShape(Renderer2D r, double x1, double y1, double x2, double y2, double t, Color c) {
         double w = x2 - x1, h = y2 - y1;
         t = Math.min(t, Math.min(w, h) / 2);
+        if (cornerRadius.get() > 0) {
+            EmberShapes.roundedOutline(r, x1, y1, w, h, Math.min(cornerRadius.get(), Math.min(w, h) * .24), t, c, boxStyle.get() == BoxStyle.Corners);
+            return;
+        }
 
         if (boxStyle.get() == BoxStyle.Full) {
             r.quad(x1, y1, w, t, c);
@@ -550,7 +567,7 @@ public class ESP extends Module {
         double bx = x1 - barW - 4;
 
         BAR_BACKGROUND.a = (int) (150 * fade);
-        r.quad(bx - 1, y1 - 1, barW + 2, h + 2, BAR_BACKGROUND);
+        EmberShapes.roundedQuad(r, bx - 1, y1 - 1, barW + 2, h + 2, (barW + 2) / 2, BAR_BACKGROUND);
 
         // Red at empty, yellow at half, green at full.
         int red = ratio > 0.5 ? (int) (255 * (1 - ratio) * 2) : 255;
@@ -560,7 +577,7 @@ public class ESP extends Module {
         barTop.set(Math.min(255, red + 50), Math.min(255, green + 50), 110, alpha);
 
         double filled = h * ratio;
-        r.quad(bx, y1 + h - filled, barW, filled, barTop, barTop, barColor, barColor);
+        EmberShapes.roundedGradient(r, bx, y1 + h - filled, barW, filled, barW / 2, barTop, barColor);
 
         if (absorption > 0) {
             ABSORPTION.a = (int) (220 * fade);
@@ -571,18 +588,17 @@ public class ESP extends Module {
     private void drawLabelBackgrounds(Renderer2D r) {
         if (labels.isEmpty()) return;
 
-        TextRenderer text = TextRenderer.get();
+        TextRenderer text = labelRenderer();
         text.begin(textScale.get());
         for (Label label : labels) {
             double width = labelWidth(text, label);
             double height = text.getHeight();
-            double pad = 3;
+            double pad = 6;
             double bx = label.centerX - width / 2 - pad;
             double by = label.bottomY - height - pad * 2 - 4;
-            LABEL_BACKGROUND.a = (int) (170 * label.color.a / 255.0);
-            EmberShapes.roundedQuad(r, bx, by, width + pad * 2, height + pad * 2, 4, LABEL_BACKGROUND);
-            // Accent strip in the entity colour along the bottom of the label.
-            r.quad(bx + 3, by + height + pad * 2 - 1.5, width + pad * 2 - 6, 1.5, label.color);
+            LABEL_BACKGROUND.a = (int) (190 * label.color.a / 255.0);
+            EmberShapes.roundedQuad(r, bx, by, width + pad * 2, height + pad * 2, Math.min(8, height * .5), LABEL_BACKGROUND);
+            EmberShapes.roundedQuad(r, bx + 5, by + height + pad * 2 - 1.5, Math.min(22, width), 1, .5, label.color);
         }
         text.end();
     }
@@ -590,32 +606,34 @@ public class ESP extends Module {
     private void drawLabelText() {
         if (labels.isEmpty()) return;
 
-        TextRenderer text = TextRenderer.get();
+        TextRenderer text = labelRenderer();
         text.begin(textScale.get());
         for (Label label : labels) {
             double width = labelWidth(text, label);
             double height = text.getHeight();
             double x = label.centerX - width / 2;
-            double y = label.bottomY - height - 3 - 4;
+            double y = label.bottomY - height - 6 - 4;
             LABEL_TEXT.a = label.color.a;
-            double after = text.render(label.name, x, y, LABEL_TEXT, true);
+            double after = text.render(label.name, x, y, LABEL_TEXT, false);
             if (!label.distance.isEmpty()) {
                 LABEL_DIM.a = label.color.a;
-                text.render(" " + label.distance, after, y, LABEL_DIM, true);
+                text.render("  ·  " + label.distance, after, y, LABEL_DIM, false);
             }
         }
         text.end();
     }
 
     private static double labelWidth(TextRenderer text, Label label) {
-        double width = text.getWidth(label.name, true);
-        if (!label.distance.isEmpty()) width += text.getWidth(" " + label.distance, true);
+        double width = text.getWidth(label.name, false);
+        if (!label.distance.isEmpty()) width += text.getWidth("  ·  " + label.distance, false);
         return width;
     }
 
     private boolean isEmber() {
         return mode.get() == Mode.Ember;
     }
+
+    private TextRenderer labelRenderer() { return smoothLabels.get() && Fonts.RENDERER != null ? Fonts.RENDERER : TextRenderer.get(); }
 
     public boolean forceRender() {
         return isActive() && (mode.get() == Mode.Shader || mode.get() == Mode.Glow);

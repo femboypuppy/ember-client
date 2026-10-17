@@ -50,11 +50,8 @@ public class ChamsShader extends EntityShader {
             ByteBuffer data = null;
             for (String fileFormat : FILE_FORMATS) {
                 Optional<Resource> optional = mc.getResourceManager().getResource(MeteorClient.identifier("textures/chams." + fileFormat));
-                if (optional.isEmpty() || optional.get().getInputStream() == null) {
-                    continue;
-                }
-
-                data = TextureUtil.readResource(optional.get().getInputStream());
+                if (optional.isEmpty()) continue;
+                try (var stream = optional.get().getInputStream()) { data = TextureUtil.readResource(stream); }
                 break;
             }
             if (data == null) return;
@@ -68,12 +65,17 @@ public class ChamsShader extends EntityShader {
 
                 STBImage.stbi_set_flip_vertically_on_load(true);
                 ByteBuffer image = STBImage.stbi_load_from_memory(data, width, height, comp, 4);
-
-                IMAGE_TEX = new Texture(width.get(0), height.get(0), TextureFormat.RGBA8, FilterMode.NEAREST, FilterMode.NEAREST);
-                IMAGE_TEX.upload(image);
-
-                STBImage.stbi_image_free(image);
+                if (image == null) throw new IOException("Invalid chams image");
+                Texture next = null;
+                try {
+                    next = new Texture(width.get(0), height.get(0), TextureFormat.RGBA8, FilterMode.LINEAR, FilterMode.LINEAR);
+                    next.upload(image);
+                    Texture previous = IMAGE_TEX; IMAGE_TEX = next; next = null;
+                    if (previous != null) previous.close();
+                } finally { STBImage.stbi_image_free(image); if (next != null) next.close(); }
+            } finally {
                 STBImage.stbi_set_flip_vertically_on_load(false);
+                org.lwjgl.system.MemoryUtil.memFree(data);
             }
         }
         catch (IOException e) {
@@ -88,14 +90,18 @@ public class ChamsShader extends EntityShader {
 
     @Override
     protected void setupPass(MeshRenderer renderer) {
-        Color color = chams.shaderColor.get();
+        Color color = chams.shaderTint();
 
         renderer.uniform("ImageData", UNIFORM_STORAGE.write(new UniformData(
-            color.r / 255f, color.g / 255f, color.b / 255f, color.a / 255f
+            color.r / 255f, color.g / 255f, color.b / 255f, color.a / 255f,
+            chams.shader.get() == Chams.Shader.Image ? -1 : chams.overlayMaterial(), chams.animateMaterials.get() ? 1 : 0
         )));
 
-        if (chams.isShader() && chams.shader.get() == Chams.Shader.Image && IMAGE_TEX != null) {
+        if (IMAGE_TEX != null) {
             renderer.sampler("u_TextureI", IMAGE_TEX.getGlTextureView(), IMAGE_TEX.getSampler());
+        } else {
+            var fallback = mc.getTextureManager().getTexture(Chams.BLANK);
+            renderer.sampler("u_TextureI", fallback.getGlTextureView(), fallback.getSampler());
         }
     }
 
@@ -115,6 +121,7 @@ public class ChamsShader extends EntityShader {
 
     private static final int UNIFORM_SIZE = new Std140SizeCalculator()
         .putVec4()
+        .putVec4()
         .get();
 
     private static final DynamicUniformStorage<UniformData> UNIFORM_STORAGE = new DynamicUniformStorage<>("Meteor - Image UBO", UNIFORM_SIZE, 16);
@@ -123,11 +130,11 @@ public class ChamsShader extends EntityShader {
         UNIFORM_STORAGE.clear();
     }
 
-    private record UniformData(float r, float g, float b, float a) implements DynamicUniformStorage.Uploadable {
+    private record UniformData(float r, float g, float b, float a, float material, float animate) implements DynamicUniformStorage.Uploadable {
         @Override
         public void write(ByteBuffer buffer) {
             Std140Builder.intoBuffer(buffer)
-                .putVec4(r, g, b, a);
+                .putVec4(r, g, b, a).putVec4(material, animate, 0, 0);
         }
     }
 }

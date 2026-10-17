@@ -14,6 +14,7 @@ import meteordevelopment.meteorclient.systems.modules.render.Chams;
 import meteordevelopment.meteorclient.systems.modules.render.Freecam;
 import meteordevelopment.meteorclient.systems.modules.render.NoRender;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
+import meteordevelopment.meteorclient.utils.render.ChamsMaterials;
 import net.minecraft.client.model.Model;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.RenderLayers;
@@ -71,7 +72,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, S extend
         if (!chams.isActive() || !chams.players.get() || !(((IEntityRenderState) state).meteor$getEntity() instanceof PlayerEntity player)) return true;
         if (chams.ignoreSelf.get() && player == mc.player) return true;
 
-        instance.submitModel(model, state, matrixStack, renderLayer, light, overlay, PlayerUtils.getPlayerColor(player, chams.playersColor.get()).getPacked(), sprite, outlineColor, null);
+        instance.submitModel(model, state, matrixStack, renderLayer, light, overlay, PlayerUtils.getPlayerColor(player, chams.playerTint()).getPacked(), sprite, outlineColor, null);
         return false;
     }
 
@@ -87,7 +88,7 @@ public abstract class LivingEntityRendererMixin<T extends LivingEntity, S extend
         if (chams.ignoreSelf.get() && player == mc.player)
             return original;
 
-        return RenderLayers.itemEntityTranslucentCull(Chams.BLANK);
+        return ChamsMaterials.layer(chams.playerMaterial.get(), chams.animateMaterials.get());
     }
 
     // Chams - Through walls

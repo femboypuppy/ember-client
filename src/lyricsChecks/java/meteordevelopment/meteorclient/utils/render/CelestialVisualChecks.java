@@ -6,6 +6,7 @@ import java.nio.file.Path;
 /** Exercises the exact procedural geometry used by Minecraft; also exports reviewable previews. */
 public final class CelestialVisualChecks {
     public static void main(String[] args) throws Exception {
+        EspGeometryChecks.run();
         terrainSurfaces();
         worldAtmosphere();
         worldLighting();
@@ -68,7 +69,7 @@ public final class CelestialVisualChecks {
         var tiny = new CelestialMesh(9);
         CelestialGeometry.wings(tiny, CelestialGeometry.WingStyle.Astral, 0, 1, 1, 1, 1, 22, 0xA78BE0, 1);
         valid(tiny); require(tiny.size <= 9 && tiny.size % 3 == 0, "Budget exhaustion cannot submit a partial triangle");
-        if (args.length == 1) export(Path.of(args[0]));
+        if (args.length == 1) { export(Path.of(args[0])); EspGeometryChecks.export(Path.of(args[0]).toAbsolutePath().getParent()); }
         System.out.println("Visual checks passed: wing symmetry and folding, pulse lifetime, stable stars, colored terrain light, finite geometry, FPS independence and mesh budgets.");
     }
 

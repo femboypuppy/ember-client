@@ -18,6 +18,7 @@ public class OutlineUniforms {
         .putFloat()
         .putInt()
         .putFloat()
+        .putVec4()
         .get();
 
     private static final DynamicUniformStorage<Data> STORAGE = new DynamicUniformStorage<>("Meteor - Outline UBO", UNIFORM_SIZE, 16);
@@ -27,17 +28,21 @@ public class OutlineUniforms {
     }
 
     public static GpuBufferSlice write(int width, float fillOpacity, int shapeMode, float glowMultiplier) {
-        return STORAGE.write(new Data(width, fillOpacity, shapeMode, glowMultiplier));
+        return write(width, fillOpacity, shapeMode, glowMultiplier, 1, .18f);
     }
 
-    private record Data(int width, float fillOpacity, int shapeMode, float glowMultiplier) implements DynamicUniformStorage.Uploadable {
+    public static GpuBufferSlice write(int width, float fillOpacity, int shapeMode, float glowMultiplier, int texture, float strength) {
+        return STORAGE.write(new Data(width, fillOpacity, shapeMode, glowMultiplier, texture, strength));
+    }
+
+    private record Data(int width, float fillOpacity, int shapeMode, float glowMultiplier, int texture, float strength) implements DynamicUniformStorage.Uploadable {
         @Override
         public void write(ByteBuffer buffer) {
             Std140Builder.intoBuffer(buffer)
                 .putInt(width)
                 .putFloat(fillOpacity)
                 .putInt(shapeMode)
-                .putFloat(glowMultiplier);
+                .putFloat(glowMultiplier).putVec4(texture, strength, 0, 0);
         }
     }
 }

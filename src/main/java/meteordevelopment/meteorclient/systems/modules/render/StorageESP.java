@@ -19,6 +19,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.render.EspStyle;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.MeshBuilderVertexConsumerProvider;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
@@ -49,9 +50,11 @@ public class StorageESP extends Module {
     private final Setting<Mode> mode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("mode")
         .description("Rendering mode.")
-        .defaultValue(Mode.Shader)
+        .defaultValue(Mode.Ember)
         .build()
     );
+
+    public final EspStyle style = new EspStyle(settings, () -> mode.get() == Mode.Ember, () -> mode.get() != Mode.Box);
 
     private final Setting<List<BlockEntityType<?>>> storageBlocks = sgGeneral.add(new StorageBlockListSetting.Builder()
         .name("storage-blocks")
@@ -244,6 +247,7 @@ public class StorageESP extends Module {
     @EventHandler
     private void onRender(Render3DEvent event) {
         count = 0;
+        style.beginFrame();
 
         for (BlockEntity blockEntity : Utils.blockEntities()) {
             // Check if the block has been interacted with (opened)
@@ -282,7 +286,7 @@ public class StorageESP extends Module {
                     event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, blockEntity.getPos().getX() + 0.5, blockEntity.getPos().getY() + 0.5, blockEntity.getPos().getZ() + 0.5, lineColor);
                 }
 
-                if (mode.get() == Mode.Box) {
+                if (mode.get() == Mode.Box || mode.get() == Mode.Ember) {
                     renderBox(event, blockEntity);
                 }
 
@@ -338,11 +342,12 @@ public class StorageESP extends Module {
             if (Dir.isNot(excludeDir, Dir.SOUTH)) z2 -= a;
         }
 
-        event.renderer.box(x1, y1, z1, x2, y2, z2, sideColor, lineColor, shapeMode.get(), excludeDir);
+        if (mode.get() == Mode.Ember) style.box(event.renderer, x1, y1, z1, x2, y2, z2, sideColor, lineColor, shapeMode.get(), excludeDir);
+        else event.renderer.box(x1, y1, z1, x2, y2, z2, style.tint(sideColor), style.tint(lineColor), shapeMode.get(), excludeDir);
     }
 
     private void renderShader(Render3DEvent event, BlockEntity blockEntity) {
-        vertexConsumerProvider.setColor(lineColor);
+        vertexConsumerProvider.setColor(style.tint(lineColor));
         SimpleBlockRenderer.renderWithBlockEntity(blockEntity, event.tickDelta, vertexConsumerProvider);
     }
 
@@ -357,6 +362,10 @@ public class StorageESP extends Module {
 
     public enum Mode {
         Box,
-        Shader
+        Shader,
+        Ember
     }
+
+    public Color previewColor() { return style.tint(chest.get()); }
+    public Mode renderMode() { return mode.get(); }
 }

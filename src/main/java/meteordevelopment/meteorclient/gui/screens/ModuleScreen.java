@@ -58,6 +58,11 @@ public class ModuleScreen extends WindowScreen {
         }
 
         // Settings
+        if (module instanceof meteordevelopment.meteorclient.systems.modules.render.Chams
+            || module instanceof meteordevelopment.meteorclient.systems.modules.render.blockesp.BlockESP
+            || module instanceof meteordevelopment.meteorclient.systems.modules.render.StorageESP) {
+            add(new meteordevelopment.meteorclient.gui.widgets.WVisualPreview(module)).expandX();
+        }
         if (!module.settings.groups.isEmpty()) {
             settingsContainer = add(theme.verticalList()).expandX().widget();
             settingsContainer.add(theme.settings(module.settings)).expandX();

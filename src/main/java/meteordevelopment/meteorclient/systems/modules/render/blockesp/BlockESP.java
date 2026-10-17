@@ -17,6 +17,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.render.EspStyle;
 import meteordevelopment.meteorclient.utils.render.color.RainbowColors;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
@@ -35,6 +36,7 @@ import java.util.concurrent.Executors;
 
 public class BlockESP extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    public final EspStyle style = new EspStyle(settings);
 
     // General
 
@@ -52,7 +54,7 @@ public class BlockESP extends Module {
         .description("Default block config.")
         .defaultValue(
             new ESPBlockData(
-                ShapeMode.Lines,
+                ShapeMode.Both,
                 new SettingColor(0, 255, 200),
                 new SettingColor(0, 255, 200, 25),
                 true,
@@ -234,6 +236,7 @@ public class BlockESP extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
+        style.beginFrame();
         synchronized (chunks) {
             for (Iterator<ESPChunk> it = chunks.values().iterator(); it.hasNext();) {
                 ESPChunk chunk = it.next();
@@ -263,4 +266,6 @@ public class BlockESP extends Module {
     public String getInfoString() {
         return "%s groups".formatted(groups.size());
     }
+
+    public ESPBlockData previewData() { return defaultBlockConfig.get(); }
 }

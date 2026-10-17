@@ -9,6 +9,8 @@ import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.render.color.Color;
+import meteordevelopment.meteorclient.utils.render.EspStyle;
+import meteordevelopment.meteorclient.utils.world.Dir;
 import net.minecraft.block.BlockState;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
@@ -190,11 +192,22 @@ public class ESPBlock {
         ESPBlockData blockData = blockEsp.getBlockData(state.getBlock());
 
         ShapeMode shapeMode = blockData.shapeMode;
-        Color lineColor = blockData.lineColor;
-        Color sideColor = blockData.sideColor;
+        Color lineColor = blockEsp.style.tint(blockData.lineColor);
+        Color sideColor = blockEsp.style.tint(blockData.sideColor);
+
+        if (blockEsp.style.roundness.get() > 0 || blockEsp.style.texture.get() != EspStyle.Texture.None) {
+            int excluded = ((neighbours & LE) != 0 ? Dir.WEST : 0)
+                | ((neighbours & RI) != 0 ? Dir.EAST : 0)
+                | ((neighbours & BO) != 0 ? Dir.DOWN : 0)
+                | ((neighbours & TO) != 0 ? Dir.UP : 0)
+                | ((neighbours & BA) != 0 ? Dir.NORTH : 0)
+                | ((neighbours & FO) != 0 ? Dir.SOUTH : 0);
+            if (excluded != (Dir.WEST | Dir.EAST | Dir.DOWN | Dir.UP | Dir.NORTH | Dir.SOUTH)) blockEsp.style.box(event.renderer, x1, y1, z1, x2, y2, z2, sideColor, lineColor, shapeMode, excluded);
+            return;
+        }
 
         if (neighbours == 0) {
-            event.renderer.box(x1, y1, z1, x2, y2, z2, sideColor, lineColor, shapeMode, 0);
+            blockEsp.style.box(event.renderer, x1, y1, z1, x2, y2, z2, sideColor, lineColor, shapeMode, 0);
         }
         else {
             // Lines

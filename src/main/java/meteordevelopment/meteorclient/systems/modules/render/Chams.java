@@ -13,6 +13,9 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.util.Identifier;
+import meteordevelopment.meteorclient.utils.render.ChamsMaterial;
+import meteordevelopment.meteorclient.utils.render.color.Color;
+import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 
 import java.util.Set;
 
@@ -80,7 +83,7 @@ public class Chams extends Module {
 
     public final Setting<SettingColor> playersColor = sgPlayers.add(new ColorSetting.Builder()
         .name("color")
-        .description("The color of player models.")
+        .description("Custom player accent when Use Ember accent is off. Alpha always controls opacity.")
         .defaultValue(new SettingColor(198, 135, 254, 150))
         .visible(players::get)
         .build()
@@ -94,6 +97,19 @@ public class Chams extends Module {
         .visible(players::get)
         .build()
     );
+
+    public final Setting<ChamsMaterial> playerMaterial = sgPlayers.add(new EnumSetting.Builder<ChamsMaterial>()
+        .name("material").description("Animated surface used when original player textures are off.")
+        .defaultValue(ChamsMaterial.Galaxy).visible(() -> players.get() && !playersTexture.get()).build());
+    public final Setting<Boolean> playerAccent = sgPlayers.add(new BoolSetting.Builder()
+        .name("use-ember-accent").description("Match player chams to Ember's current accent, including album artwork.")
+        .defaultValue(true).visible(() -> players.get()).build());
+    public final Setting<Boolean> animateMaterials = sgThroughWalls.add(new BoolSetting.Builder()
+        .name("animate-materials").description("Slowly animate the Galaxy, Aurora and Opal materials. Off freezes the surface.")
+        .defaultValue(true).build());
+    public final Setting<Boolean> shaderAccent = sgThroughWalls.add(new BoolSetting.Builder()
+        .name("use-ember-accent").description("Use Ember's accent for through-wall materials, keeping the color's opacity.")
+        .defaultValue(true).build());
 
     // Crystals
 
@@ -166,11 +182,18 @@ public class Chams extends Module {
 
     public final Setting<SettingColor> handColor = sgHand.add(new ColorSetting.Builder()
         .name("hand-color")
-        .description("The color of your hand.")
+        .description("Custom hand accent when Use Ember accent is off. Alpha always controls opacity.")
         .defaultValue(new SettingColor(198, 135, 254, 150))
         .visible(hand::get)
         .build()
     );
+
+    public final Setting<ChamsMaterial> handMaterial = sgHand.add(new EnumSetting.Builder<ChamsMaterial>()
+        .name("material").description("Material for your first-person arms when original textures are off.")
+        .defaultValue(ChamsMaterial.Galaxy).visible(() -> hand.get() && !handTexture.get()).build());
+    public final Setting<Boolean> handAccent = sgHand.add(new BoolSetting.Builder()
+        .name("use-ember-accent").description("Match hand chams to Ember's accent; turn off to choose your own hand color.")
+        .defaultValue(true).visible(() -> hand.get()).build());
 
     public static final Identifier BLANK = MeteorClient.identifier("textures/blank.png");
 
@@ -182,12 +205,28 @@ public class Chams extends Module {
         return isActive() && !isShader() && entities.get().contains(entity.getType()) && (entity != mc.player || !ignoreSelfDepth.get());
     }
 
+    public Color playerTint() { return tint(playersColor.get(), playerAccent.get()); }
+    public Color handTint() { return tint(handColor.get(), handAccent.get()); }
+    public Color shaderTint() { return tint(shaderColor.get(), shaderAccent.get()); }
+    private static Color tint(Color manual, boolean accent) {
+        Color rgb = accent ? EmberPalette.accent() : manual;
+        return new Color(rgb.r, rgb.g, rgb.b, manual.a);
+    }
+
+    public int overlayMaterial() {
+        return switch (shader.get()) { case Galaxy -> 1; case Aurora -> 2; case Opal -> 3; default -> 0; };
+    }
+
     public boolean isShader() {
         return isActive() && shader.get() != Shader.None;
     }
 
     public enum Shader {
         Image,
-        None
+        None,
+        Galaxy,
+        Aurora,
+        Opal,
+        Solid
     }
 }

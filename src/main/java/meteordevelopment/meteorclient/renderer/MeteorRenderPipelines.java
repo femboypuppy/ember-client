@@ -24,6 +24,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.gl.GlImportProcessor;
+import net.minecraft.client.gl.RenderPipelines;
+import net.minecraft.util.Identifier;
+import meteordevelopment.meteorclient.utils.render.ChamsMaterial;
 
 public abstract class MeteorRenderPipelines {
     private static final List<RenderPipeline> PIPELINES = new ArrayList<>();
@@ -220,6 +224,38 @@ public abstract class MeteorRenderPipelines {
 
     // Blur
 
+    public static final RenderPipeline CHAMS_PREVIEW = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)
+        .withLocation(MeteorClient.identifier("pipeline/chams_preview"))
+        .withVertexFormat(MeteorVertexFormats.POS2_TEXTURE_COLOR, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexShader(MeteorClient.identifier("shaders/pos_tex_color.vert"))
+        .withFragmentShader(MeteorClient.identifier("shaders/chams_preview.frag"))
+        .withUniform("MaterialData", UniformType.UNIFORM_BUFFER)
+        .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST).withDepthWrite(false)
+        .withBlend(BlendFunction.TRANSLUCENT).withCull(false).build());
+
+    private static final RenderPipeline[][] CHAMS_SURFACES = createChamsSurfaces();
+
+    private static RenderPipeline[][] createChamsSurfaces() {
+        RenderPipeline[][] result = new RenderPipeline[ChamsMaterial.values().length][2];
+        for (ChamsMaterial material : ChamsMaterial.values()) for (int animated = 0; animated < 2; animated++) {
+            var builder = new ExtendedRenderPipelineBuilder(RenderPipelines.ENTITY_SNIPPET)
+                .withLocation(MeteorClient.identifier("pipeline/chams/" + material.name().toLowerCase(java.util.Locale.ROOT) + "_" + animated))
+                .withVertexShader(MeteorClient.identifier("shaders/chams_surface.vert"))
+                .withFragmentShader(MeteorClient.identifier("shaders/chams_surface.frag"))
+                .withUniform("Globals", UniformType.UNIFORM_BUFFER)
+                .withShaderDefine("MATERIAL", material.ordinal())
+                .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST)
+                .withDepthWrite(false).withCull(false).withBlend(BlendFunction.TRANSLUCENT);
+            if (animated == 1) builder.withShaderDefine("ANIMATED");
+            result[material.ordinal()][animated] = add(builder.build());
+        }
+        return result;
+    }
+
+    public static RenderPipeline chamsSurface(ChamsMaterial material, boolean animated) {
+        return CHAMS_SURFACES[material.ordinal()][animated ? 1 : 0];
+    }
+
     public static final RenderPipeline BLUR_DOWN = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)
         .withLocation(MeteorClient.identifier("pipeline/blur/down"))
         .withVertexFormat(MeteorVertexFormats.POS2, VertexFormat.DrawMode.TRIANGLES)
@@ -275,7 +311,18 @@ public abstract class MeteorRenderPipelines {
                 var resource = resources.getResource(identifier).get();
 
                 try (var in = resource.getInputStream()) {
-                    return IOUtils.toString(in, StandardCharsets.UTF_8);
+                    String source = IOUtils.toString(in, StandardCharsets.UTF_8);
+                    var imported = new java.util.HashSet<Identifier>();
+                    return String.join("", new GlImportProcessor() {
+                        @Override public String loadImport(boolean inline, String name) {
+                            Identifier include = inline ? identifier.withPath(p -> p.substring(0, p.lastIndexOf('/') + 1) + name)
+                                : Identifier.of(name).withPrefixedPath("shaders/include/");
+                            if (!imported.add(include)) return null;
+                            try (var stream = resources.getResource(include).orElseThrow().getInputStream()) {
+                                return IOUtils.toString(stream, StandardCharsets.UTF_8);
+                            } catch (IOException error) { throw new RuntimeException("Cannot load shader include " + include, error); }
+                        }
+                    }.readSource(source));
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }

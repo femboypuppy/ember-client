@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.mixininterface.IVec3d;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.render.Chams;
 import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.render.ChamsMaterials;
 import net.minecraft.client.model.ModelPart;
 import net.minecraft.client.network.ClientPlayerLikeEntity;
 import net.minecraft.client.render.RenderLayer;
@@ -69,8 +70,8 @@ public abstract class PlayerEntityRendererMixin<AvatarlikeEntity extends PlayerL
     @ModifyExpressionValue(method = "renderArm", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/RenderLayers;entityTranslucent(Lnet/minecraft/util/Identifier;)Lnet/minecraft/client/render/RenderLayer;"))
     private RenderLayer renderArm$texture(RenderLayer original, MatrixStack matrixStack, OrderedRenderCommandQueue entityRenderCommandQueue, int light, Identifier skinTexture, ModelPart modelPart, boolean sleeveVisible) {
         if (chams.isActive() && chams.hand.get()) {
-            Identifier texture = chams.handTexture.get() ? skinTexture : Chams.BLANK;
-            return RenderLayers.entityTranslucent(texture);
+            return chams.handTexture.get() ? RenderLayers.entityTranslucent(skinTexture)
+                : ChamsMaterials.layer(chams.handMaterial.get(), chams.animateMaterials.get());
         }
 
         return original;
@@ -81,7 +82,7 @@ public abstract class PlayerEntityRendererMixin<AvatarlikeEntity extends PlayerL
     @WrapWithCondition(method = "renderArm", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/command/OrderedRenderCommandQueue;submitModelPart(Lnet/minecraft/client/model/ModelPart;Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/RenderLayer;IILnet/minecraft/client/texture/Sprite;)V"))
     private boolean renderArm$color(OrderedRenderCommandQueue instance, ModelPart modelPart, MatrixStack matrixStack, RenderLayer renderLayer, int light, int uv, Sprite sprite) {
         if (chams.isActive() && chams.hand.get()) {
-            instance.submitModelPart(modelPart, matrixStack, renderLayer, light, uv, null, chams.handColor.get().getPacked(), null);
+            instance.submitModelPart(modelPart, matrixStack, renderLayer, light, uv, null, chams.handTint().getPacked(), null);
             return false;
         }
 

@@ -29,6 +29,7 @@ public abstract class RenderSystemMixin {
         PostProcessShader.flipFrame();
         ChamsShader.flipFrame();
         OutlineUniforms.flipFrame();
+        meteordevelopment.meteorclient.utils.render.VisualPreviewRenderer.flipFrame();
 
         if (Modules.get() == null || mc.player == null) return;
         if (Modules.get().get(InventoryTweaks.class).frameInput()) ((MinecraftClientAccessor) mc).meteor$handleInputEvents();
