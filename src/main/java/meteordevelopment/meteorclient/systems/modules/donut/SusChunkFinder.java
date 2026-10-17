@@ -107,11 +107,44 @@ public class SusChunkFinder extends Module {
         FixedY
     }
 
+    private final SettingGroup sgHeight = settings.createGroup("Height");
     private final SettingGroup sgBlocks = settings.createGroup("Block Signals");
     private final SettingGroup sgGrowth = settings.createGroup("Growth Signals");
     private final SettingGroup sgIntelligent = settings.createGroup("Intelligent Chunks");
     private final SettingGroup sgStorage = settings.createGroup("Saving");
     private final SettingGroup sgRender = settings.createGroup("Render");
+
+    // Height
+
+    private final Setting<Boolean> limitHeight = sgHeight.add(new BoolSetting.Builder()
+        .name("limit-height")
+        .description("Only detect between min-y and max-y. Everything outside, like a farm on the surface, is ignored by every signal.")
+        .defaultValue(false)
+        .onChanged(v -> rescanLoadedChunks())
+        .build()
+    );
+
+    private final Setting<Integer> heightMin = sgHeight.add(new IntSetting.Builder()
+        .name("min-y")
+        .description("Lowest height that is checked.")
+        .defaultValue(-64)
+        .range(-64, 320)
+        .sliderRange(-64, 320)
+        .visible(limitHeight::get)
+        .onChanged(v -> rescanLoadedChunks())
+        .build()
+    );
+
+    private final Setting<Integer> heightMax = sgHeight.add(new IntSetting.Builder()
+        .name("max-y")
+        .description("Highest height that is checked.")
+        .defaultValue(10)
+        .range(-64, 320)
+        .sliderRange(-64, 320)
+        .visible(limitHeight::get)
+        .onChanged(v -> rescanLoadedChunks())
+        .build()
+    );
 
     // Block Signals (Deepslate & Storage)
 
@@ -1014,6 +1047,12 @@ public class SusChunkFinder extends Module {
         }
         if (!main) return false;
 
+        // Only saves that recorded where the find was can be held to the height range.
+        if (limitHeight.get() && fc.measured) {
+            int lo = Math.min(heightMin.get(), heightMax.get()), hi = Math.max(heightMin.get(), heightMax.get());
+            if (fc.focusY < lo || fc.focusY > hi) return false;
+        }
+
         if (!intelligentChunks.get() || !hideLikelyFalsePositives.get()) return true;
         return !(fc.falsePositiveProb > maxFalsePositiveProb.get() && fc.baseConfidence < minBaseConfidence.get());
     }
@@ -1260,8 +1299,13 @@ public class SusChunkFinder extends Module {
         /** Storage block positions in this chunk and its neighbours, from {@link #storageAround}. */
         final long[] storage;
 
+        /** Height range the signals may come from, from the Height settings. Structure detection ignores it. */
+        final int lowY, highY;
+
         Scan(WorldChunk chunk, boolean nether, boolean end, long[] storage) {
             this.storage = storage;
+            this.lowY = limitHeight.get() ? Math.min(heightMin.get(), heightMax.get()) : Integer.MIN_VALUE;
+            this.highY = limitHeight.get() ? Math.max(heightMin.get(), heightMax.get()) : Integer.MAX_VALUE;
             this.sections = chunk.getSectionArray();
             this.startX = chunk.getPos().getStartX();
             this.startZ = chunk.getPos().getStartZ();
@@ -1279,6 +1323,10 @@ public class SusChunkFinder extends Module {
             Arrays.fill(kelpTipAge, -1);
             Arrays.fill(bambooBottom, Integer.MAX_VALUE);
             Arrays.fill(bambooTop, Integer.MIN_VALUE);
+        }
+
+        boolean inHeight(int y) {
+            return y >= lowY && y <= highY;
         }
 
         int pack(int lx, int y, int lz) {
@@ -1364,14 +1412,14 @@ public class SusChunkFinder extends Module {
 
                             switch (k) {
                                 case K_DEEPSLATE -> {
-                                    if (state.get(Properties.AXIS) != Direction.Axis.Y) {
+                                    if (state.get(Properties.AXIS) != Direction.Axis.Y && inHeight(y)) {
                                         rotated++;
                                         rotatedYSum += y;
                                         if (y < 0) rotatedDeep++;
                                     }
                                 }
                                 case K_COBBLED_DEEPSLATE -> {
-                                    if (y < 0) {
+                                    if (y < 0 && inHeight(y)) {
                                         cobbledLow++;
                                         cobbledYSum += y;
                                     }
@@ -1531,6 +1579,8 @@ public class SusChunkFinder extends Module {
                 if (pyramid && k == K_CHEST) continue;
                 if (nether && (k == K_GLOW || k == K_ANCHOR)) continue;
 
+                if (!inHeight(y)) continue;
+
                 boolean ug = underground(lx, y, lz);
                 effAll[k]++;
                 effYSum[k] += y;
@@ -1649,6 +1699,8 @@ public class SusChunkFinder extends Module {
                 signals.add(new Signal("access shaft to Y " + shafts[3], CAT_BUILD, 0.3, false, false, shafts[3]));
             }
 
+            // Growth signals measure their own height, so they are held to the range here.
+            signals.removeIf(s -> s.y != Integer.MIN_VALUE && !inHeight(s.y));
             if (signals.stream().noneMatch(Signal::legacy)) return null;
 
             // Base confidence: independent evidence combined, plus a bonus when unrelated kinds agree.
@@ -1772,7 +1824,7 @@ public class SusChunkFinder extends Module {
             for (long packed : storage) {
                 if (n == cap) break;
                 int x = BlockPos.unpackLongX(packed), y = BlockPos.unpackLongY(packed), z = BlockPos.unpackLongZ(packed);
-                if (y > maxY) continue;
+                if (y > maxY || !inHeight(y)) continue;
                 if (!override && trial && y >= TRIAL_MIN_Y && y <= TRIAL_MAX_Y) continue;
                 if (!override && ancient && y < 0) continue;
                 // Dungeon chests sit right next to the spawner.
