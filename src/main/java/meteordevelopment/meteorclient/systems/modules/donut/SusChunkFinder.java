@@ -5,6 +5,7 @@ import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.Reference2ByteOpenHashMap;
@@ -30,6 +31,10 @@ import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.*;
+import net.minecraft.block.entity.BarrelBlockEntity;
+import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.block.entity.ChestBlockEntity;
+import net.minecraft.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.client.render.Camera;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.tag.BlockTags;
@@ -59,9 +64,13 @@ import java.util.regex.Pattern;
 /**
  * Flags chunks showing signs of player activity or extended chunk loading, for finding bases.
  *
- * Signals include player-placed blocks (rotated/cobbled deepslate, underground storage, redstone,
- * utility blocks) and random-tick growth that only progresses while a player keeps the chunk loaded
- * (kelp, cave vines, vines, amethyst, bamboo, cocoa and bee nests).
+ * Signals include player-placed blocks (rotated/cobbled deepslate, packed storage, heavy redstone)
+ * and random-tick growth that only progresses while a player keeps the chunk loaded (kelp, cave
+ * vines, vines, amethyst, bamboo, cocoa and bee nests).
+ *
+ * On DonutSMP nearly every chunk players have passed through is griefed and littered with ender
+ * chests, respawn anchors, crafting tables and furnaces, so single utility blocks never flag a chunk
+ * on their own. They only add to the scores of a chunk something stronger already flagged.
  *
  * Which blocks count as natural comes from the 1.21.11 structure files: trial chambers ship barrels,
  * chests, dispensers, crafting tables, a few hoppers and redstone dust; ancient cities ship chests,
@@ -79,6 +88,11 @@ public class SusChunkFinder extends Module {
 
     /** Trial chambers start between Y -40 and -20, but their upper rooms were seen reaching Y -3 in testing. */
     private static final int TRIAL_MIN_Y = -60, TRIAL_MAX_Y = 0;
+
+    /** Storage blocks at most this many blocks apart on every axis belong to the same room. */
+    private static final int CLUSTER_LINK = 3;
+    /** Keeps the pairwise cluster pass cheap in shop districts packed with chests. */
+    private static final int CLUSTER_MAX_POINTS = 2048;
 
     private static final Color EMERALD = new Color(34, 197, 94, 255);
     private static final Color AMBER = new Color(245, 158, 11, 255);
@@ -140,7 +154,7 @@ public class SusChunkFinder extends Module {
 
     private final Setting<Boolean> undergroundStorage = sgBlocks.add(new BoolSetting.Builder()
         .name("underground-storage")
-        .description("Shulkers, barrels, furnaces, crafting tables or ender chests deep underground.")
+        .description("Chests, barrels and shulker boxes packed together into one storage room. Ender chests don't count.")
         .defaultValue(true)
         .onChanged(v -> rescanLoadedChunks())
         .build()
@@ -148,10 +162,10 @@ public class SusChunkFinder extends Module {
 
     private final Setting<Integer> storageThreshold = sgBlocks.add(new IntSetting.Builder()
         .name("storage-threshold")
-        .description("Storage blocks needed to flag a chunk.")
-        .defaultValue(2)
-        .min(1)
-        .sliderRange(1, 20)
+        .description("Storage blocks that must sit together (at most 3 blocks apart) to flag a chunk. A double chest counts as 2.")
+        .defaultValue(10)
+        .min(2)
+        .sliderRange(2, 64)
         .visible(undergroundStorage::get)
         .onChanged(v -> rescanLoadedChunks())
         .build()
@@ -163,6 +177,25 @@ public class SusChunkFinder extends Module {
         .defaultValue(20)
         .sliderRange(-64, 64)
         .visible(undergroundStorage::get)
+        .onChanged(v -> rescanLoadedChunks())
+        .build()
+    );
+
+    private final Setting<Boolean> redstone = sgBlocks.add(new BoolSetting.Builder()
+        .name("redstone")
+        .description("Lots of redstone parts in one chunk (pistons, observers, repeaters, comparators, hoppers, droppers...), which marks a farm.")
+        .defaultValue(true)
+        .onChanged(v -> rescanLoadedChunks())
+        .build()
+    );
+
+    private final Setting<Integer> redstoneThreshold = sgBlocks.add(new IntSetting.Builder()
+        .name("redstone-threshold")
+        .description("Redstone parts needed to flag a chunk. Three redstone dust count as one part.")
+        .defaultValue(12)
+        .min(3)
+        .sliderRange(3, 64)
+        .visible(redstone::get)
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
@@ -473,7 +506,7 @@ public class SusChunkFinder extends Module {
 
     private final Setting<Boolean> intelligentChunks = sgIntelligent.add(new BoolSetting.Builder()
         .name("intelligent-chunks")
-        .description("Score every chunk for base confidence, false positive and griefed probability, and also flag chunks the classic signals miss.")
+        .description("Score every flagged chunk for base confidence, false positive and griefed probability, using the smaller clues around it.")
         .defaultValue(true)
         .onChanged(v -> rescanLoadedChunks())
         .build()
@@ -501,11 +534,11 @@ public class SusChunkFinder extends Module {
 
     private final Setting<Integer> minBaseConfidence = sgIntelligent.add(new IntSetting.Builder()
         .name("min-base-confidence")
-        .description("Base confidence % needed to flag a chunk from the intelligent signals alone.")
+        .description("Chunks below this base confidence are hidden when their false positive score is above the limit.")
         .defaultValue(25)
         .range(5, 95)
         .sliderRange(5, 95)
-        .visible(intelligentChunks::get)
+        .visible(() -> intelligentChunks.get() && hideLikelyFalsePositives.get())
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
@@ -728,7 +761,67 @@ public class SusChunkFinder extends Module {
 
     @EventHandler
     private void onChunkData(ChunkDataEvent event) {
-        queueScan(event.chunk());
+        WorldChunk chunk = event.chunk();
+        queueScan(chunk);
+        if (mc.world == null) return;
+
+        // Neighbours scanned before this chunk arrived only saw part of a storage room on the border.
+        boolean[] sides = new boolean[9];
+        for (BlockEntity be : chunk.getBlockEntities().values()) {
+            if (!isStorage(be)) continue;
+            int lx = be.getPos().getX() & 15, lz = be.getPos().getZ() & 15;
+            // -1, 0 or 1: which side of the chunk the block is within linking distance of.
+            int sx = lx < CLUSTER_LINK ? -1 : lx > 15 - CLUSTER_LINK ? 1 : 0;
+            int sz = lz < CLUSTER_LINK ? -1 : lz > 15 - CLUSTER_LINK ? 1 : 0;
+            if (sx != 0) sides[(sx + 1) * 3 + 1] = true;
+            if (sz != 0) sides[3 + sz + 1] = true;
+            if (sx != 0 && sz != 0) sides[(sx + 1) * 3 + sz + 1] = true;
+        }
+
+        ChunkPos pos = chunk.getPos();
+        for (int i = 0; i < 9; i++) {
+            if (sides[i] && mc.world.getChunk(pos.x + i / 3 - 1, pos.z + i % 3 - 1, ChunkStatus.FULL, false) instanceof WorldChunk neighbor
+                && hasStorage(neighbor)) queueScan(neighbor);
+        }
+    }
+
+    /** Blocks that make up a storage room. Ender chests are left out: on DonutSMP they are everywhere. */
+    private static boolean isStorage(BlockEntity be) {
+        return be instanceof ChestBlockEntity || be instanceof BarrelBlockEntity || be instanceof ShulkerBoxBlockEntity;
+    }
+
+    private static boolean isStorageBlock(BlockState state) {
+        Block block = state.getBlock();
+        return block instanceof ChestBlock || block instanceof BarrelBlock || block instanceof ShulkerBoxBlock;
+    }
+
+    private static boolean hasStorage(WorldChunk chunk) {
+        for (BlockEntity be : chunk.getBlockEntities().values()) if (isStorage(be)) return true;
+        return false;
+    }
+
+    /**
+     * Storage positions in a chunk and the 8 around it, this chunk's first, so a storage room on a
+     * chunk border is counted whole. Block entities are only safe to read on the main thread.
+     */
+    private long[] storageAround(WorldChunk chunk) {
+        LongArrayList out = new LongArrayList();
+        addStorage(chunk, out);
+        if (mc.world == null) return out.toLongArray();
+
+        ChunkPos pos = chunk.getPos();
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if ((dx != 0 || dz != 0) && mc.world.getChunk(pos.x + dx, pos.z + dz, ChunkStatus.FULL, false) instanceof WorldChunk neighbor) {
+                    addStorage(neighbor, out);
+                }
+            }
+        }
+        return out.toLongArray();
+    }
+
+    private static void addStorage(WorldChunk chunk, LongArrayList out) {
+        for (BlockEntity be : chunk.getBlockEntities().values()) if (isStorage(be)) out.add(be.getPos().asLong());
     }
 
     @EventHandler
@@ -738,6 +831,17 @@ public class SusChunkFinder extends Module {
         // Batched: an explosion or a player mining can update hundreds of blocks in one chunk.
         synchronized (flagged) {
             pendingRescan.add(ChunkPos.toLong(event.pos));
+
+            // A storage room can reach over the border, so the chunk next door counts it too.
+            if (isStorageBlock(event.newState) || isStorageBlock(event.oldState)) {
+                int lx = event.pos.getX() & 15, lz = event.pos.getZ() & 15;
+                int sx = lx < CLUSTER_LINK ? -1 : lx > 15 - CLUSTER_LINK ? 1 : 0;
+                int sz = lz < CLUSTER_LINK ? -1 : lz > 15 - CLUSTER_LINK ? 1 : 0;
+                int cx = event.pos.getX() >> 4, cz = event.pos.getZ() >> 4;
+                if (sx != 0) pendingRescan.add(ChunkPos.toLong(cx + sx, cz));
+                if (sz != 0) pendingRescan.add(ChunkPos.toLong(cx, cz + sz));
+                if (sx != 0 && sz != 0) pendingRescan.add(ChunkPos.toLong(cx + sx, cz + sz));
+            }
         }
     }
 
@@ -772,6 +876,7 @@ public class SusChunkFinder extends Module {
         int generation = scanGeneration.get();
         boolean nether = mc.world != null && mc.world.getRegistryKey() == World.NETHER;
         boolean end = mc.world != null && mc.world.getRegistryKey() == World.END;
+        long[] storage = storageAround(chunk);
 
         worker.submit(() -> {
             if (!isActive() || generation != scanGeneration.get()) return;
@@ -785,7 +890,7 @@ public class SusChunkFinder extends Module {
             Scan scan;
             FlaggedChunk result;
             try {
-                scan = new Scan(chunk, nether, end);
+                scan = new Scan(chunk, nether, end, storage);
                 result = scan.run(neighborCtx);
             } catch (Throwable t) {
                 if (!loggedScanError) {
@@ -845,7 +950,7 @@ public class SusChunkFinder extends Module {
             mc.execute(() -> {
                 if (autoWaypoint.get()) FindsStorage.waypoint("Sus chunk", center);
                 if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) info("Sus chunk at (highlight)%d, %d(default): %s", blockX, blockZ, summary);
-                EmberNotificationsHud.push(result.griefedProb >= 60 ? "Griefed base found" : "Sus chunk found", blockX + ", " + blockZ + " — " + summary, tone);
+                EmberNotificationsHud.push(result.griefedProb >= 60 ? "Griefed base found" : "Sus chunk found", blockX + ", " + blockZ + " Ã¢â‚¬â€ " + summary, tone);
             });
         });
     }
@@ -863,8 +968,26 @@ public class SusChunkFinder extends Module {
         return bits;
     }
 
+    /** Wording of the reasons that can still flag a chunk on their own. */
+    private static final String[] MAIN_REASONS = {"rotated deepslate", "cobbled deepslate", "in one room", "redstone parts (",
+        "spawner grinder", "kelp", "vines", "amethyst", "bamboo", "cocoa", "bee nest"};
+
     /** Whether a saved find from an earlier session passes the current filters. */
     private boolean savedVisible(FlaggedChunk fc) {
+        // Finds saved for ender chests, anchors, loose hoppers or old storage counts aren't finds any more.
+        // They stay in the finds file, just hidden.
+        boolean main = false;
+        for (String reason : fc.reasons) {
+            for (String word : MAIN_REASONS) {
+                if (reason.contains(word)) {
+                    main = true;
+                    break;
+                }
+            }
+            if (main) break;
+        }
+        if (!main) return false;
+
         if (!intelligentChunks.get() || !hideLikelyFalsePositives.get()) return true;
         return !(fc.falsePositiveProb > maxFalsePositiveProb.get() && fc.baseConfidence < minBaseConfidence.get());
     }
@@ -885,8 +1008,8 @@ public class SusChunkFinder extends Module {
         K_MS_FENCE = 65, K_COBBLESTONE = 66, K_MOSSY_COBBLE = 67, K_STONE_BRICKS = 68, K_AGED_BRICKS = 69,
         K_IRON_BARS = 70, K_RED_CARPET = 71, K_END_FRAME = 72, K_INFESTED = 73, K_TRAIL = 74, K_LUSH = 75,
         K_JUNGLE = 76, K_NETHER_STRUCT = 77, K_PURPUR = 78, K_TNT = 79, K_BELL = 80, K_JOBSITE = 81, K_BED = 82,
-        K_SUSPICIOUS = 83;
-    private static final int KIND_COUNT = 84;
+        K_SUSPICIOUS = 83, K_REDSTONE_MISC = 84;
+    private static final int KIND_COUNT = 85;
     private static final int UNLIMITED = 1 << 20;
 
     private static final Reference2ByteOpenHashMap<Block> KINDS = new Reference2ByteOpenHashMap<>();
@@ -895,7 +1018,6 @@ public class SusChunkFinder extends Module {
     private static final boolean[] NOTABLE = new boolean[KIND_COUNT];
     /** Kinds that mark where a player actually built, for the grief and shaft checks. */
     private static final boolean[] PLAYER_BLOCK = new boolean[KIND_COUNT];
-    private static final boolean[] LEGACY_STORAGE = new boolean[KIND_COUNT];
     private static final boolean[] AUTOMATION = new boolean[KIND_COUNT];
 
     // What each structure generates on its own, from the 1.21.11 structure files.
@@ -963,6 +1085,8 @@ public class SusChunkFinder extends Module {
         kind(K_OBSERVER, Blocks.OBSERVER);
         kind(K_REDSTONE_COMP, Blocks.REPEATER, Blocks.COMPARATOR);
         kind(K_REDSTONE_WIRE, Blocks.REDSTONE_WIRE);
+        kind(K_REDSTONE_MISC, Blocks.REDSTONE_TORCH, Blocks.REDSTONE_WALL_TORCH, Blocks.REDSTONE_BLOCK, Blocks.TARGET,
+            Blocks.DAYLIGHT_DETECTOR);
         kind(K_DISPENSER, Blocks.DISPENSER, Blocks.DROPPER);
         kind(K_PORTAL, Blocks.NETHER_PORTAL);
         kind(K_ANCHOR, Blocks.RESPAWN_ANCHOR);
@@ -1007,24 +1131,24 @@ public class SusChunkFinder extends Module {
         kind(K_JOBSITE, Blocks.CARTOGRAPHY_TABLE, Blocks.FLETCHING_TABLE, Blocks.SMITHING_TABLE, Blocks.LOOM,
             Blocks.STONECUTTER, Blocks.GRINDSTONE, Blocks.COMPOSTER);
 
-        mark(NOTABLE, K_BEEHIVE, K_SHULKER, K_ENDER_CHEST, K_CHEST, K_TRAPPED_CHEST, K_BARREL, K_FURNACE, K_CRAFTING,
+        mark(NOTABLE, K_BEEHIVE, K_SHULKER, K_CHEST, K_TRAPPED_CHEST, K_BARREL, K_FURNACE, K_CRAFTING,
             K_BREWING, K_LECTERN, K_CAULDRON, K_BEACON, K_CONDUIT, K_ENCHANTING, K_ANVIL, K_DAMAGED_ANVIL, K_CRAFTER,
-            K_HOPPER, K_PISTON, K_OBSERVER, K_REDSTONE_COMP, K_REDSTONE_WIRE, K_DISPENSER, K_PORTAL, K_ANCHOR,
+            K_HOPPER, K_PISTON, K_OBSERVER, K_REDSTONE_COMP, K_REDSTONE_WIRE, K_REDSTONE_MISC, K_DISPENSER, K_PORTAL, K_ANCHOR,
             K_PLAYER_ONLY, K_SPAWNER, K_TINTED_GLASS, K_SIGN, K_TORCH, K_LAMP, K_GLOW, K_LADDER, K_SLIME, K_CAMPFIRE, K_CROP);
-        mark(PLAYER_BLOCK, K_BEEHIVE, K_SHULKER, K_ENDER_CHEST, K_CHEST, K_TRAPPED_CHEST, K_BARREL, K_FURNACE, K_CRAFTING,
+        // Ender chests and respawn anchors are left out: griefers and crystal fights leave them all over DonutSMP.
+        mark(PLAYER_BLOCK, K_BEEHIVE, K_SHULKER, K_CHEST, K_TRAPPED_CHEST, K_BARREL, K_FURNACE, K_CRAFTING,
             K_BREWING, K_LECTERN, K_BEACON, K_CONDUIT, K_ENCHANTING, K_ANVIL, K_CRAFTER, K_HOPPER, K_PISTON, K_OBSERVER,
-            K_REDSTONE_COMP, K_DISPENSER, K_ANCHOR, K_PLAYER_ONLY, K_LAMP, K_GLOW, K_CROP, K_TINTED_GLASS, K_SIGN);
-        mark(LEGACY_STORAGE, K_SHULKER, K_BARREL, K_FURNACE, K_CRAFTING, K_ENDER_CHEST);
-        mark(AUTOMATION, K_PISTON, K_OBSERVER, K_HOPPER, K_REDSTONE_WIRE, K_REDSTONE_COMP, K_SLIME, K_LADDER);
+            K_REDSTONE_COMP, K_REDSTONE_MISC, K_DISPENSER, K_PLAYER_ONLY, K_LAMP, K_GLOW, K_CROP, K_TINTED_GLASS, K_SIGN);
+        mark(AUTOMATION, K_PISTON, K_OBSERVER, K_HOPPER, K_REDSTONE_WIRE, K_REDSTONE_COMP, K_REDSTONE_MISC, K_SLIME, K_LADDER);
 
-        mark(TRIAL_NATURAL, K_CHEST, K_TRAPPED_CHEST, K_BARREL, K_CRAFTING, K_DISPENSER, K_HOPPER, K_REDSTONE_WIRE, K_SPAWNER, K_LADDER);
-        mark(ANCIENT_NATURAL, K_CHEST, K_FURNACE, K_LECTERN, K_REDSTONE_COMP, K_REDSTONE_WIRE, K_PISTON, K_TORCH, K_LAMP, K_CAMPFIRE, K_LADDER);
+        mark(TRIAL_NATURAL, K_CHEST, K_TRAPPED_CHEST, K_BARREL, K_CRAFTING, K_DISPENSER, K_HOPPER, K_REDSTONE_WIRE, K_REDSTONE_MISC, K_SPAWNER, K_LADDER);
+        mark(ANCIENT_NATURAL, K_CHEST, K_FURNACE, K_LECTERN, K_REDSTONE_COMP, K_REDSTONE_WIRE, K_REDSTONE_MISC, K_PISTON, K_TORCH, K_LAMP, K_CAMPFIRE, K_LADDER);
         mark(STRONGHOLD_NATURAL, K_CHEST, K_TORCH, K_LADDER, K_SPAWNER);
         mark(NETHER_NATURAL, K_CHEST, K_SPAWNER, K_LAMP, K_LADDER);
         mark(END_NATURAL, K_ENDER_CHEST, K_CHEST, K_BREWING, K_LADDER, K_LAMP);
         mark(VILLAGE_NATURAL, K_CHEST, K_BARREL, K_FURNACE, K_CRAFTING, K_LECTERN, K_BREWING, K_CAULDRON, K_TORCH, K_LAMP, K_CAMPFIRE, K_LADDER, K_CROP);
         mark(TRAIL_NATURAL, K_CRAFTING, K_FURNACE, K_DAMAGED_ANVIL, K_CAULDRON, K_CAMPFIRE, K_LADDER);
-        mark(TEMPLE_NATURAL, K_PISTON, K_REDSTONE_COMP, K_REDSTONE_WIRE, K_DISPENSER, K_CHEST);
+        mark(TEMPLE_NATURAL, K_PISTON, K_REDSTONE_COMP, K_REDSTONE_WIRE, K_REDSTONE_MISC, K_DISPENSER, K_CHEST);
         mark(IGLOO_NATURAL, K_BREWING, K_FURNACE, K_CRAFTING, K_CHEST, K_CAULDRON, K_TORCH, K_LADDER, K_SIGN);
     }
 
@@ -1107,7 +1231,11 @@ public class SusChunkFinder extends Module {
 
         int ownCtx;
 
-        Scan(WorldChunk chunk, boolean nether, boolean end) {
+        /** Storage block positions in this chunk and its neighbours, from {@link #storageAround}. */
+        final long[] storage;
+
+        Scan(WorldChunk chunk, boolean nether, boolean end, long[] storage) {
+            this.storage = storage;
             this.sections = chunk.getSectionArray();
             this.startX = chunk.getPos().getStartX();
             this.startZ = chunk.getPos().getStartZ();
@@ -1313,9 +1441,10 @@ public class SusChunkFinder extends Module {
 
             int chestsTotal = count[K_CHEST] + count[K_TRAPPED_CHEST] + count[K_BARREL];
             // Blocks no structure ever places. With one of these present the structure's own blocks count again.
-            boolean override = count[K_SHULKER] > 0 || (count[K_ENDER_CHEST] > 0 && !end) || count[K_HOPPER] >= 3
-                || count[K_ENCHANTING] > 0 || count[K_ANVIL] > 0 || count[K_BEACON] > 0 || count[K_OBSERVER] > 0
-                || count[K_CRAFTER] > 0 || count[K_PLAYER_ONLY] > 0 || (count[K_ANCHOR] > 0 && !nether) || chestsTotal >= 12;
+            // Ender chests and anchors are left behind everywhere on DonutSMP, so they don't count here.
+            boolean override = count[K_SHULKER] > 0 || count[K_HOPPER] >= 3 || count[K_ENCHANTING] > 0
+                || count[K_ANVIL] > 0 || count[K_BEACON] > 0 || count[K_OBSERVER] > 0 || count[K_CRAFTER] > 0
+                || count[K_PLAYER_ONLY] > 0 || chestsTotal >= 12;
 
             boolean stronghold = count[K_END_FRAME] > 0 || count[K_INFESTED] >= 2 || (countUG[K_AGED_BRICKS] >= 12 && countUG[K_STONE_BRICKS] >= 20);
             boolean mineshaft = countUG[K_RAIL] >= 6 && (count[K_COBWEB] >= 2 || count[K_MS_FENCE] >= 3);
@@ -1356,9 +1485,6 @@ public class SusChunkFinder extends Module {
             if (dungeon) budget[K_CHEST] += 2 * Math.max(1, count[K_SPAWNER]);
 
             // Second pass: count what is left after each structure's natural blocks are taken out.
-            int legacyStorage = 0;
-            int maxStorageY = storageMaxY.get();
-
             for (int i = 0; i < notable.size(); i++) {
                 int e = notable.getInt(i);
                 int k = e >>> 17;
@@ -1389,8 +1515,6 @@ public class SusChunkFinder extends Module {
                     playerUG++;
                     playerBlocks.add(p);
                 }
-
-                if (LEGACY_STORAGE[k] && y <= maxStorageY) legacyStorage++;
             }
 
             List<Signal> signals = new ArrayList<>();
@@ -1407,8 +1531,24 @@ public class SusChunkFinder extends Module {
                 signals.add(new Signal(cobbledLow + " cobbled deepslate", CAT_BUILD, 0.4, false, true, mean(cobbledYSum, cobbledLow)));
             }
 
-            if (undergroundStorage.get() && legacyStorage >= storageThreshold.get()) {
-                signals.add(new Signal(legacyStorage + " underground storage", CAT_STORAGE, 0.35, false, true, storageY()));
+            int[] room = storageRoom(spawners, trial, ancient, override, dungeon);
+            int roomSize = room[0];
+            if (undergroundStorage.get() && roomSize >= storageThreshold.get()) {
+                double c = Math.min(0.95, 0.6 + 0.02 * (roomSize - storageThreshold.get()));
+                signals.add(new Signal(roomSize + " storage blocks in one room (Y " + room[1] + ")", CAT_STORAGE, c, true, true, room[1]));
+            } else if (roomSize >= 4) {
+                // Shipwrecks, dungeons and buried treasure leave one to three chests, so this only supports.
+                signals.add(new Signal(roomSize + " storage blocks together", CAT_STORAGE, 0.15, false, false, room[1]));
+            }
+
+            // Farms: lots of redstone parts in one chunk. Dust is cheap to lay, so three count as one part.
+            int parts = effAll[K_PISTON] + effAll[K_OBSERVER] + effAll[K_REDSTONE_COMP] + effAll[K_HOPPER]
+                + effAll[K_DISPENSER] + effAll[K_CRAFTER] + effAll[K_REDSTONE_MISC] + effAll[K_SLIME] + effAll[K_REDSTONE_WIRE] / 3;
+            if (redstone.get() && parts >= redstoneThreshold.get()) {
+                double c = Math.min(0.95, 0.6 + 0.02 * (parts - redstoneThreshold.get()));
+                signals.add(new Signal(parts + " redstone parts (" + redstoneBreakdown() + ")", CAT_REDSTONE, c, true, true, redstoneY()));
+            } else if (parts >= 4) {
+                signals.add(new Signal(parts + " redstone parts", CAT_REDSTONE, 0.2, false, false, redstoneY()));
             }
 
             if (grownKelp.get() && anyKelp) addIfPresent(signals, checkKelp());
@@ -1435,60 +1575,25 @@ public class SusChunkFinder extends Module {
                 }
             }
 
-            // Intelligent signals.
+            // Supporting clues. None of these flag a chunk alone, since griefed chunks all over DonutSMP
+            // still have them. They only add to the scores of a chunk a signal above already flagged.
+            // Ender chests and respawn anchors aren't even that: they are everywhere.
 
-            int shulkers = effAll[K_SHULKER];
-            if (shulkers > 0) signals.add(def(plural(shulkers, "shulker box", "shulker boxes"), CAT_STORAGE, 0.92, K_SHULKER));
-
-            if (eff[K_ENDER_CHEST] > 0) signals.add(def(plural(eff[K_ENDER_CHEST], "ender chest", "ender chests") + " underground", CAT_STORAGE, 0.8, K_ENDER_CHEST));
-            else if (effAll[K_ENDER_CHEST] > 0) signals.add(soft(plural(effAll[K_ENDER_CHEST], "ender chest", "ender chests"), CAT_STORAGE, 0.2, K_ENDER_CHEST));
-
-            if (effAll[K_BEACON] > 0) signals.add(def(plural(effAll[K_BEACON], "beacon", "beacons"), CAT_UTILITY, 0.95, K_BEACON));
-            if (effAll[K_CONDUIT] > 0) signals.add(def(plural(effAll[K_CONDUIT], "conduit", "conduits"), CAT_UTILITY, 0.9, K_CONDUIT));
-
-            if (eff[K_ENCHANTING] > 0) signals.add(def("enchanting table underground", CAT_UTILITY, 0.8, K_ENCHANTING));
-            else if (effAll[K_ENCHANTING] > 0) signals.add(def("enchanting table", CAT_UTILITY, 0.22, K_ENCHANTING));
-
-            if (effAll[K_ANVIL] > 0) signals.add(def(plural(effAll[K_ANVIL], "anvil", "anvils"), CAT_UTILITY, 0.85, K_ANVIL));
-            if (effAll[K_DAMAGED_ANVIL] > 0) signals.add(soft("damaged anvil", CAT_UTILITY, 0.2, K_DAMAGED_ANVIL));
-            if (effAll[K_CRAFTER] > 0) signals.add(def(plural(effAll[K_CRAFTER], "crafter", "crafters"), CAT_REDSTONE, 0.85, K_CRAFTER));
-
-            int hoppers = effAll[K_HOPPER];
-            if (hoppers >= 2) signals.add(def(hoppers + " hoppers", CAT_REDSTONE, Math.min(0.9, 0.75 + 0.03 * (hoppers - 2)), K_HOPPER));
-            else if (hoppers == 1) signals.add(soft("hopper", CAT_REDSTONE, 0.22, K_HOPPER));
-
-            int pistons = effAll[K_PISTON];
-            if (pistons >= 2) signals.add(def(pistons + " pistons", CAT_REDSTONE, 0.7, K_PISTON));
-            else if (pistons == 1) signals.add(soft("piston", CAT_REDSTONE, 0.2, K_PISTON));
-
-            if (effAll[K_OBSERVER] > 0) signals.add(def(plural(effAll[K_OBSERVER], "observer", "observers"), CAT_REDSTONE, 0.75, K_OBSERVER));
-
-            int comps = effAll[K_REDSTONE_COMP];
-            if (comps >= 2) signals.add(def(comps + " repeaters/comparators", CAT_REDSTONE, 0.65, K_REDSTONE_COMP));
-            else if (comps == 1) signals.add(soft("repeater/comparator", CAT_REDSTONE, 0.22, K_REDSTONE_COMP));
-
-            if (effAll[K_REDSTONE_WIRE] >= 4) signals.add(soft(effAll[K_REDSTONE_WIRE] + " redstone dust", CAT_REDSTONE, 0.3, K_REDSTONE_WIRE));
-            if (eff[K_DISPENSER] >= 2) signals.add(soft(eff[K_DISPENSER] + " dispensers/droppers underground", CAT_REDSTONE, 0.3, K_DISPENSER));
+            if (effAll[K_SHULKER] > 0) signals.add(soft(plural(effAll[K_SHULKER], "shulker box", "shulker boxes"), CAT_STORAGE, 0.25, K_SHULKER));
+            if (effAll[K_BEACON] > 0) signals.add(soft(plural(effAll[K_BEACON], "beacon", "beacons"), CAT_UTILITY, 0.3, K_BEACON));
+            if (effAll[K_CONDUIT] > 0) signals.add(soft(plural(effAll[K_CONDUIT], "conduit", "conduits"), CAT_UTILITY, 0.25, K_CONDUIT));
+            if (effAll[K_ENCHANTING] > 0) signals.add(soft("enchanting table", CAT_UTILITY, 0.2, K_ENCHANTING));
+            if (effAll[K_ANVIL] > 0) signals.add(soft(plural(effAll[K_ANVIL], "anvil", "anvils"), CAT_UTILITY, 0.2, K_ANVIL));
+            if (effAll[K_PLAYER_ONLY] > 0) signals.add(soft(plural(effAll[K_PLAYER_ONLY], "lodestone/netherite block", "lodestones/netherite blocks"), CAT_UTILITY, 0.2, K_PLAYER_ONLY));
+            if (!hivesCounted && effAll[K_BEEHIVE] > 0) signals.add(soft(plural(effAll[K_BEEHIVE], "beehive", "beehives"), CAT_FARM, 0.25, K_BEEHIVE));
 
             if (effAll[K_PORTAL] > 0) {
                 int portalY = meanEff(K_PORTAL);
-                if (portalY < 45 && eff[K_PORTAL] > 0) signals.add(new Signal("nether portal underground (Y " + portalY + ")", CAT_PORTAL, 0.7, false, false, portalY));
-                else signals.add(new Signal("nether portal", CAT_PORTAL, 0.2, false, false, portalY));
+                if (portalY < 45 && eff[K_PORTAL] > 0) signals.add(new Signal("nether portal underground (Y " + portalY + ")", CAT_PORTAL, 0.25, false, false, portalY));
+                else signals.add(new Signal("nether portal", CAT_PORTAL, 0.1, false, false, portalY));
             }
 
-            if (effAll[K_ANCHOR] > 0) signals.add(def(plural(effAll[K_ANCHOR], "respawn anchor", "respawn anchors"), CAT_UTILITY, 0.9, K_ANCHOR));
-            if (effAll[K_PLAYER_ONLY] > 0) signals.add(def(plural(effAll[K_PLAYER_ONLY], "lodestone/netherite block", "lodestones/netherite blocks"), CAT_UTILITY, 0.9, K_PLAYER_ONLY));
-            if (!hivesCounted && effAll[K_BEEHIVE] > 0) signals.add(def(plural(effAll[K_BEEHIVE], "beehive", "beehives"), CAT_FARM, 0.55, K_BEEHIVE));
-
-            int stash = eff[K_CHEST] + eff[K_TRAPPED_CHEST] + eff[K_BARREL];
-            int stashY = meanOf(K_CHEST, K_TRAPPED_CHEST, K_BARREL);
-            if (stash >= 4) {
-                double c = Math.min(0.95, 0.45 + (stash - 4) * 0.075);
-                signals.add(new Signal(stash + " chests/barrels underground (Y " + stashY + ")", CAT_STORAGE, c, stash >= 12, false, stashY));
-            } else if (stash >= 2) {
-                // Shipwrecks, buried treasure and dungeons all leave one to three chests, so this only supports.
-                signals.add(new Signal(stash + " chests/barrels underground", CAT_STORAGE, 0.15, false, false, stashY));
-            }
+            int hoppers = effAll[K_HOPPER];
 
             Signal grinder = checkGrinder(spawners, ancient, stronghold);
             if (grinder != null) signals.add(grinder);
@@ -1496,7 +1601,7 @@ public class SusChunkFinder extends Module {
             int crops = eff[K_CROP];
             if (crops >= 6) {
                 boolean lit = eff[K_LAMP] + eff[K_GLOW] + eff[K_TORCH] > 0;
-                signals.add(new Signal(crops + " crops underground" + (lit ? ", lit" : ""), CAT_FARM, lit ? 0.6 : 0.4, false, false, meanEff(K_CROP)));
+                signals.add(new Signal(crops + " crops underground" + (lit ? " (lit)" : ""), CAT_FARM, lit ? 0.6 : 0.4, false, false, meanEff(K_CROP)));
             }
 
             int walls = (stronghold || dungeon ? 0 : countDeep[K_COBBLESTONE] + countDeep[K_STONE_BRICKS]);
@@ -1518,7 +1623,7 @@ public class SusChunkFinder extends Module {
                 signals.add(new Signal("access shaft to Y " + shafts[3], CAT_BUILD, 0.3, false, false, shafts[3]));
             }
 
-            if (signals.isEmpty()) return null;
+            if (signals.stream().noneMatch(Signal::legacy)) return null;
 
             // Base confidence: independent evidence combined, plus a bonus when unrelated kinds agree.
             double miss = 1;
@@ -1558,7 +1663,7 @@ public class SusChunkFinder extends Module {
                     village, trail, netherStruct, endCity, pyramid, ruinedPortal);
                 falsePositive += Math.min(36, contexts * 12);
 
-                int geometry = (lamps + eff[K_TORCH] >= 3 ? 1 : 0) + (hoppers > 0 ? 1 : 0) + (stash >= 2 ? 1 : 0)
+                int geometry = (lamps + eff[K_TORCH] >= 3 ? 1 : 0) + (hoppers > 0 ? 1 : 0) + (roomSize >= 2 ? 1 : 0)
                     + (walls >= 8 ? 1 : 0) + (rotatedCount >= rotatedThreshold.get() ? 1 : 0)
                     + (cobbledLow >= cobbledThreshold.get() && !(ancient && !override) ? 1 : 0);
                 if (geometry >= 2) falsePositive -= Math.min(50, 25 + (geometry - 2) * 12);
@@ -1576,13 +1681,10 @@ public class SusChunkFinder extends Module {
                 griefed = MathHelper.clamp(griefed, 0, 97);
             }
 
-            boolean keep;
-            if (!intelligentChunks.get()) {
-                keep = legacyFired;
-            } else {
-                keep = confidence >= minBaseConfidence.get() || legacyFired;
-                if (hideLikelyFalsePositives.get() && falsePositive > maxFalsePositiveProb.get() && confidence < minBaseConfidence.get()) keep = false;
-            }
+            // Only a main signal (one with its own setting) flags a chunk; the clues just score it.
+            boolean keep = legacyFired;
+            if (intelligentChunks.get() && hideLikelyFalsePositives.get()
+                && falsePositive > maxFalsePositiveProb.get() && confidence < minBaseConfidence.get()) keep = false;
             if (!keep) return null;
 
             signals.sort((a, b) -> Double.compare(b.confidence, a.confidence));
@@ -1610,10 +1712,6 @@ public class SusChunkFinder extends Module {
             }
         }
 
-        Signal def(String label, int category, double confidence, int kind) {
-            return new Signal(label, category, confidence, true, false, meanEff(kind));
-        }
-
         Signal soft(String label, int category, double confidence, int kind) {
             return new Signal(label, category, confidence, false, false, meanEff(kind));
         }
@@ -1632,9 +1730,85 @@ public class SusChunkFinder extends Module {
             return n == 0 ? Integer.MIN_VALUE : (int) (sum / n);
         }
 
-        int storageY() {
-            int y = meanOf(K_SHULKER, K_BARREL, K_FURNACE, K_CRAFTING, K_ENDER_CHEST, K_CHEST);
-            return y == Integer.MIN_VALUE ? 0 : y;
+        /**
+         * The biggest storage room reaching into this chunk: storage blocks chained together, each at
+         * most {@link #CLUSTER_LINK} blocks from the next, across chunk borders. Chests the structures
+         * around generate on their own are left out first.
+         *
+         * @return {blocks in the room, its average Y}
+         */
+        int[] storageRoom(IntArrayList spawners, boolean trial, boolean ancient, boolean override, boolean dungeon) {
+            int maxY = storageMaxY.get();
+            int cap = Math.min(storage.length, CLUSTER_MAX_POINTS);
+            int[] xs = new int[cap], ys = new int[cap], zs = new int[cap];
+            int n = 0;
+
+            for (long packed : storage) {
+                if (n == cap) break;
+                int x = BlockPos.unpackLongX(packed), y = BlockPos.unpackLongY(packed), z = BlockPos.unpackLongZ(packed);
+                if (y > maxY) continue;
+                if (!override && trial && y >= TRIAL_MIN_Y && y <= TRIAL_MAX_Y) continue;
+                if (!override && ancient && y < 0) continue;
+                // Dungeon chests sit right next to the spawner.
+                if (dungeon && (x >> 4) == chunkX && (z >> 4) == chunkZ && nearAny(spawners, x & 15, y, z & 15, 5)) continue;
+                xs[n] = x;
+                ys[n] = y;
+                zs[n] = z;
+                n++;
+            }
+            if (n == 0) return new int[] {0, 0};
+
+            int[] parent = new int[n];
+            for (int i = 0; i < n; i++) parent[i] = i;
+            for (int i = 0; i < n; i++) {
+                for (int j = i + 1; j < n; j++) {
+                    if (Math.abs(xs[i] - xs[j]) <= CLUSTER_LINK && Math.abs(ys[i] - ys[j]) <= CLUSTER_LINK
+                        && Math.abs(zs[i] - zs[j]) <= CLUSTER_LINK) {
+                        parent[root(parent, i)] = root(parent, j);
+                    }
+                }
+            }
+
+            int[] size = new int[n];
+            long[] ySum = new long[n];
+            boolean[] reachesHere = new boolean[n];
+            for (int i = 0; i < n; i++) {
+                int r = root(parent, i);
+                size[r]++;
+                ySum[r] += ys[i];
+                if ((xs[i] >> 4) == chunkX && (zs[i] >> 4) == chunkZ) reachesHere[r] = true;
+            }
+
+            int best = -1;
+            for (int i = 0; i < n; i++) {
+                if (reachesHere[i] && (best < 0 || size[i] > size[best])) best = i;
+            }
+            return best < 0 ? new int[] {0, 0} : new int[] {size[best], (int) (ySum[best] / size[best])};
+        }
+
+        int root(int[] parent, int i) {
+            while (parent[i] != i) {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            return i;
+        }
+
+        /** The three most common redstone parts, for the reason text. No commas: saved reasons are split on them. */
+        String redstoneBreakdown() {
+            int[] kinds = {K_PISTON, K_OBSERVER, K_REDSTONE_COMP, K_HOPPER, K_DISPENSER, K_CRAFTER, K_REDSTONE_MISC, K_SLIME, K_REDSTONE_WIRE};
+            String[] names = {"pistons", "observers", "repeaters/comparators", "hoppers", "droppers/dispensers", "crafters",
+                "redstone torches/blocks", "slime/honey", "dust"};
+            Integer[] order = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+            Arrays.sort(order, (a, b) -> Integer.compare(effAll[kinds[b]], effAll[kinds[a]]));
+
+            List<String> parts = new ArrayList<>(3);
+            for (int i = 0; i < 3 && effAll[kinds[order[i]]] > 0; i++) parts.add(effAll[kinds[order[i]]] + " " + names[order[i]]);
+            return String.join(" + ", parts);
+        }
+
+        int redstoneY() {
+            return meanOf(K_PISTON, K_OBSERVER, K_REDSTONE_COMP, K_HOPPER, K_DISPENSER, K_CRAFTER, K_REDSTONE_MISC, K_SLIME, K_REDSTONE_WIRE);
         }
 
         int mean(long sum, int n) {
@@ -1969,9 +2143,12 @@ public class SusChunkFinder extends Module {
             else if (weak.size() == 1) confidence = 0.18;
             else return null;
 
+            // One stray hopper near a dungeon is common on a griefed server, so it takes more to flag alone.
+            boolean built = strong.size() >= 2 || (!strong.isEmpty() && strong.size() + weak.size() >= 3);
+
             List<String> mods = new ArrayList<>(strong);
             mods.addAll(weak);
-            return new Signal("spawner grinder (" + String.join(", ", mods) + ")", CAT_GRINDER, confidence, false, false, meanEff(K_SPAWNER));
+            return new Signal("spawner grinder (" + String.join(" + ", mods) + ")", CAT_GRINDER, confidence, false, built, meanEff(K_SPAWNER));
         }
 
         /**
@@ -2439,7 +2616,7 @@ public class SusChunkFinder extends Module {
             status = "WORTH A LOOK";
             statusColor = SLATE;
         }
-        if (fc.fromSave) status += fc.measured ? "  ·  SAVED" : "  ·  OLD SAVE";
+        if (fc.fromSave) status += fc.measured ? "  Ã‚Â·  SAVED" : "  Ã‚Â·  OLD SAVE";
 
         int maxSignals = 5;
         List<String> signals = fc.reasons.size() > maxSignals ? fc.reasons.subList(0, maxSignals) : fc.reasons;
