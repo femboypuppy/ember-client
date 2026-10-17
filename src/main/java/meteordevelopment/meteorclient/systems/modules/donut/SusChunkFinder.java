@@ -83,6 +83,8 @@ public class SusChunkFinder extends Module {
     private static final String FIND_TYPE = "sus-chunk";
     private static final Pattern SAVED_METRICS = Pattern.compile("\\s*\\[base (\\d+)%, fp (\\d+)%, grief (\\d+)%, y (-?\\d+)]\\s*$");
     private static final Pattern SAVED_GRIEF = Pattern.compile("\\s*\\{grief: ([^}]*)}");
+    /** Marks a saved find made before anyone looked below the deepslate. */
+    private static final String SAVED_DEEP_HIDDEN = "{deep unchecked}";
 
     /** Structure context a chunk shares with its neighbours, since these structures span several chunks. */
     private static final int CTX_TRIAL = 1, CTX_ANCIENT = 2, CTX_SPAWNER = 4;
@@ -118,7 +120,7 @@ public class SusChunkFinder extends Module {
 
     private final Setting<Boolean> limitHeight = sgHeight.add(new BoolSetting.Builder()
         .name("limit-height")
-        .description("Only detect between min-y and max-y. Everything outside, like a farm on the surface, is ignored by every signal.")
+        .description("Only detect built things (storage, redstone, farms, deepslate) between min-y and max-y, so a farm on the surface is ignored. Natural growth like kelp or amethyst is still checked at any height, since it shows where to dig.")
         .defaultValue(false)
         .onChanged(v -> rescanLoadedChunks())
         .build()
@@ -748,6 +750,7 @@ public class SusChunkFinder extends Module {
     private FindsStorage.Context context = new FindsStorage.Context("", "");
     private int rescanTimer;
     private boolean loggedScanError;
+    private volatile boolean loggedHiddenDeep;
 
     // Render-thread state for the center dot and inspection card.
     private final EmberAnim.Clock clock = new EmberAnim.Clock();
@@ -959,13 +962,22 @@ public class SusChunkFinder extends Module {
                 return;
             }
 
-            boolean isNewFind;
+            if (scan.hiddenSections > 0 && !loggedHiddenDeep) {
+                loggedHiddenDeep = true;
+                MeteorClient.LOG.info("[Ember SusChunk] Chunk {} arrived with {} sections below Y 0 hidden (sent as {}); judging such chunks from above the deepslate only",
+                    chunk.getPos(), scan.hiddenSections, scan.blankLook);
+            }
+
+            boolean isNewFind = false, firstFullLook;
+            String checkedNote;
             synchronized (flagged) {
                 if (generation != scanGeneration.get()) return;
 
                 // Neighbours scanned before this chunk revealed its structure may have been flagged on
                 // the structure's natural blocks, so look at them again.
                 int oldCtx = structureContext.get(key);
+                // With the deep part hidden, a structure seen in a full view earlier is still there.
+                if (scan.hiddenSections > 0) scan.ownCtx |= oldCtx;
                 if (scan.ownCtx != oldCtx) {
                     if (scan.ownCtx == 0) structureContext.remove(key);
                     else structureContext.put(key, scan.ownCtx);
@@ -981,35 +993,59 @@ public class SusChunkFinder extends Module {
                     }
                 }
 
+                // Sent with the deep part hidden (you are above the deepslate), the chunk only shows what
+                // is above it. That can't overrule a full view from after a relog, and "nothing found"
+                // doesn't clear a saved find, which may well be down there.
+                FlaggedChunk old = flagged.get(key);
+                boolean partial = scan.hiddenSections > 0;
+                if (partial && old != null && !old.deepHidden) return;
+
+                // The first full view of a find that was only seen from above: the relog worked.
+                FlaggedChunk prior = old != null ? old : saved.get(key);
+                firstFullLook = !partial && prior != null && prior.deepHidden;
+
                 if (result == null) {
                     flagged.remove(key);
-                    cleared.add(key);
-                    return;
+                    if (!partial) cleared.add(key);
+                    if (firstFullLook && saved.containsKey(key)) saved.put(key, prior.checked());
+                } else {
+                    flagged.put(key, result);
+                    cleared.remove(key);
+                    // Chunks remembered from earlier sessions were already announced back then.
+                    isNewFind = !saved.containsKey(key) && announced.add(key);
+                    if (isNewFind ? saveFinds.get() : firstFullLook && saved.containsKey(key)) saved.put(key, result);
                 }
-
-                flagged.put(key, result);
-                cleared.remove(key);
-                // Chunks remembered from earlier sessions were already announced back then.
-                isNewFind = !saved.containsKey(key) && announced.add(key);
-                if (isNewFind && saveFinds.get()) saved.put(key, result);
+                checkedNote = firstFullLook ? (result != null ? result : prior.checked()).toNote() : null;
             }
-
-            if (!isNewFind) return;
 
             int blockX = chunk.getPos().getStartX() + 8;
             int blockZ = chunk.getPos().getStartZ() + 8;
             BlockPos center = new BlockPos(blockX, 64, blockZ);
 
+            if (firstFullLook) {
+                if (saveFinds.get()) FindsStorage.update(ctx, FIND_TYPE, center, checkedNote);
+                String found = result == null ? "nothing down there" : result.reason;
+                Color checkedTone = result == null ? EmberNotificationsHud.WARN : EmberNotificationsHud.GOOD;
+                mc.execute(() -> {
+                    if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) info("Sus chunk checked at (highlight)%d, %d(default): %s", blockX, blockZ, found);
+                    EmberNotificationsHud.push("Sus chunk checked", blockX + ", " + blockZ + " \u2014 " + found, checkedTone);
+                });
+                return;
+            }
+
+            if (!isNewFind) return;
+
             if (saveFinds.get()) FindsStorage.add(ctx, FIND_TYPE, center, result.toNote());
 
             boolean scored = intelligentChunks.get();
-            String summary = scored ? result.reason + " (base " + result.baseConfidence + "%)" : result.reason;
+            String summary = (scored ? result.reason + " (base " + result.baseConfidence + "%)" : result.reason)
+                + (result.deepHidden ? " - dig below Y 0 and relog to see the rest" : "");
             Color tone = result.griefedProb >= 60 ? EmberNotificationsHud.WARN : EmberNotificationsHud.GOOD;
 
             mc.execute(() -> {
                 if (autoWaypoint.get()) FindsStorage.waypoint("Sus chunk", center);
                 if (chatNotify.get() && !EmberNotificationsHud.shouldInterceptChat()) info("Sus chunk at (highlight)%d, %d(default): %s", blockX, blockZ, summary);
-                EmberNotificationsHud.push(result.griefedProb >= 60 ? "Griefed base found" : "Sus chunk found", blockX + ", " + blockZ + " Ã¢â‚¬â€ " + summary, tone);
+                EmberNotificationsHud.push(result.griefedProb >= 60 ? "Griefed base found" : "Sus chunk found", blockX + ", " + blockZ + " \u2014 " + summary, tone);
             });
         });
     }
@@ -1047,8 +1083,9 @@ public class SusChunkFinder extends Module {
         }
         if (!main) return false;
 
-        // Only saves that recorded where the find was can be held to the height range.
-        if (limitHeight.get() && fc.measured) {
+        // Only saves that recorded where the find was can be held to the height range, and natural
+        // growth ("... grown ...") is exempt from it, as in the scan.
+        if (limitHeight.get() && fc.measured && fc.reasons.stream().noneMatch(r -> r.contains("grown"))) {
             int lo = Math.min(heightMin.get(), heightMax.get()), hi = Math.max(heightMin.get(), heightMax.get());
             if (fc.focusY < lo || fc.focusY > hi) return false;
         }
@@ -1302,6 +1339,14 @@ public class SusChunkFinder extends Module {
         /** Height range the signals may come from, from the Height settings. Structure detection ignores it. */
         final int lowY, highY;
 
+        /** Sections below Y 0 the server sent blank, and how many; see {@link #isBlank}. */
+        final boolean[] blank;
+        final int hiddenSections;
+        /** What the hidden part was sent as, for the log. */
+        String blankLook = "";
+        /** Lowest Y with real data. */
+        final int floorY;
+
         Scan(WorldChunk chunk, boolean nether, boolean end, long[] storage) {
             this.storage = storage;
             this.lowY = limitHeight.get() ? Math.min(heightMin.get(), heightMax.get()) : Integer.MIN_VALUE;
@@ -1318,11 +1363,36 @@ public class SusChunkFinder extends Module {
             this.end = end;
             this.playerY = new int[height];
 
+            // DonutSMP leaves out everything below the deepslate while you are above it. Two blank deep
+            // sections can't happen in real terrain, so that marks a chunk sent that way.
+            this.blank = new boolean[sections.length];
+            int blanks = 0;
+            if (!nether && !end) {
+                for (int i = 0; i < sections.length && minY + (i << 4) + 15 < 0; i++) {
+                    blank[i] = isBlank(sections[i]);
+                    if (blank[i]) blanks++;
+                }
+            }
+            if (blanks < 2) Arrays.fill(blank, false);
+            else {
+                ChunkSection first = sections[0];
+                blankLook = first == null || first.isEmpty() ? "empty" : Registries.BLOCK.getId(first.getBlockState(0, 0, 0).getBlock()).toString();
+            }
+            this.hiddenSections = blanks < 2 ? 0 : blanks;
+            this.floorY = hiddenSections > 0 ? 0 : minY;
+
             Arrays.fill(kelpBottom, Integer.MAX_VALUE);
             Arrays.fill(kelpTop, Integer.MIN_VALUE);
             Arrays.fill(kelpTipAge, -1);
             Arrays.fill(bambooBottom, Integer.MAX_VALUE);
             Arrays.fill(bambooTop, Integer.MIN_VALUE);
+        }
+
+        /** Empty, or one block throughout. Checks the palette, not the blocks, so it is cheap. */
+        boolean isBlank(ChunkSection section) {
+            if (section == null || section.isEmpty()) return true;
+            BlockState first = section.getBlockState(0, 0, 0);
+            return !section.hasAny(state -> state != first);
         }
 
         boolean inHeight(int y) {
@@ -1388,7 +1458,7 @@ public class SusChunkFinder extends Module {
 
             for (int i = 0; i < sections.length; i++) {
                 ChunkSection section = sections[i];
-                if (section == null || section.isEmpty() || !section.hasAny(SusChunkFinder::isRelevant)) continue;
+                if (blank[i] || section == null || section.isEmpty() || !section.hasAny(SusChunkFinder::isRelevant)) continue;
 
                 int baseY = minY + (i << 4);
 
@@ -1699,8 +1769,10 @@ public class SusChunkFinder extends Module {
                 signals.add(new Signal("access shaft to Y " + shafts[3], CAT_BUILD, 0.3, false, false, shafts[3]));
             }
 
-            // Growth signals measure their own height, so they are held to the range here.
-            signals.removeIf(s -> s.y != Integer.MIN_VALUE && !inHeight(s.y));
+            // Farms measure their own height, so they are held to the range here. Natural growth isn't:
+            // kelp or amethyst that kept growing is the from-the-surface clue that someone stayed in
+            // the chunk, which is what tells you where to dig down and relog.
+            signals.removeIf(s -> s.category != CAT_GROWTH && s.y != Integer.MIN_VALUE && !inHeight(s.y));
             if (signals.stream().noneMatch(Signal::legacy)) return null;
 
             // Base confidence: independent evidence combined, plus a bonus when unrelated kinds agree.
@@ -1779,7 +1851,7 @@ public class SusChunkFinder extends Module {
             int focusY = yWeight > 0 ? (int) Math.round(ySum / yWeight) : (growthYCount > 0 ? (int) (growthYSum / growthYCount) : 64);
             focusY = MathHelper.clamp(focusY, minY + 1, topY);
 
-            return new FlaggedChunk(chunkX, chunkZ, reasons, confidence, falsePositive, griefed, griefReasons, focusY, false, true);
+            return new FlaggedChunk(chunkX, chunkZ, reasons, confidence, falsePositive, griefed, griefReasons, focusY, false, true, hiddenSections > 0);
         }
 
         /** Lets a structure explain all of its natural kinds, except {@code limitedKind}, which it explains {@code limit} of. */
@@ -2251,7 +2323,7 @@ public class SusChunkFinder extends Module {
                     int run = 0;
                     boolean climbable = false;
 
-                    for (int y = start; y > minY; y--) {
+                    for (int y = start; y > floorY; y--) {
                         BlockState state = at(lx, y, lz);
                         boolean ladder = state.isOf(Blocks.LADDER) || state.isOf(Blocks.SCAFFOLDING) || state.isOf(Blocks.BUBBLE_COLUMN);
                         boolean open = state.isAir() || ladder;
@@ -2267,7 +2339,7 @@ public class SusChunkFinder extends Module {
                         climbable = false;
                     }
 
-                    if (run >= 18) recordShaft(result, prefix, minY + 1, climbable);
+                    if (run >= 18) recordShaft(result, prefix, floorY + 1, climbable);
                 }
             }
             return result;
@@ -2438,9 +2510,15 @@ public class SusChunkFinder extends Module {
         public final boolean fromSave;
         /** False when the scores were guessed from an old save that did not record them. */
         public final boolean measured;
+        /**
+         * Scanned while the server was hiding everything below the deepslate (DonutSMP does this while
+         * you are above it), so only what is above was seen. Dig down and relog to load the rest.
+         */
+        public final boolean deepHidden;
 
         FlaggedChunk(int chunkX, int chunkZ, List<String> reasons, int baseConfidence, int falsePositiveProb,
-                     int griefedProb, List<String> griefReasons, int focusY, boolean fromSave, boolean measured) {
+                     int griefedProb, List<String> griefReasons, int focusY, boolean fromSave, boolean measured, boolean deepHidden) {
+            this.deepHidden = deepHidden;
             this.chunkX = chunkX;
             this.chunkZ = chunkZ;
             this.reasons = List.copyOf(reasons);
@@ -2454,9 +2532,16 @@ public class SusChunkFinder extends Module {
             this.measured = measured;
         }
 
+        /** The same find, marked as looked at below the deepslate. */
+        FlaggedChunk checked() {
+            return new FlaggedChunk(chunkX, chunkZ, reasons, baseConfidence, falsePositiveProb, griefedProb, griefReasons,
+                focusY, fromSave, measured, false);
+        }
+
         String toNote() {
             StringBuilder note = new StringBuilder(reason);
             if (!griefReasons.isEmpty()) note.append(" {grief: ").append(String.join("; ", griefReasons)).append('}');
+            if (deepHidden) note.append(' ').append(SAVED_DEEP_HIDDEN);
             note.append(" [base ").append(baseConfidence).append("%, fp ").append(falsePositiveProb)
                 .append("%, grief ").append(griefedProb).append("%, y ").append(focusY).append(']');
             return note.toString();
@@ -2467,6 +2552,9 @@ public class SusChunkFinder extends Module {
             String text = note == null ? "" : note;
             int base, fp, grief, y;
             boolean measured;
+
+            boolean deepHidden = text.contains(SAVED_DEEP_HIDDEN);
+            text = text.replace(" " + SAVED_DEEP_HIDDEN, "");
 
             Matcher metrics = SAVED_METRICS.matcher(text);
             if (metrics.find()) {
@@ -2504,7 +2592,7 @@ public class SusChunkFinder extends Module {
             for (String part : text.split(",")) if (!part.isBlank()) reasons.add(part.trim());
             if (reasons.isEmpty()) reasons.add("saved find");
 
-            return new FlaggedChunk(chunkX, chunkZ, reasons, base, fp, grief, griefReasons, y, true, measured);
+            return new FlaggedChunk(chunkX, chunkZ, reasons, base, fp, grief, griefReasons, y, true, measured, deepHidden);
         }
     }
 
@@ -2712,7 +2800,9 @@ public class SusChunkFinder extends Module {
             status = "WORTH A LOOK";
             statusColor = SLATE;
         }
-        if (fc.fromSave) status += fc.measured ? "  Ã‚Â·  SAVED" : "  Ã‚Â·  OLD SAVE";
+        if (fc.fromSave) status += fc.measured ? "  \u00B7  SAVED" : "  \u00B7  OLD SAVE";
+        // Only what is above the deepslate was sent; the base itself, if any, is still unseen.
+        if (fc.deepHidden) status += "  \u00B7  DIG BELOW Y 0 + RELOG";
 
         int maxSignals = 5;
         List<String> signals = fc.reasons.size() > maxSignals ? fc.reasons.subList(0, maxSignals) : fc.reasons;

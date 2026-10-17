@@ -95,6 +95,22 @@ public final class FindsStorage {
         return true;
     }
 
+    /** Replaces the note of a saved find. @return false if there is no such find */
+    public static synchronized boolean update(Context ctx, String type, BlockPos pos, String note) {
+        if (!ctx.valid()) return false;
+
+        ensureLoaded(ctx.world());
+        for (Find find : finds) {
+            if (find.type.equals(type) && find.dimension.equals(ctx.dimension())
+                && find.x == pos.getX() && find.y == pos.getY() && find.z == pos.getZ()) {
+                find.note = note;
+                save(ctx.world());
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Adds a waypoint unless the same one already exists. Must run on the render thread. */
     public static void waypoint(String name, BlockPos pos) {
         for (Waypoint waypoint : Waypoints.get()) {
