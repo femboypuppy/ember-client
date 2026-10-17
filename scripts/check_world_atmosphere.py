@@ -39,7 +39,7 @@ shell, points = mesh("sky", sky), mesh("sky-stars", stars)
 
 
 def render(accent=(.65, .54, .88), style=0, time=5, opacity=.85, depth=1, translation=0, starlight=True,
-           background=(.14, .18, .25), grass_edge=False):
+           background=(.14, .18, .25), grass_edge=False, exposure=1):
     w, h = 720, 400
     target = ctx.texture((w, h), 4)
     zbuffer = ctx.depth_renderbuffer((w, h))
@@ -59,7 +59,7 @@ def render(accent=(.65, .54, .88), style=0, time=5, opacity=.85, depth=1, transl
     matrices.bind_to_uniform_block(0)
     transforms = ctx.buffer(struct.pack("16f", *view))
     transforms.bind_to_uniform_block(2)
-    parameters = ctx.buffer(struct.pack("8f", *accent, opacity, time, style, 0, 0))
+    parameters = ctx.buffer(struct.pack("8f", *accent, opacity, time, style, exposure, 0))
     parameters.bind_to_uniform_block(1)
     if opacity > 0:
         shell.render(moderngl.TRIANGLES)
@@ -98,6 +98,9 @@ assert render().tobytes() != render(starlight=False).tobytes(), "Distant stars m
 assert render(background=(0,0,1)).tobytes() == render(background=(1,0,0)).tobytes(), "Replacement sky must not retain any original blue background"
 assert render(grass_edge=True, background=(0,0,1)).tobytes() == render(grass_edge=True, background=(1,0,0)).tobytes(), "Translucent grass edges must composite against the replacement sky"
 assert render(opacity=.15, background=(0,0,1)).tobytes() == render(opacity=.15, background=(1,0,0)).tobytes(), "Low sky intensity must dim the sky without exposing vanilla color"
+brightness = [sum(ImageStat.Stat(render(starlight=False, exposure=e)).mean[:3]) for e in (.4, 1, 1.65)]
+assert brightness[0] < brightness[1] * .5 and brightness[2] > brightness[1] * 1.5, "Bass exposure must darken or brighten the actual sky shader"
+assert render(exposure=.4, background=(0,0,1)).tobytes() == render(exposure=.4, background=(1,0,0)).tobytes(), "Bass dimming must not expose vanilla blue"
 sheet = Image.new("RGB", (1440, 850), (8, 9, 14))
 draw = ImageDraw.Draw(sheet)
 for i, (style, accent, label) in enumerate(((0, (.65, .54, .88), "NEBULA / LAVENDER"), (1, (.65, .54, .88), "AURORA / LAVENDER"),
@@ -106,7 +109,7 @@ for i, (style, accent, label) in enumerate(((0, (.65, .54, .88), "NEBULA / LAVEN
     sheet.paste(render(accent, style), (x, y + 25))
     draw.text((x+14, y+7), label, fill=(220, 215, 235))
 sheet.save(OUT / "world-sky-preview.png")
-print("World sky GLSL passed: native projection, accent colors, motion, full sky coverage, low intensity, translucent grass edges and terrain depth occlusion.")
+print("World sky GLSL passed: native projection, accent colors, motion, bass exposure, full sky coverage, low intensity, translucent grass edges and terrain depth occlusion.")
 print("GPU:", ctx.info["GL_RENDERER"])
 print("Preview:", OUT / "world-sky-preview.png")
 ctx.release()

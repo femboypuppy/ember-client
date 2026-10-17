@@ -7,6 +7,7 @@ import meteordevelopment.meteorclient.gui.GuiThemes;
 import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
 import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.utils.PostInit;
+import meteordevelopment.meteorclient.utils.misc.MusicReactive;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import meteordevelopment.orbit.EventHandler;
@@ -53,7 +54,7 @@ public final class EmberAtmosphere {
             var accent = EmberPalette.accent();
             MESH.clear();
             CelestialGeometry.atmosphere(MESH, width, height, time, mouseX, mouseY, config.ambienceDensity.get(),
-                config.ambienceIntensity.get() * opacity, (accent.r << 16) | (accent.g << 8) | accent.b);
+                config.ambienceIntensity.get() * opacity * MusicReactive.exposure(config.bassSky.get()), (accent.r << 16) | (accent.g << 8) | accent.b);
             MESH.faceScreen();
             for (int i = 0; i < MESH.size; i += 3) {
                 rgba(A, MESH.colors[i]); rgba(B, MESH.colors[i + 1]); rgba(C, MESH.colors[i + 2]);

@@ -110,8 +110,16 @@ public class Config extends System<Config> {
         .name("accent-world-darkness").description("Dim daylight to suit the celestial sky. Torch and other block lighting remain independent.").defaultValue(0.42).range(0, 1).sliderRange(0, 1).build());
     public final Setting<Double> worldLightTint = sgVisual.add(new DoubleSetting.Builder()
         .name("accent-world-light-tint").description("How strongly daylight takes the accent color.").defaultValue(0.8).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> vanillaLightMix = sgVisual.add(new DoubleSetting.Builder()
+        .name("vanilla-light-mix").description("Blend back to the original daylight and gamma. 100% restores vanilla lighting.").defaultValue(0).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> daylightBrightness = sgVisual.add(new DoubleSetting.Builder()
+        .name("daylight-brightness").description("Brightness of sky illumination, independently of its accent color. Does not brighten unlit caves.").defaultValue(1).range(0.2, 1.6).sliderRange(0.2, 1.6).build());
     public final Setting<Boolean> worldStars = sgVisual.add(new BoolSetting.Builder()
         .name("world-stars").description("Distant celestial stars and world-anchored, depth-tested starlight motes.").defaultValue(true).build());
+    public final Setting<Boolean> worldMotes = sgVisual.add(new BoolSetting.Builder()
+        .name("world-motes").description("Show nearby floating starlight independently of distant sky stars.").defaultValue(true).build());
+    public final Setting<Double> starBrightness = sgVisual.add(new DoubleSetting.Builder()
+        .name("star-brightness").description("Brightness of world stars and motes without changing their density.").defaultValue(1).range(0, 2).sliderRange(0, 2).build());
     public final Setting<Boolean> accentFog = sgVisual.add(new BoolSetting.Builder()
         .name("accent-fog").description("A subtle accent tint and atmospheric haze in open-air dimensions.").defaultValue(true).build());
     public final Setting<Double> fogAmount = sgVisual.add(new DoubleSetting.Builder()
@@ -130,6 +138,25 @@ public class Config extends System<Config> {
         .name("ambience-density").description("Number of stars. The particle and geometry counts remain bounded.").defaultValue(0.55).range(0, 1).sliderRange(0, 1).build());
     public final Setting<Double> ambienceSpeed = sgVisual.add(new DoubleSetting.Builder()
         .name("ambience-speed").description("Star drift, aurora and parallax motion. Zero holds the atmosphere still.").defaultValue(0.8).range(0, 2).sliderRange(0, 2).build());
+    public enum BassMode { Darken, Glow }
+    public final Setting<Boolean> musicReactive = sgVisual.add(new BoolSetting.Builder()
+        .name("music-reactive-atmosphere").description("Analyze bass from Windows desktop output locally. Other sounds on that output can also trigger the effect.").defaultValue(false).build());
+    public final Setting<BassMode> bassMode = sgVisual.add(new EnumSetting.Builder<BassMode>()
+        .name("bass-effect").description("Darken the scene on bass, or make it glow brighter.").defaultValue(BassMode.Darken).build());
+    public final Setting<Double> bassStrength = sgVisual.add(new DoubleSetting.Builder()
+        .name("bass-strength").description("Maximum visual change on a strong bass hit.").defaultValue(0.45).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> bassSensitivity = sgVisual.add(new DoubleSetting.Builder()
+        .name("bass-sensitivity").description("Sensitivity to low-frequency audio energy.").defaultValue(1.5).range(0.1, 4).sliderRange(0.1, 4).build());
+    public final Setting<Double> bassSmoothing = sgVisual.add(new DoubleSetting.Builder()
+        .name("bass-smoothing").description("Seconds for bass effects to fade away. Higher values feel softer.").defaultValue(0.45).range(0.08, 1.5).sliderRange(0.08, 1.5).build());
+    public final Setting<Boolean> bassSky = sgVisual.add(new BoolSetting.Builder()
+        .name("bass-affects-sky").description("React in the accent sky and its matching fog.").defaultValue(true).build());
+    public final Setting<Boolean> bassLighting = sgVisual.add(new BoolSetting.Builder()
+        .name("bass-affects-lighting").description("React in daylight on blocks and entities.").defaultValue(true).build());
+    public final Setting<Boolean> bassGround = sgVisual.add(new BoolSetting.Builder()
+        .name("bass-affects-ground").description("React in nearby colored ground light.").defaultValue(true).build());
+    public final Setting<Boolean> bassStars = sgVisual.add(new BoolSetting.Builder()
+        .name("bass-affects-stars").description("Gently brighten stars and motes with bass.").defaultValue(true).build());
 
     public final Setting<Boolean> customFont = sgVisual.add(new BoolSetting.Builder()
         .name("custom-font")

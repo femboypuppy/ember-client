@@ -8,6 +8,7 @@ import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.*;
 import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.utils.PostInit;
+import meteordevelopment.meteorclient.utils.misc.MusicReactive;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.enums.CameraSubmersionType;
@@ -30,6 +31,8 @@ public final class EmberWorldAtmosphere {
     private static long previous;
     private static Object world;
     private static double time;
+    private static long previousLightSample;
+    private static double sampledLightReaction = 1;
     private EmberWorldAtmosphere() {}
 
     @PostInit public static void init() { MeteorClient.EVENT_BUS.subscribe(EmberWorldAtmosphere.class); }
@@ -51,20 +54,41 @@ public final class EmberWorldAtmosphere {
     }
     public static boolean skyActive() { return openSky() && Config.get().accentSky.get() && Config.get().skyIntensity.get() > 0; }
     public static boolean lightingEnabled() {
-        return openSky() && Config.get().worldLighting.get() && (Config.get().worldDarkness.get() > 0 || Config.get().worldLightTint.get() > 0);
+        return openSky() && Config.get().worldLighting.get() && Config.get().vanillaLightMix.get() < 1
+            && (Config.get().worldDarkness.get() > 0 || Config.get().worldLightTint.get() > 0
+                || Config.get().daylightBrightness.get() != 1 || Config.get().musicReactive.get() && Config.get().bassLighting.get());
     }
+    public static double lightBlend() { return 1 - Config.get().vanillaLightMix.get(); }
+    // Quantized daylight changes limit lightmap uploads while the sky remains smoothly animated.
+    private static double lightReaction() {
+        long now = System.nanoTime();
+        if (now - previousLightSample >= 50_000_000L) {
+            sampledLightReaction = Math.round(MusicReactive.exposure(Config.get().bassLighting.get()) * 32) / 32.0;
+            previousLightSample = now;
+        }
+        return sampledLightReaction;
+    }
+    public static float daylight(float original) {
+        var c = Config.get();
+        return CelestialLighting.illumination(original, c.worldDarkness.get(), c.daylightBrightness.get(), lightBlend(), lightReaction());
+    }
+    public static float gamma(float original) { return CelestialLighting.mixedGamma(original, Config.get().worldDarkness.get(), lightBlend()); }
+    private static double skyExposure() { return MusicReactive.exposure(Config.get().bassSky.get()); }
     public static int lightingState() {
         if (!lightingEnabled()) return 0;
         var c = Config.get(); var color = EmberPalette.accent();
         int hash = 31 * (31 * (31 * (1 + color.r) + color.g) + color.b) + Double.hashCode(c.worldDarkness.get());
-        return 31 * hash + Double.hashCode(c.worldLightTint.get());
+        hash = 31 * hash + Double.hashCode(c.worldLightTint.get());
+        hash = 31 * hash + Double.hashCode(c.vanillaLightMix.get());
+        hash = 31 * hash + Double.hashCode(c.daylightBrightness.get());
+        return 31 * hash + Double.hashCode(lightReaction());
     }
     public static Vector3fc lightTint(Vector3fc original) {
         if (!lightingEnabled()) return original;
         var accent = EmberPalette.accent();
         float light = Math.max(original.x(), Math.max(original.y(), original.z()));
         int max = Math.max(accent.r, Math.max(accent.g, accent.b));
-        double strength = Config.get().worldLightTint.get();
+        double strength = Config.get().worldLightTint.get() * lightBlend();
         return new Vector3f(CelestialLighting.channel(original.x(), accent.r, max, light, strength),
             CelestialLighting.channel(original.y(), accent.g, max, light, strength),
             CelestialLighting.channel(original.z(), accent.b, max, light, strength));
@@ -74,9 +98,10 @@ public final class EmberWorldAtmosphere {
         if (!skyActive()) return original;
         var accent = EmberPalette.accent();
         double amount = Config.get().skyIntensity.get();
-        int r = (int) (CelestialLighting.horizon(accent.r, amount) * 255);
-        int g = (int) (CelestialLighting.horizon(accent.g, amount) * 255);
-        int b = (int) (CelestialLighting.horizon(accent.b, amount) * 255);
+        double exposure = skyExposure();
+        int r = (int) (CelestialLighting.horizon(accent.r, amount) * exposure * 255);
+        int g = (int) (CelestialLighting.horizon(accent.g, amount) * exposure * 255);
+        int b = (int) (CelestialLighting.horizon(accent.b, amount) * exposure * 255);
         return (original & 0xFF000000) | r << 16 | g << 8 | b;
     }
     public static Vector4f fogTint(Vector4f original) {
@@ -84,8 +109,9 @@ public final class EmberWorldAtmosphere {
         var accent = EmberPalette.accent();
         if (skyActive()) {
             double intensity = Config.get().skyIntensity.get();
-            return new Vector4f(CelestialLighting.horizon(accent.r, intensity), CelestialLighting.horizon(accent.g, intensity),
-                CelestialLighting.horizon(accent.b, intensity), original.w);
+            float exposure = (float) skyExposure();
+            return new Vector4f(CelestialLighting.horizon(accent.r, intensity) * exposure, CelestialLighting.horizon(accent.g, intensity) * exposure,
+                CelestialLighting.horizon(accent.b, intensity) * exposure, original.w);
         }
         float lum = (original.x + original.y + original.z) / 3;
         double amount = Config.get().fogAmount.get();
@@ -109,7 +135,7 @@ public final class EmberWorldAtmosphere {
         var c = Config.get();
         var accent = EmberPalette.accent();
         int rgb = accent.r << 16 | accent.g << 8 | accent.b;
-        double intensity = c.ambienceIntensity.get();
+        double intensity = starIntensity();
         var camera = mc.gameRenderer.getCamera().getCameraPos();
         if (background && skyActive()) {
             if (sky == null) {
@@ -121,7 +147,7 @@ public final class EmberWorldAtmosphere {
             CelestialRenderer.draw(SHELL, sky, camera.x, 0, camera.z, 0, 0);
             SkyUniforms.STORAGE.clear();
             var uniform = SkyUniforms.STORAGE.write(new SkyUniforms.Data(accent.r / 255f, accent.g / 255f, accent.b / 255f,
-                c.skyIntensity.get().floatValue(), (float) time, c.celestialSky.get().ordinal()));
+                c.skyIntensity.get().floatValue(), (float) time, c.celestialSky.get().ordinal(), (float) skyExposure()));
             submitSky(sky, true, uniform);
         }
         if (c.worldStars.get()) {
@@ -159,19 +185,25 @@ public final class EmberWorldAtmosphere {
         if (!effectsVisible()) return;
         var c = Config.get(); var accent = EmberPalette.accent();
         int rgb = accent.r << 16 | accent.g << 8 | accent.b;
-        double intensity = c.ambienceIntensity.get();
-        if (c.worldStars.get()) {
+        double intensity = starIntensity();
+        if (c.worldMotes.get()) {
             MOTES.clear(); CelestialWorldGeometry.motes(MOTES, event.offsetX, event.offsetY, event.offsetZ, time, c.ambienceDensity.get(), intensity, rgb);
             if (motes == null) motes = new Renderer3D(MeteorRenderPipelines.WORLD_COLORED_LINES_DEPTH, MeteorRenderPipelines.WORLD_ACCENT_LIGHT);
             motes.begin(); CelestialRenderer.draw(MOTES, motes, event.offsetX, event.offsetY, event.offsetZ, 0, 0); motes.render(event.matrices);
         }
     }
 
+    private static double starIntensity() {
+        var c = Config.get();
+        return Math.clamp(c.ambienceIntensity.get() * c.starBrightness.get()
+            * (1 + (c.bassStars.get() ? MusicReactive.level() * c.bassStrength.get() * 0.8 : 0)), 0, 2);
+    }
+
     private static final class SkyUniforms {
         static final DynamicUniformStorage<Data> STORAGE = new DynamicUniformStorage<>("Ember - Celestial sky", 32, 2);
-        private record Data(float r, float g, float b, float intensity, float time, float style) implements DynamicUniformStorage.Uploadable {
+        private record Data(float r, float g, float b, float intensity, float time, float style, float exposure) implements DynamicUniformStorage.Uploadable {
             @Override public void write(ByteBuffer buffer) {
-                Std140Builder.intoBuffer(buffer).putVec4(r, g, b, intensity).putVec4(time, style, 0, 0);
+                Std140Builder.intoBuffer(buffer).putVec4(r, g, b, intensity).putVec4(time, style, exposure, 0);
             }
         }
     }

@@ -32,5 +32,5 @@ void main() {
     // Spherical noise avoids UV seams and singularities at the zenith.
     // Intensity changes the sky's brightness, never its coverage. A translucent
     // replacement would leave the original blue daytime sky mixed into every pixel.
-    color=vec4(base*(.35+.65*u_AccentStrength.a),1.);
+    color=vec4(base*(.35+.65*u_AccentStrength.a)*u_Motion.z,1.);
 }

@@ -173,16 +173,47 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             style.toString(), () -> ambience.celestialSky.set(style), ambience.celestialSky.get() == style, dt);
         y += 46;
         y = slider(r, y, "Sky intensity", ambience.skyIntensity.get(), percent(ambience.skyIntensity.get()), ambience.skyIntensity::set, dt);
+        y = section(r, y, "WORLD LIGHTING", "Presets set the sliders below. Mix toward vanilla for a more natural scene.");
+        double presetW = contentW / 3;
+        action(r, contentX, y, presetW - 5, 34, "Vanilla", () -> lightingPreset(0), false, dt);
+        action(r, contentX + presetW, y, presetW - 5, 34, "Soft accent", () -> lightingPreset(1), false, dt);
+        action(r, contentX + presetW * 2, y, presetW - 5, 34, "Cinematic", () -> lightingPreset(2), false, dt);
+        y += 46;
         y = toggle(r, y, "Match world lighting", "Accent-colored daylight on blocks and entities, including during daytime.", ambience.worldLighting.get(), () -> ambience.worldLighting.set(!ambience.worldLighting.get()), dt);
+        y = slider(r, y, "Vanilla light mix", ambience.vanillaLightMix.get(), percent(ambience.vanillaLightMix.get()), ambience.vanillaLightMix::set, dt);
+        y = slider(r, y, "Daylight brightness", (ambience.daylightBrightness.get() - 0.2) / 1.4, percent(ambience.daylightBrightness.get()), v -> ambience.daylightBrightness.set(0.2 + v * 1.4), dt);
         y = slider(r, y, "World darkness", ambience.worldDarkness.get(), percent(ambience.worldDarkness.get()), ambience.worldDarkness::set, dt);
         y = slider(r, y, "Light color strength", ambience.worldLightTint.get(), percent(ambience.worldLightTint.get()), ambience.worldLightTint::set, dt);
-        y = toggle(r, y, "3D starlight", "Distant stars and drifting motes with depth, parallax and terrain occlusion.", ambience.worldStars.get(), () -> ambience.worldStars.set(!ambience.worldStars.get()), dt);
+        y = section(r, y, "STARS & HAZE", "Control distant starlight and nearby floating particles separately.");
+        y = toggle(r, y, "Sky stars", "Distant stars in the world sky.", ambience.worldStars.get(), () -> ambience.worldStars.set(!ambience.worldStars.get()), dt);
+        y = toggle(r, y, "Floating motes", "Nearby drifting starlight with depth and terrain occlusion.", ambience.worldMotes.get(), () -> ambience.worldMotes.set(!ambience.worldMotes.get()), dt);
+        y = slider(r, y, "Star brightness", ambience.starBrightness.get() / 2, percent(ambience.starBrightness.get()), v -> ambience.starBrightness.set(v * 2), dt);
         y = toggle(r, y, "Accent fog", "Tint distant haze while keeping nearby blocks readable.", ambience.accentFog.get(), () -> ambience.accentFog.set(!ambience.accentFog.get()), dt);
         y = slider(r, y, "Fog amount", ambience.fogAmount.get(), percent(ambience.fogAmount.get()), ambience.fogAmount::set, dt);
         y = toggle(r, y, "Ground lighting", "Soft light on nearby ground, in the current accent color.", ambience.groundLight.get(), () -> ambience.groundLight.set(!ambience.groundLight.get()), dt);
         y = slider(r, y, "Light brightness", ambience.groundLightIntensity.get(), percent(ambience.groundLightIntensity.get()), ambience.groundLightIntensity::set, dt);
         y = slider(r, y, "Light radius", (ambience.groundLightRadius.get() - 1.5) / 5.5, String.format("%.1f blocks", ambience.groundLightRadius.get()), v -> ambience.groundLightRadius.set(1.5 + v * 5.5), dt);
         y = slider(r, y, "Light shimmer", ambience.lightShimmer.get(), percent(ambience.lightShimmer.get()), ambience.lightShimmer::set, dt);
+        y = section(r, y, "BASS REACTION", meteordevelopment.meteorclient.utils.misc.MusicReactive.status());
+        y = toggle(r, y, "React to music", "Windows desktop output. Game and system sounds can also trigger it.", ambience.musicReactive.get(), () -> ambience.musicReactive.set(!ambience.musicReactive.get()), dt);
+        if (ambience.musicReactive.get()) {
+            double bassLevel = meteordevelopment.meteorclient.utils.misc.MusicReactive.level();
+            label(r, "Bass level", contentX + 2, y + 4, 0.72, EmberUI.TEXT, contentW / 3);
+            r.roundedRect(contentX + contentW * 0.34, y + 6, contentW * 0.66 - 5, 8, 4, EmberUI.WELL);
+            if (bassLevel > 0.001) r.roundedRect(contentX + contentW * 0.34, y + 6, (contentW * 0.66 - 5) * bassLevel, 8, 4, EmberPalette.accent());
+            y += 30;
+            double modeW = contentW / 2;
+            for (var mode : Config.BassMode.values()) action(r, contentX + modeW * mode.ordinal(), y, modeW - 5, 34,
+                mode.toString(), () -> ambience.bassMode.set(mode), ambience.bassMode.get() == mode, dt);
+            y += 46;
+            y = slider(r, y, "Effect strength", ambience.bassStrength.get(), percent(ambience.bassStrength.get()), ambience.bassStrength::set, dt);
+            y = slider(r, y, "Bass sensitivity", (ambience.bassSensitivity.get() - 0.1) / 3.9, String.format("%.1fx", ambience.bassSensitivity.get()), v -> ambience.bassSensitivity.set(0.1 + v * 3.9), dt);
+            y = slider(r, y, "Fade smoothing", (ambience.bassSmoothing.get() - 0.08) / 1.42, String.format("%.2fs", ambience.bassSmoothing.get()), v -> ambience.bassSmoothing.set(0.08 + v * 1.42), dt);
+            y = toggle(r, y, "React sky & fog", "Darken or brighten the accent sky and its matching horizon.", ambience.bassSky.get(), () -> ambience.bassSky.set(!ambience.bassSky.get()), dt);
+            y = toggle(r, y, "React world lighting", "Apply bass to daylight. Requires Match world lighting.", ambience.bassLighting.get(), () -> ambience.bassLighting.set(!ambience.bassLighting.get()), dt);
+            y = toggle(r, y, "React ground light", "Apply bass to colored light on nearby terrain.", ambience.bassGround.get(), () -> ambience.bassGround.set(!ambience.bassGround.get()), dt);
+            y = toggle(r, y, "React starlight", "Gently pulse stars and motes on bass hits.", ambience.bassStars.get(), () -> ambience.bassStars.set(!ambience.bassStars.get()), dt);
+        }
         y += 12;
         if (EmberAppearance.frosted()) {
             y = section(r, y, "GLASS DETAILS", "Fine-tune the surface against your game background.");
@@ -195,6 +226,15 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             if (EmberAppearance.liquid()) y = slider(r, y, "Animation speed", c.liquidMotion.get() / 2, percent(c.liquidMotion.get()), v -> c.liquidMotion.set(v * 2), dt);
         }
         return y;
+    }
+
+    private static void lightingPreset(int preset) {
+        Config c = Config.get();
+        c.worldLighting.set(preset != 0);
+        c.vanillaLightMix.set(preset == 0 ? 1.0 : preset == 1 ? 0.45 : 0.0);
+        c.worldDarkness.set(preset == 0 ? 0.0 : preset == 1 ? 0.18 : 0.65);
+        c.worldLightTint.set(preset == 0 ? 0.0 : preset == 1 ? 0.35 : 0.9);
+        c.daylightBrightness.set(preset == 2 ? 0.8 : 1.0);
     }
 
     private double typography(GuiRenderer r, double y, double dt) {

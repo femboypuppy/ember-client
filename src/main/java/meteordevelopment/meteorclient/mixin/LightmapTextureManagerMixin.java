@@ -13,8 +13,6 @@ import meteordevelopment.meteorclient.systems.modules.render.Fullbright;
 import meteordevelopment.meteorclient.systems.modules.render.NoRender;
 import meteordevelopment.meteorclient.systems.modules.render.Xray;
 import meteordevelopment.meteorclient.utils.render.EmberWorldAtmosphere;
-import meteordevelopment.meteorclient.utils.render.CelestialLighting;
-import meteordevelopment.meteorclient.systems.config.Config;
 import net.minecraft.client.render.LightmapTextureManager;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.util.math.ColorHelper;
@@ -43,12 +41,12 @@ public abstract class LightmapTextureManagerMixin {
 
     @ModifyArg(method = "update", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/buffers/Std140Builder;putFloat(F)Lcom/mojang/blaze3d/buffers/Std140Builder;", ordinal = 1))
     private float ember$skyBrightness(float original) {
-        return EmberWorldAtmosphere.lightingEnabled() ? CelestialLighting.skyFactor(original, Config.get().worldDarkness.get()) : original;
+        return EmberWorldAtmosphere.lightingEnabled() ? EmberWorldAtmosphere.daylight(original) : original;
     }
 
     @ModifyArg(method = "update", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/buffers/Std140Builder;putFloat(F)Lcom/mojang/blaze3d/buffers/Std140Builder;", ordinal = 6))
     private float ember$gamma(float original) {
-        return EmberWorldAtmosphere.lightingEnabled() ? CelestialLighting.gamma(original, Config.get().worldDarkness.get()) : original;
+        return EmberWorldAtmosphere.lightingEnabled() ? EmberWorldAtmosphere.gamma(original) : original;
     }
 
     @ModifyArg(method = "update", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/buffers/Std140Builder;putVec3(Lorg/joml/Vector3fc;)Lcom/mojang/blaze3d/buffers/Std140Builder;", ordinal = 0))

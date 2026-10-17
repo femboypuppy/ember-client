@@ -9,6 +9,7 @@ public final class CelestialVisualChecks {
         terrainSurfaces();
         worldAtmosphere();
         worldLighting();
+        meteordevelopment.meteorclient.utils.misc.MusicReactionChecks.run();
         var mesh = new CelestialMesh(90000);
         for (var style : CelestialGeometry.WingStyle.values()) {
             for (double time : new double[]{0, 0.1, 1.2, 10000}) {

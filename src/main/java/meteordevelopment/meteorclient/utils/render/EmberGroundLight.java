@@ -7,6 +7,7 @@ import meteordevelopment.meteorclient.renderer.MeteorRenderPipelines;
 import meteordevelopment.meteorclient.renderer.Renderer3D;
 import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.utils.PostInit;
+import meteordevelopment.meteorclient.utils.misc.MusicReactive;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.util.math.BlockPos;
@@ -92,7 +93,7 @@ public final class EmberGroundLight {
         var center = mc.player.getLerpedPos(event.tickDelta);
         var tint = EmberPalette.accent();
         int rgb = (tint.r << 16) | (tint.g << 8) | tint.b;
-        double strength = config.groundLightIntensity.get() * 0.44;
+        double strength = config.groundLightIntensity.get() * 0.44 * MusicReactive.exposure(config.bassGround.get());
         if (strength <= 0.001) return;
         MESH.clear();
         for (var tile : TILES) {

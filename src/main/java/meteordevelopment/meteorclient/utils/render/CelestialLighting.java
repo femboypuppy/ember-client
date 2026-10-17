@@ -9,6 +9,13 @@ public final class CelestialLighting {
     public static float gamma(float original, double darkness) {
         return Math.clamp(original, 0, 0.7f) * (float) (1 - 0.85 * Math.clamp(darkness, 0, 1));
     }
+    public static float mixedGamma(float original, double darkness, double blend) {
+        return original + (gamma(original, darkness) - original) * (float) Math.clamp(blend, 0, 1);
+    }
+    public static float illumination(float original, double darkness, double brightness, double blend, double reaction) {
+        double custom = skyFactor(original, darkness) * Math.clamp(brightness, 0.2, 1.6) * Math.clamp(reaction, 0.4, 1.65);
+        return (float) (original + (custom - original) * Math.clamp(blend, 0, 1));
+    }
     public static float channel(float original, int accentChannel, int accentMaximum, float luminance, double strength) {
         float target = (0.08f + 0.92f * accentChannel / 255f) / (0.08f + 0.92f * accentMaximum / 255f) * luminance;
         return original + (target - original) * (float) Math.clamp(strength, 0, 1);

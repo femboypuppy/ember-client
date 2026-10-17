@@ -133,6 +133,14 @@ val checkMeshCapacity by tasks.registering(JavaExec::class) {
 }
 tasks.named("check") { dependsOn(checkMeshCapacity) }
 
+// Optional integration check: briefly reads Windows desktop output. Not part of ordinary builds.
+val checkDesktopAudio by tasks.registering(JavaExec::class) {
+    dependsOn(tasks.named("lyricsChecksClasses"))
+    classpath = sourceSets["lyricsChecks"].runtimeClasspath
+    mainClass.set("meteordevelopment.meteorclient.utils.misc.DesktopAudioChecks")
+    enableAssertions = true
+}
+
 java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21

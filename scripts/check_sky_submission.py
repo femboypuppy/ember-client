@@ -23,8 +23,10 @@ while depth:
     depth += (source[end] == "{") - (source[end] == "}")
     end += 1
 method = source[start:end]
-environment = source[source.index("    private static boolean enabled()"):
-                     source.index("    public static int lightingState()")]
+environment_end = source.find("    public static double lightBlend()")
+if environment_end == -1:
+    environment_end = source.index("    public static int lightingState()")
+environment = source[source.index("    private static boolean enabled()"):environment_end]
 
 HARNESS = r'''
 import java.util.*;
@@ -64,9 +66,11 @@ public class SkySubmissionChecks {
     static class Config {
         static final Config INSTANCE = new Config();
         final Setting<Boolean> ambience = new Setting<>(true), worldAtmosphere = new Setting<>(true),
-            accentFog = new Setting<>(true), accentSky = new Setting<>(true), worldLighting = new Setting<>(true);
+            accentFog = new Setting<>(true), accentSky = new Setting<>(true), worldLighting = new Setting<>(true),
+            musicReactive = new Setting<>(false), bassLighting = new Setting<>(true);
         final Setting<Double> fogAmount = new Setting<>(0.5), skyIntensity = new Setting<>(0.85),
-            worldDarkness = new Setting<>(0.42), worldLightTint = new Setting<>(0.8);
+            worldDarkness = new Setting<>(0.42), worldLightTint = new Setting<>(0.8),
+            vanillaLightMix = new Setting<>(0.0), daylightBrightness = new Setting<>(1.0);
         static Config get() { return INSTANCE; }
     }
     static class Dimension {
@@ -162,6 +166,8 @@ public class SkySubmissionChecks {
         require(!skyActive() && fogEnabled() && lightingEnabled()); Config.INSTANCE.accentSky.value = true;
         Config.INSTANCE.accentFog.value = false;
         require(!fogEnabled() && skyActive()); Config.INSTANCE.accentFog.value = true;
+        Config.INSTANCE.vanillaLightMix.value = 1.0;
+        require(!lightingEnabled() && skyActive()); Config.INSTANCE.vanillaLightMix.value = 0.0;
         mc.world.dimension.skylight = false;
         require(!openSky()); mc.world.dimension.skylight = true;
         mc.world = null; require(!openSky()); mc.world = new World();
