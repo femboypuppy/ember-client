@@ -47,7 +47,7 @@ public class NotebotCommand extends Command {
     @Override
     public void build(LiteralArgumentBuilder<CommandSource> builder) {
         builder.then(literal("help").executes(ctx -> {
-            Util.getOperatingSystem().open("https://github.com/MeteorDevelopment/meteor-client/wiki/Notebot-Guide");
+            info("Put .nbs or .txt songs in the ember-client/notebot folder, then play one with .notebot play <song>.");
             return SINGLE_SUCCESS;
         }));
 

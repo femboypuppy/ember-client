@@ -1,5 +1,5 @@
 #version 330 core
-#moj_import <meteor-client:materials.glsl>
+#moj_import <ember-client:materials.glsl>
 in vec2 v_TexCoord;
 in vec4 v_Color;
 layout(std140) uniform MaterialData { vec4 material; vec4 tint; };

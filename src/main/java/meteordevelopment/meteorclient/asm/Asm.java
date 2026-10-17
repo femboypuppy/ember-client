@@ -40,7 +40,7 @@ public class Asm {
     public static void init() {
         if (INSTANCE != null) return;
 
-        INSTANCE = new Asm(System.getProperty("meteor.asm.export") != null);
+        INSTANCE = new Asm(System.getProperty("ember.asm.export") != null);
         INSTANCE.add(new PacketInflaterTransformer());
     }
 
@@ -71,7 +71,7 @@ public class Asm {
     private void export(String name, byte[] bytes) {
         if (export) {
             try {
-                Path path = Path.of(FabricLoader.getInstance().getGameDir().toString(), ".meteor.asm.out", name.replace('.', '/') + ".class");
+                Path path = Path.of(FabricLoader.getInstance().getGameDir().toString(), ".ember.asm.out", name.replace('.', '/') + ".class");
                 new File(path.toUri()).getParentFile().mkdirs();
                 Files.write(path, bytes);
             } catch (IOException e) {

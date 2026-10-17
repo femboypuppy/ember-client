@@ -24,7 +24,7 @@ import java.util.List;
 public abstract class CrashReportMixin {
     @Inject(method = "addDetails", at = @At("TAIL"))
     private void onAddDetails(StringBuilder sb, CallbackInfo info) {
-        sb.append("\n\n-- Meteor Client --\n\n");
+        sb.append("\n\n-- " + MeteorClient.NAME + " --\n\n");
         sb.append("Version: ").append(MeteorClient.VERSION).append("\n");
         if (!MeteorClient.BUILD_NUMBER.isEmpty()) {
             sb.append("Build: ").append(MeteorClient.BUILD_NUMBER).append("\n");

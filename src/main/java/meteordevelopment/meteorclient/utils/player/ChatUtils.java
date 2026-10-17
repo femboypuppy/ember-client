@@ -42,7 +42,7 @@ public class ChatUtils {
         PREFIX = Text.empty()
             .setStyle(Style.EMPTY.withFormatting(Formatting.GRAY))
             .append("[")
-            .append(Text.literal("Meteor").setStyle(Style.EMPTY.withColor(TextColor.fromRgb(MeteorClient.ADDON.color.getPacked()))))
+            .append(Text.literal("Ember").setStyle(Style.EMPTY.withColor(TextColor.fromRgb(MeteorClient.ADDON.color.getPacked()))))
             .append("] ");
     }
 
@@ -272,7 +272,7 @@ public class ChatUtils {
             .replace("(bold)", "")
             .replace("(underline)", "")
             .trim();
-        if (s.startsWith("[Meteor]")) s = s.substring("[Meteor]".length()).trim();
+        if (s.startsWith("[Ember]")) s = s.substring("[Ember]".length()).trim();
         return s;
     }
 

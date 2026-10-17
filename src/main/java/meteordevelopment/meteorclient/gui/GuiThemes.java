@@ -36,6 +36,10 @@ public class GuiThemes {
 
     @PostInit
     public static void postInit() {
+        // The theme was renamed; its saved settings follow once.
+        File legacy = new File(THEMES_FOLDER, "Meteor.nbt"), current = new File(THEMES_FOLDER, "Ember.nbt");
+        if (legacy.exists() && !current.exists() && !legacy.renameTo(current)) MeteorClient.LOG.warn("Couldn't rename {}", legacy);
+
         if (FILE.exists()) {
             try {
                 NbtCompound tag = NbtIo.read(FILE.toPath());
@@ -46,7 +50,7 @@ public class GuiThemes {
             }
         }
 
-        if (theme == null) select("Meteor");
+        if (theme == null) select("Ember");
     }
 
     public static void add(GuiTheme theme) {

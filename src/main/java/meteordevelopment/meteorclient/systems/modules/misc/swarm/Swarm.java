@@ -50,7 +50,7 @@ public class Swarm extends Module {
     public SwarmWorker worker;
 
     public Swarm() {
-        super(Categories.Misc, "swarm", "Allows you to control multiple instances of Meteor from one central host.");
+        super(Categories.Misc, "swarm", "Allows you to control multiple instances of Ember from one central host.");
     }
 
     @Override
@@ -70,9 +70,6 @@ public class Swarm extends Module {
 
         WButton stop = b.add(theme.button("Stop")).expandX().widget();
         stop.action = this::close;
-
-        WButton guide = list.add(theme.button("Guide")).expandX().widget();
-        guide.action = () -> Util.getOperatingSystem().open("https://github.com/MeteorDevelopment/meteor-client/wiki/Swarm-Guide");
 
         return list;
     }

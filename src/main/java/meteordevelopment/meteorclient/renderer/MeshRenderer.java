@@ -160,8 +160,8 @@ public class MeshRenderer {
                 GpuBufferSlice meshData = MeshUniforms.write(RenderUtils.projection, RenderSystem.getModelViewStack());
 
                 RenderPass pass = (depthAttachment != null && pipeline.wantsDepthTexture()) ?
-                    RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Meteor MeshRenderer", colorAttachment, clearColor, depthAttachment, OptionalDouble.empty()) :
-                    RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Meteor MeshRenderer", colorAttachment, clearColor);
+                    RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Ember MeshRenderer", colorAttachment, clearColor, depthAttachment, OptionalDouble.empty()) :
+                    RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Ember MeshRenderer", colorAttachment, clearColor);
 
                 pass.setPipeline(pipeline);
                 pass.setUniform("MeshData", meshData);

@@ -98,7 +98,7 @@ public final class MusicReactive {
     }
     private static Path executable() throws Exception {
         byte[] source;
-        try (var input = MusicReactive.class.getResourceAsStream("/assets/meteor-client/audio/EmberAudio.cs")) {
+        try (var input = MusicReactive.class.getResourceAsStream("/assets/" + MeteorClient.MOD_ID + "/audio/EmberAudio.cs")) {
             if (input == null) throw new IllegalStateException("Audio helper resource missing");
             source = input.readAllBytes();
         }

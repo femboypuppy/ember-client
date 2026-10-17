@@ -26,7 +26,7 @@ public record GithubRepo(String owner, String name, String branch, @Nullable Str
         if (this.accessToken != null && !this.accessToken.isBlank()) {
             request.bearer(this.accessToken);
         } else {
-            String personalAuthToken = System.getenv("meteor.github.authorization");
+            String personalAuthToken = System.getenv("ember.github.authorization");
             if (personalAuthToken != null && !personalAuthToken.isBlank()) {
                 request.bearer(personalAuthToken);
             }

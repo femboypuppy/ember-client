@@ -86,8 +86,8 @@ public class Blur extends Module {
     // Screens
 
     private final Setting<Boolean> meteor = sgScreens.add(new BoolSetting.Builder()
-        .name("meteor")
-        .description("Applies blur to Meteor screens.")
+        .name("client-screens")
+        .description("Applies blur to Ember screens.")
         .defaultValue(true)
         .build());
 
@@ -264,7 +264,7 @@ public class Blur extends Module {
         .putFloat()
         .get();
 
-    private static final FixedUniformStorage<BlurUniformData> UNIFORM_STORAGE = new FixedUniformStorage<>("Meteor - Blur UBO", UNIFORM_SIZE, 6);
+    private static final FixedUniformStorage<BlurUniformData> UNIFORM_STORAGE = new FixedUniformStorage<>("Ember - Blur UBO", UNIFORM_SIZE, 6);
 
     private record BlurUniformData(float halfTexelSizeX, float halfTexelSizeY, float offset) implements DynamicUniformStorage.Uploadable {
         @Override

@@ -20,7 +20,7 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 import static org.lwjgl.system.MemoryUtil.*;
 
 public class MeshBuilder {
-    private static final boolean DEBUG = FabricLoader.getInstance().isDevelopmentEnvironment() || Boolean.getBoolean("meteor.render.debug");
+    private static final boolean DEBUG = FabricLoader.getInstance().isDevelopmentEnvironment() || Boolean.getBoolean("ember.render.debug");
 
     public double alpha = 1;
 

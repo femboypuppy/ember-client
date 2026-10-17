@@ -27,7 +27,7 @@ public class ProfileArgumentType implements ArgumentType<String> {
     private static final ProfileArgumentType INSTANCE = new ProfileArgumentType();
     private static final DynamicCommandExceptionType NO_SUCH_PROFILE = new DynamicCommandExceptionType(name -> Text.literal("Profile with name " + name + " doesn't exist."));
 
-    private static final Collection<String> EXAMPLES = List.of("pvp.meteorclient.com", "anarchy");
+    private static final Collection<String> EXAMPLES = List.of("donutsmp.net", "anarchy");
 
     public static ProfileArgumentType create() {
         return INSTANCE;

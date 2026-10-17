@@ -43,10 +43,13 @@ import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.MixinEnvironment;
 
 import java.io.File;
+import java.io.IOException;
 import java.lang.invoke.MethodHandles;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public class MeteorClient implements ClientModInitializer {
-    public static final String MOD_ID = "meteor-client";
+    public static final String MOD_ID = "ember-client";
     public static final ModMetadata MOD_META;
     public static final String NAME;
     public static final Version VERSION;
@@ -57,8 +60,26 @@ public class MeteorClient implements ClientModInitializer {
 
     public static MinecraftClient mc;
     public static final IEventBus EVENT_BUS = new EventBus();
-    public static final File FOLDER = FabricLoader.getInstance().getGameDir().resolve(MOD_ID).toFile();
+    public static final File FOLDER = dataFolder();
     public static final Logger LOG;
+
+    /**
+     * The client's folder in the game directory. Installs from before the rename keep their data in
+     * "meteor-client", which moves over once; if it can't (a file in use), that folder keeps being used.
+     */
+    private static File dataFolder() {
+        Path game = FabricLoader.getInstance().getGameDir();
+        Path folder = game.resolve(MOD_ID);
+        Path legacy = game.resolve("meteor-client");
+        if (!Files.exists(folder) && Files.isDirectory(legacy)) {
+            try {
+                Files.move(legacy, folder);
+            } catch (IOException e) {
+                return legacy.toFile();
+            }
+        }
+        return folder.toFile();
+    }
 
     static {
         MOD_META = FabricLoader.getInstance().getModContainer(MOD_ID).orElseThrow().getMetadata();

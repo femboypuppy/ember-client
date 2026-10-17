@@ -18,7 +18,7 @@ public class AddonManager {
     public static final List<MeteorAddon> ADDONS = new ArrayList<>();
 
     public static void init() {
-        // Meteor pseudo addon
+        // The client itself, listed like an addon
         {
             MeteorClient.ADDON = new MeteorAddon() {
                 @Override
@@ -31,12 +31,12 @@ public class AddonManager {
 
                 @Override
                 public String getWebsite() {
-                    return "https://meteorclient.com";
+                    return null;
                 }
 
                 @Override
                 public GithubRepo getRepo() {
-                    return new GithubRepo("MeteorDevelopment", "meteor-client");
+                    return null;
                 }
 
                 @Override

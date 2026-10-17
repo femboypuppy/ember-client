@@ -1,7 +1,7 @@
 #version 330
 #moj_import <minecraft:globals.glsl>
 #moj_import <minecraft:fog.glsl>
-#moj_import <meteor-client:materials.glsl>
+#moj_import <ember-client:materials.glsl>
 in vec2 surfaceUV;
 in vec4 surfaceColor;
 in float surfaceLight;

@@ -182,7 +182,7 @@ afterEvaluate {
 }
 
 loom {
-    accessWidenerPath = file("src/main/resources/meteor-client.accesswidener")
+    accessWidenerPath = file("src/main/resources/ember-client.accesswidener")
 }
 
 tasks {

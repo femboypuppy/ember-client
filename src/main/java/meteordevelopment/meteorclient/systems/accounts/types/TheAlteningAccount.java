@@ -72,7 +72,7 @@ public class TheAlteningAccount extends Account<TheAlteningAccount> implements T
         WaybackAuthLib auth = new WaybackAuthLib(ENVIRONMENT.servicesHost());
 
         auth.setUsername(name);
-        auth.setPassword("Meteor on Crack!");
+        auth.setPassword("Ember");
 
         return auth;
     }

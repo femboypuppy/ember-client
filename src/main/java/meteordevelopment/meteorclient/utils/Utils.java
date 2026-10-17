@@ -84,7 +84,7 @@ public class Utils {
     public static double frameTime;
     public static Screen screenToOpen;
 
-    private static final ProjectionMatrix2 matrix = new ProjectionMatrix2("meteor-projection-matrix", -10, 100, true);
+    private static final ProjectionMatrix2 matrix = new ProjectionMatrix2("ember-projection-matrix", -10, 100, true);
 
     private Utils() {
     }

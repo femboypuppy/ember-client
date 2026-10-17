@@ -20,25 +20,19 @@ public class Main {
 
         int option = JOptionPane.showOptionDialog(
             null,
-            "To install Meteor Client you need to put it in your mods folder and run Fabric for latest Minecraft version.",
-            "Meteor Client",
+            "To install Ember Client, put it in your mods folder and start Minecraft 1.21.11 with Fabric.",
+            "Ember Client",
             JOptionPane.YES_NO_OPTION,
-            JOptionPane.ERROR_MESSAGE,
+            JOptionPane.INFORMATION_MESSAGE,
             null,
-            new String[]{"Open Wiki", "Open Mods Folder"},
+            new String[]{"Open Mods Folder", "Close"},
             null
         );
 
-        switch (option) {
-            case 0:
-                getOS().open("https://meteorclient.com/faq/installation");
-                break;
-            case 1: {
-                File mods = new File(getModsFolder());
-                if (!mods.exists()) mods.mkdirs();
-                getOS().open(mods);
-                break;
-            }
+        if (option == 0) {
+            File mods = new File(getModsFolder());
+            if (!mods.exists()) mods.mkdirs();
+            getOS().open(mods);
         }
     }
 

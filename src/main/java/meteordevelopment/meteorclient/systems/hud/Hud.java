@@ -29,7 +29,7 @@ import java.util.*;
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class Hud extends System<Hud> implements Iterable<HudElement> {
-    public static final HudGroup GROUP = new HudGroup("Meteor");
+    public static final HudGroup GROUP = new HudGroup("Ember");
 
     /**
      * Bumped when the default layout changes in a way that must replace older saved ones.
@@ -67,7 +67,7 @@ public class Hud extends System<Hud> implements Iterable<HudElement> {
 
     private final Setting<Boolean> hideInMenus = sgGeneral.add(new BoolSetting.Builder()
         .name("hide-in-menus")
-        .description("Hides the meteor hud when in inventory screens or game menus.")
+        .description("Hides the HUD when in inventory screens or game menus.")
         .defaultValue(false)
         .build()
     );

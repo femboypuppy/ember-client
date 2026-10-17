@@ -38,7 +38,7 @@ public class TitleScreenCredits {
         // Add addons
         for (MeteorAddon addon : AddonManager.ADDONS) add(addon);
 
-        // Sort by width (Meteor always first)
+        // Sort by width (the client itself always first)
         credits.sort(Comparator.comparingInt(value -> value.addon == MeteorClient.ADDON ? Integer.MIN_VALUE : -mc.textRenderer.getWidth(value.text)));
 
         // Check for latest commits
@@ -58,9 +58,9 @@ public class TitleScreenCredits {
                         MeteorToast toast = new MeteorToast.Builder("GitHub: Unauthorized").icon(Items.BARRIER).text(message).build();
                         mc.getToastManager().add(toast);
                         MeteorClient.LOG.warn(message);
-                        if (System.getenv("meteor.github.authorization") == null) {
+                        if (System.getenv("ember.github.authorization") == null) {
                             MeteorClient.LOG.info("Consider setting an authorization " +
-                                "token with the 'meteor.github.authorization' environment variable.");
+                                "token with the 'ember.github.authorization' environment variable.");
                             MeteorClient.LOG.info("See: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens");
                         }
                     }
@@ -83,6 +83,11 @@ public class TitleScreenCredits {
         Credit credit = new Credit(addon);
 
         credit.text.append(Text.literal(addon.name).styled(style -> style.withColor(addon.color.getPacked())));
+        // The client itself is just its name; addons keep their authors.
+        if (addon == MeteorClient.ADDON) {
+            credits.add(credit);
+            return;
+        }
         credit.text.append(Text.literal(" by ").formatted(Formatting.GRAY));
 
         for (int i = 0; i < addon.authors.length; i++) {

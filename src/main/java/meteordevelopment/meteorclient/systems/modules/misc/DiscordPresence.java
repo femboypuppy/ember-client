@@ -47,7 +47,7 @@ public class DiscordPresence extends Module {
     }
 
     /** Meteor's own application, used while no Ember application id is set. */
-    private static final long FALLBACK_APP_ID = 835240968533049424L;
+    private static final long FALLBACK_APP_ID = 1548430667786878986L;
 
     private final SettingGroup sgApp = settings.createGroup("Discord App");
     private final SettingGroup sgLine1 = settings.createGroup("Line 1");
@@ -57,7 +57,7 @@ public class DiscordPresence extends Module {
 
     private final Setting<String> appId = sgApp.add(new StringSetting.Builder()
         .name("application-id")
-        .description("Your Discord application id, from discord.com/developers. Leave empty to fall back to Meteor's app.")
+        .description("Your Discord application id, from discord.com/developers. Leave empty to use Ember's app.")
         .defaultValue("1548430667786878986")
         .onChanged(id -> restartIpc())
         .build()
@@ -318,10 +318,7 @@ public class DiscordPresence extends Module {
 
     @Override
     public WWidget getWidget(GuiTheme theme) {
-        WButton help = theme.button("Open documentation.");
-        help.action = () -> Util.getOperatingSystem().open("https://github.com/MeteorDevelopment/meteor-client/wiki/Starscript");
-
-        return help;
+        return null;
     }
 
     /** Falls back to Meteor's application if the id is blank or not a number. */

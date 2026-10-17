@@ -1,20 +1,14 @@
 {
   "schemaVersion": 1,
   "name": "Ember Client",
-  "id": "meteor-client",
+  "id": "ember-client",
   "version": "${version}",
   "description": "Modern utility mod.",
   "authors": [
     "catboy"
   ],
-  "contact": {
-    "homepage": "https://meteorclient.com",
-    "issues": "https://github.com/MeteorDevelopment/meteor-client/issues",
-    "sources": "https://github.com/MeteorDevelopment/meteor-client",
-    "discord": "https://meteorclient.com/discord"
-  },
   "license": "GPL-3.0",
-  "icon": "assets/meteor-client/icon.png",
+  "icon": "assets/ember-client/icon.png",
   "environment": "client",
   "entrypoints": {
     "client": [
@@ -25,23 +19,18 @@
     ]
   },
   "mixins": [
-    "meteor-client.mixins.json",
-    "meteor-client-baritone.mixins.json",
-    "meteor-client-indigo.mixins.json",
-    "meteor-client-sodium.mixins.json",
-    "meteor-client-lithium.mixins.json",
-    "meteor-client-viafabricplus.mixins.json"
+    "ember-client.mixins.json",
+    "ember-client-baritone.mixins.json",
+    "ember-client-indigo.mixins.json",
+    "ember-client-sodium.mixins.json",
+    "ember-client-lithium.mixins.json",
+    "ember-client-viafabricplus.mixins.json"
   ],
-  "accessWidener": "meteor-client.accesswidener",
+  "accessWidener": "ember-client.accesswidener",
   "custom": {
-    "meteor-client:build_number": "${build_number}",
-    "meteor-client:color": "145,61,226",
-    "meteor-client:commit": "${commit}",
-    "modmenu": {
-      "links": {
-        "modmenu.discord": "https://meteorclient.com/discord"
-      }
-    },
+    "ember-client:build_number": "${build_number}",
+    "ember-client:color": "255,106,43",
+    "ember-client:commit": "${commit}",
     "badoptimizations:cache_hooks": {
       "lightmap": "meteordevelopment.meteorclient.modintegration.BadOptimizationsHook"
     }
