@@ -50,6 +50,7 @@ Minecraft. The Spicy Lyrics client key is required with either connection method
 ## Timing and checks
 
 Pause freezes the highlight; seeking and changing tracks replace the timeline.
+Small Spotify polling discrepancies correct gradually without reversing playback.
 The last lead phrase stays on screen through breaths and instrumentals instead
 of flashing the song title. New lines slide and crossfade at a fixed font size;
 long phrases scroll continuously with the vocal timing. Short phrases stay still.

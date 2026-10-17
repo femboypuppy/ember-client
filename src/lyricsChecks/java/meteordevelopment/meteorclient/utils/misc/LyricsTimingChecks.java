@@ -16,6 +16,13 @@ public final class LyricsTimingChecks {
         require(sought.positionAt(sampled + 1_100_000_000L) == 300, "A seek must replace the old clock");
         PlaybackClock corrected = playing.corrected(2050, 5000, true, sampled + 1_000_000_000L);
         require(corrected.positionMs() > 2200 && corrected.positionMs() <= 2250, "Small polling jitter must not rewind the full playback error");
+        require(corrected.positionAt(sampled + 1_000_000_000L) == 2250, "A polling correction must be continuous at receipt");
+        long previousPosition = corrected.positionMs();
+        for (int i = 1; i <= 1000; i++) {
+            long next = corrected.positionAt(sampled + 1_000_000_000L + i * 1_000_000L);
+            require(next >= previousPosition, "Clock correction must never reverse a lyric boundary");
+            previousPosition = next;
+        }
         require(playing.corrected(200, 5000, true, sampled + 1_000_000_000L).positionMs() == 200, "Real seeks must bypass smoothing");
         require(playing.corrected(2050, 5000, false, sampled + 1_000_000_000L).positionMs() == 2050, "Pausing must use the reported position immediately");
         require(paused.corrected(1600, 5000, true, sampled + 1_000_000_000L).positionMs() == 1600, "Resuming must establish a fresh position");

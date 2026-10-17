@@ -287,7 +287,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     private void action(GuiRenderer r, double x, double y, double w, double h, String title, Runnable action, boolean primary, double dt) {
         double amount = anim("button-" + title, hovered(x, y, w, h) ? 1 : 0, dt);
         r.roundedRect(x, y, w, h, 7, primary ? accent((int) (85 + amount * 35)) : new Color(45, 47, 56, (int) (185 + amount * 50)));
-        label(r, title, x + 10, y + (h - 17) / 2, 0.77, EmberUI.TEXT, w - 20);
+        double pad = w < 40 ? 7 : 10;
+        label(r, title, x + pad, y + (h - 17) / 2, 0.77, EmberUI.TEXT, w - 2 * pad);
         hits.add(new Hit(x, y, w, h, () -> { commitField(); dragging = null; action.run(); }));
     }
 
