@@ -8,6 +8,8 @@ package meteordevelopment.meteorclient.renderer;
 import com.mojang.blaze3d.pipeline.BlendFunction;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.platform.DepthTestFunction;
+import com.mojang.blaze3d.platform.SourceFactor;
+import com.mojang.blaze3d.platform.DestFactor;
 import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
@@ -83,6 +85,18 @@ public abstract class MeteorRenderPipelines {
         .withCull(false)
         .build()
     );
+
+    /** Colored ground illumination brightens the scene instead of painting over its texture. */
+    public static final RenderPipeline WORLD_ACCENT_LIGHT = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)
+        .withLocation(MeteorClient.identifier("pipeline/world_accent_light"))
+        .withVertexFormat(VertexFormats.POSITION_COLOR, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexShader(MeteorClient.identifier("shaders/pos_color.vert"))
+        .withFragmentShader(MeteorClient.identifier("shaders/pos_color.frag"))
+        .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST)
+        .withDepthWrite(false)
+        .withBlend(new BlendFunction(SourceFactor.SRC_ALPHA, DestFactor.ONE))
+        .withCull(false)
+        .build());
 
     // UI
 

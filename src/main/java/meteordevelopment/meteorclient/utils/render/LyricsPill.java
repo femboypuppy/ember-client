@@ -18,12 +18,12 @@ public final class LyricsPill {
     public record Size(double width, double height) {}
     private record CreditHit(double x, double y, double w, double h, String url) {}
     private static final EmberAnim.Clock CLOCK = new EmberAnim.Clock();
+    private static final LyricsDetails DETAILS = new LyricsDetails();
     private static final Lane LEAD = new Lane();
     private static final Lane[] BACKING = {new Lane(), new Lane()};
     private static String track = "";
     private static boolean mouseDown;
     private static double lastSeconds = Double.NaN, width, backingHeight;
-    private static long creditsStarted = System.nanoTime();
 
     private LyricsPill() {}
 
@@ -31,16 +31,17 @@ public final class LyricsPill {
         Config config = Config.get();
         if (!config.lyricsEnabled.get() || availableWidth < 140 * s) return new Size(0, 0);
         double dt = CLOCK.tick();
-        SpicyLyricsService.Result result = SpicyLyricsService.update();
-        SpotifyPlayback.Playback playback = SpotifyPlayback.current();
-        LyricsTimeline timeline = playback != null && playback.trackId().equals(result.trackId()) ? result.timeline() : null;
-        String id = playback == null ? "" : playback.trackId();
-        double seconds = playback == null ? 0 : (playback.positionMs() + config.lyricsOffset.get()) / 1000.0;
+        MusicPlayback.Playback playback = MusicPlayback.current();
+        MusicLyricsService.Result result = MusicLyricsService.update(playback);
+        LyricsTimeline timeline = playback != null && playback.key().equals(result.trackKey()) ? result.timeline() : null;
+        String id = playback == null ? "" : playback.key();
+        long positionMs = playback == null ? 0 : playback.positionMs();
+        double seconds = (positionMs + config.lyricsOffset.get()) / 1000.0;
         boolean changedTrack = !id.equals(track);
         boolean seek = changedTrack || !Double.isFinite(lastSeconds) || seconds < lastSeconds - 0.15 || seconds > lastSeconds + 1;
         if (changedTrack) {
             LEAD.reset(); for (Lane lane : BACKING) lane.reset();
-            track = id; width = 0; backingHeight = 0; creditsStarted = System.nanoTime();
+            track = id; width = 0; backingHeight = 0;
         }
         lastSeconds = seconds;
         boolean animate = !EmberAppearance.liquid() || EmberAppearance.motion() > 0;
@@ -54,7 +55,7 @@ public final class LyricsPill {
             var next = lane.line != null && backing.contains(lane.line) ? lane.line : pending.isEmpty() ? null : pending.removeFirst();
             lane.prepare(r, next, bs, dt, seek, animate);
         }
-        String title = playback != null ? playback.title() : MediaInfo.isAvailable() ? MediaInfo.getTitle() : "Spotify lyrics";
+        String title = playback != null ? playback.title() : MediaInfo.isAvailable() ? MediaInfo.getTitle() : "Music lyrics";
         double measured = line == null ? r.textWidth(title, false, ts) : LEAD.measuredWidth();
         double totalPresence = 0;
         double[] presence = new double[BACKING.length];
@@ -67,18 +68,23 @@ public final class LyricsPill {
         double targetW = LyricMotion.fittedWidth(measured, maxW, pad, s);
         width = width == 0 || seek || !animate ? targetW : EmberAnim.approach(width, targetW, dt, 0.105);
         double w = Math.min(maxW, width), inner = w - 2 * pad;
-        double leadH = Math.max(baseHeight, r.textHeight(false, ts) + 11 * s);
+        double leadH = baseHeight;
+        double leadY = y + (leadH - r.textHeight(false, ts)) / 2;
         double backingH = r.textHeight(false, bs) + 5 * s;
         double targetBacking = backingH * totalPresence;
         backingHeight = seek || !animate ? targetBacking : EmberAnim.approach(backingHeight, targetBacking, dt, 0.07);
         if (totalPresence < 0.001 && backingHeight < 0.08 * s) backingHeight = 0;
         double creditH = r.textHeight(false, cs) + 2 * s;
-        double h = leadH + backingHeight + creditH + 5 * s;
+        double creditExtent = creditH + 5 * s;
+        boolean hovered = hovered(x, y, w, leadH + backingHeight + creditExtent * DETAILS.reveal());
+        long now = System.nanoTime();
+        double detailReveal = DETAILS.update(id, positionMs, now, dt, hovered, config.lyricsCreditsAlways.get(), animate);
+        double h = leadH + backingHeight + creditExtent * detailReveal;
         double radius = Math.min(9 * s, h * 0.25), left = x + pad, right = x + w - pad;
         r.dropShadow(x, y, w, h, radius, 12 * s, (float) opacity);
         EmberStrip.panel(r, x, y, w, h, radius, opacity);
-        LEAD.draw(r, left, y + 5 * s, right, y + s, y + leadH, ts, seconds, dt, opacity, seek, animate, false);
-        if (line == null) r.textClipped(elide(r, title, inner, ts), left, y + 5 * s, new Color(234, 237, 245, (int) (255 * opacity)), ts, left, right);
+        LEAD.draw(r, left, leadY, right, y + s, y + leadH - s, ts, seconds, dt, opacity, seek, animate, false);
+        if (line == null) r.textClipped(elide(r, title, inner, ts), left, leadY, new Color(234, 237, 245, (int) (255 * opacity)), ts, left, right);
         double backingY = y + leadH;
         for (int i = 0; i < BACKING.length; i++) {
             if (presence[i] < 0.001 || backingHeight < 0.1 * s) continue;
@@ -87,21 +93,22 @@ public final class LyricsPill {
             backingY += slot;
         }
 
-        // Attribution has one quiet row, independently clipped/scrolled, so it cannot force
-        // short lyrics to use a wide panel or add tall stacks of empty credit rows.
-        double creditY = y + h - creditH - 4 * s;
+        // Fade and clip the details within their expanding row. The compact lead stays
+        // centered and still, and hidden credits reserve no height or clickable area.
+        double creditTop = y + leadH + backingHeight, creditY = creditTop + s;
+        double creditBottom = y + h - 3 * s;
         List<LyricsTimeline.Credit> credits = timeline != null && (!timeline.lines().isEmpty() || !timeline.background().isEmpty()) ? timeline.credits() : List.of();
         List<CreditHit> hits = new ArrayList<>();
-        Color quiet = new Color(151, 160, 179, (int) (220 * opacity));
-        if (credits.isEmpty()) {
+        Color quiet = new Color(151, 160, 179, (int) (220 * opacity * LyricMotion.smooth(detailReveal)));
+        if (detailReveal > 0 && credits.isEmpty()) {
             String status = timeline != null && !timeline.lines().isEmpty() ? "Waiting for vocals" : result.status();
             if (playback != null && !playback.clock().playing()) status = "Paused";
-            r.text(elide(r, status, inner, cs), left, creditY, quiet, false, cs);
-        } else {
+            r.textClipped(elide(r, status, inner, cs), left, creditY, quiet, cs, left, right, creditTop, creditBottom);
+        } else if (detailReveal > 0) {
             double creditsWidth = 0;
             for (int i = 0; i < credits.size(); i++) creditsWidth += r.textWidth((i > 0 ? "  /  " : "") + credits.get(i).name(), false, cs);
             double overflow = Math.max(0, creditsWidth - inner), travel = overflow / Math.max(1, 13 * s);
-            double phase = (System.nanoTime() - creditsStarted) / 1e9 % (travel * 2 + 4);
+            double phase = DETAILS.elapsedSeconds(now) % (travel * 2 + 4);
             double offset = phase < 2 ? 0 : phase < 2 + travel ? (phase - 2) * 13 * s
                 : phase < 4 + travel ? overflow : Math.max(0, overflow - (phase - 4 - travel) * 13 * s);
             double cx = left - offset;
@@ -109,9 +116,10 @@ public final class LyricsPill {
                 var credit = credits.get(i);
                 String text = (i > 0 ? "  /  " : "") + credit.name();
                 double cw = r.textWidth(text, false, cs);
-                r.textClipped(text, cx, creditY, quiet, cs, left, right);
+                r.textClipped(text, cx, creditY, quiet, cs, left, right, creditTop, creditBottom);
                 double hitLeft = Math.max(left, cx), hitRight = Math.min(right, cx + cw);
-                if (hitRight > hitLeft) hits.add(new CreditHit(hitLeft, creditY, hitRight - hitLeft, creditH, credit.url()));
+                if (detailReveal > 0.95 && hitRight > hitLeft) hits.add(new CreditHit(hitLeft, creditY, hitRight - hitLeft,
+                    Math.min(creditH, Math.max(0, creditBottom - creditY)), credit.url()));
                 cx += cw;
             }
         }
@@ -227,6 +235,12 @@ public final class LyricsPill {
             else high = mid - 1;
         }
         return low == 0 ? "" : text.substring(0, text.offsetByCodePoints(0, low)) + "\u2026";
+    }
+    private static boolean hovered(double x, double y, double w, double h) {
+        if (mc.currentScreen == null) return false;
+        double scale = mc.getWindow().getScaleFactor();
+        double mx = mc.mouse.getScaledX(mc.getWindow()) * scale, my = mc.mouse.getScaledY(mc.getWindow()) * scale;
+        return mx >= x && mx < x + w && my >= y && my < y + h;
     }
     private static void handleCredits(List<CreditHit> hits) {
         boolean down = GLFW.glfwGetMouseButton(mc.getWindow().getHandle(), GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;

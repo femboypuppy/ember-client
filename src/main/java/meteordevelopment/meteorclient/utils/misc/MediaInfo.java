@@ -36,7 +36,7 @@ public class MediaInfo {
     private static final Pattern SEP = Pattern.compile("");
 
     /** Bump when SOURCE changes so a stale compiled helper is replaced. */
-    private static final String VERSION = "v3-lyrics";
+    private static final String VERSION = "v4-desktop-lyrics";
 
     private static volatile String title = "";
     private static volatile String artist = "";
@@ -45,6 +45,9 @@ public class MediaInfo {
     private static volatile int duration = 0;
 
     private static volatile PlaybackClock playbackClock = new PlaybackClock(0, 0, false, 0);
+    private static volatile DesktopMediaSession session;
+    private static volatile String artworkKey = "";
+    private static volatile int artworkAccent = -1;
 
     private static volatile int artFlag = 0;
     private static int loadedArtFlag = -1;
@@ -65,6 +68,16 @@ public class MediaInfo {
     public static boolean isAvailable() { return available; }
     public static int getDuration() { return duration; }
     public static boolean hasArt() { return artReady; }
+    public static int getArtworkAccent() {
+        var current = current();
+        return current != null && current.key().equals(artworkKey) ? artworkAccent : -1;
+    }
+
+    public static DesktopMediaSession current() {
+        start();
+        var sample = session;
+        return sample != null && System.nanoTime() - sample.receivedAtNanos() < 5_000_000_000L ? sample : null;
+    }
 
     public static int getPosition() {
         return (int) (getPositionMillis() / 1000);
@@ -74,7 +87,7 @@ public class MediaInfo {
         return available ? playbackClock.positionAt(System.nanoTime()) : 0;
     }
 
-    public static void start() {
+    public static synchronized void start() {
         if (worker != null || unsupported) return;
         if (!System.getProperty("os.name", "").toLowerCase().contains("win")) {
             unsupported = true;
@@ -138,6 +151,7 @@ public class MediaInfo {
 
             available = false;
             playing = false;
+            session = null;
 
             try {
                 Thread.sleep(10000);
@@ -173,15 +187,16 @@ public class MediaInfo {
         String[] parts = SEP.split(line, -1);
         if (parts.length < 6) return;
 
+        session = DesktopMediaSession.parse(line, session, System.nanoTime());
+
         String t = parts[0].trim();
 
         title = t;
         artist = parts[1].trim();
-        long positionMs = parseLong(parts[2]);
         long durationMs = parseLong(parts[3]);
         duration = (int) (durationMs / 1000);
         playing = parts[4].equalsIgnoreCase("Playing");
-        playbackClock = new PlaybackClock(positionMs, durationMs, playing, System.nanoTime());
+        playbackClock = session == null ? new PlaybackClock(0, 0, false, System.nanoTime()) : session.clock();
         available = !t.isEmpty();
 
         int flag = parseInt(parts[5]);
@@ -195,9 +210,11 @@ public class MediaInfo {
         if (artFlag == loadedArtFlag) return;
         try {
             byte[] data = Files.readAllBytes(artPath);
-            if (data.length < 16) return;
+            if (data.length < 16 || data.length > 2_000_000) return;
 
             pendingArt = NativeImage.read(data);
+            artworkAccent = SongAccentService.extract(data);
+            artworkKey = session == null ? "" : session.key();
             loadedArtFlag = artFlag;
         } catch (Throwable ignored) {
         }
@@ -379,15 +396,17 @@ public class MediaInfo {
                 if (pos < 0) pos = 0;
 
                 string title = p.Title ?? "";
-                string artist = p.Artist ?? "";
+                string artist = !string.IsNullOrWhiteSpace(p.Artist) ? p.Artist : (p.AlbumArtist ?? "");
 
-                string key = title + "###" + artist;
+                // Publish metadata before fetching the thumbnail so lyric lookup starts immediately.
+                Write(title, artist, (long)(pos * 1000), (long)(dur * 1000), status,
+                    s.SourceAppUserModelId ?? "", p.AlbumTitle ?? "");
+                string key = title + "###" + artist + "###" + s.SourceAppUserModelId + "###" + p.AlbumTitle;
                 if (key != lastArtKey) {
                     lastArtKey = key;
                     if (TryWriteArt(p, artPath)) artFlag++;
                 }
 
-                Write(title, artist, (long)(pos * 1000), (long)(dur * 1000), status);
             }
 
             static bool TryWriteArt(GlobalSystemMediaTransportControlsSessionMediaProperties p, string artPath) {
@@ -395,7 +414,7 @@ public class MediaInfo {
                 try {
                     var stream = Wait(p.Thumbnail.OpenReadAsync());
                     uint size = (uint)stream.Size;
-                    if (size == 0) return false;
+                    if (size == 0 || size > 2000000) return false;
 
                     var reader = new DataReader(stream.GetInputStreamAt(0));
                     Wait(reader.LoadAsync(size));
@@ -413,7 +432,7 @@ public class MediaInfo {
                 }
             }
 
-            static void Write(string title, string artist, long pos, long dur, string status) {
+            static void Write(string title, string artist, long pos, long dur, string status, string app = "", string album = "") {
                 var sb = new StringBuilder();
                 sb.Append(Clean(title)).Append(SEP);
                 sb.Append(Clean(artist)).Append(SEP);
@@ -421,6 +440,7 @@ public class MediaInfo {
                 sb.Append(dur).Append(SEP);
                 sb.Append(status).Append(SEP);
                 sb.Append(artFlag);
+                sb.Append(SEP).Append(Clean(app)).Append(SEP).Append(Clean(album));
 
                 Console.Out.WriteLine(sb.ToString());
                 Console.Out.Flush();

@@ -137,7 +137,11 @@ public final class LyricsTimingChecks {
         require(Math.abs(at30 - at144) < 0.00001, "Scrolling must settle identically at different frame rates");
         require(LyricsScroll.advance(42, 100, 0) == 42, "A zero-time frame cannot move the viewport");
         artworkChecks();
-        System.out.println("Lyrics checks passed: playback, syllable cuts, fitted width, collapsing backing rows, scrolling, artwork accent, color transitions and attribution.");
+        LyricsDetailsChecks.run();
+        LyricsLanguageChecks.run();
+        meteordevelopment.meteorclient.utils.render.GlyphClipChecks.run();
+        DesktopMusicChecks.run();
+        System.out.println("Lyrics checks passed: desktop playback, recording search, LRC parsing, playback, syllable cuts, fitted width, collapsing backing rows, scrolling, artwork accent, color transitions and timed/hover attribution.");
     }
 
     private static void artworkChecks() {

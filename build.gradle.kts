@@ -117,6 +117,14 @@ val checkLyrics by tasks.registering(JavaExec::class) {
 
 tasks.named("check") { dependsOn(checkLyrics) }
 
+val checkVisuals by tasks.registering(JavaExec::class) {
+    dependsOn(tasks.named("lyricsChecksClasses"))
+    classpath = sourceSets["lyricsChecks"].runtimeClasspath
+    mainClass.set("meteordevelopment.meteorclient.utils.render.CelestialVisualChecks")
+    enableAssertions = true
+}
+tasks.named("check") { dependsOn(checkVisuals) }
+
 java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21

@@ -15,6 +15,7 @@ import meteordevelopment.meteorclient.events.meteor.CustomFontChangedEvent;
 import meteordevelopment.meteorclient.mixininterface.IGameRenderer;
 import meteordevelopment.meteorclient.renderer.*;
 import meteordevelopment.meteorclient.renderer.text.CustomTextRenderer;
+import meteordevelopment.meteorclient.renderer.text.ClippedTextRenderer;
 import meteordevelopment.meteorclient.renderer.text.Font;
 import meteordevelopment.meteorclient.renderer.text.VanillaTextRenderer;
 import meteordevelopment.meteorclient.utils.Utils;
@@ -51,6 +52,7 @@ public class HudRenderer {
     private record GlassPane(double x, double y, double w, double h, double radius, double opacity) {}
     private final List<GlassPane> glassPanes = new ArrayList<>();
     private final Renderer2D glassShadows = new Renderer2D(false);
+    private final ClippedTextRenderer unicodeText = new ClippedTextRenderer();
 
     private final Int2ObjectMap<FontHolder> fontsInUse = new Int2ObjectOpenHashMap<>();
     private final LoadingCache<Integer, FontHolder> fontCache = CacheBuilder.newBuilder()
@@ -119,6 +121,8 @@ public class HudRenderer {
             VanillaTextRenderer.INSTANCE.end();
             VanillaTextRenderer.INSTANCE.scaleIndividually = false;
         }
+
+        unicodeText.end();
 
         for (Runnable task : postTasks) task.run();
         postTasks.clear();
@@ -381,31 +385,8 @@ public class HudRenderer {
             return VanillaTextRenderer.INSTANCE.render(text, x, y, color, shadow);
         }
 
-        FontHolder fontHolder = getFontHolder(scale, true);
-
-        Font font = fontHolder.font;
-        MeshBuilder mesh = fontHolder.getMesh();
-
-        double rs = renderScale(scale);
-        double width;
-
-        if (shadow) {
-            int preShadowA = CustomTextRenderer.SHADOW_COLOR.a;
-            CustomTextRenderer.SHADOW_COLOR.a = (int) (color.a / 255.0 * preShadowA);
-
-            // Offset with the text, or the shadow vanishes under large glyphs.
-            double off = Math.max(1, renderedHeight(scale) / 18);
-
-            width = font.render(mesh, text, x + off, y + off, CustomTextRenderer.SHADOW_COLOR, rs);
-            font.render(mesh, text, x, y, color, rs);
-
-            CustomTextRenderer.SHADOW_COLOR.a = preShadowA;
-        }
-        else {
-            width = font.render(mesh, text, x, y, color, rs);
-        }
-
-        return width;
+        return mixedText(text, x, y, color, scale, shadow, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY,
+            Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY);
     }
     public double text(String text, double x, double y, Color color, boolean shadow) {
         return text(text, x, y, color, shadow, -1);
@@ -418,24 +399,44 @@ public class HudRenderer {
 
     public void textClipped(String text, double x, double y, Color color, double scale, double left, double right, double top, double bottom) {
         if (hud.hasCustomFont()) {
-            FontHolder holder = getFontHolder(scale, true);
-            holder.font.renderClipped(holder.getMesh(), text, x, y, color, renderScale(scale), left, right, top, bottom);
+            mixedText(text, x, y, color, scale, false, left, right, top, bottom);
         } else {
-            if (y < top || y + textHeight(false, scale) > bottom) return;
-            // Vanilla's immediate text batch has no per-glyph clip. Fade boundary glyphs
-            // inside the viewport instead of changing GL scissor state for the entire HUD.
-            for (int i = 0; i < text.length();) {
-                int end = text.offsetByCodePoints(i, 1);
-                String glyph = text.substring(i, end);
-                double advance = textWidth(glyph, false, scale);
-                if (x >= left && x + advance + scale <= right) {
-                    double edge = Math.min(x - left, right - x - advance) / Math.max(1, 6 * scale);
-                    text(glyph, x, y, new Color(color.r, color.g, color.b, (int) (color.a * Math.clamp(edge, 0, 1))), false, scale);
-                }
-                x += advance;
-                i = end;
-            }
+            unicodeText.draw(text, x, y, color, (scale == -1 ? hud.getTextScale() : scale) * 2, false, left, right, top, bottom);
         }
+    }
+
+    private double unicodeScale(double scale) {
+        return (getFont(scale).getHeight() + 1) * renderScale(scale) / mc.textRenderer.fontHeight;
+    }
+
+    /** Measure and paint the same font runs, including punctuation and supplementary code points. */
+    private double mixedText(String text, double x, double y, Color color, double scale, boolean shadow,
+                             double left, double right, double top, double bottom) {
+        if (scale == -1) scale = hud.getTextScale();
+        FontHolder holder = getFontHolder(scale, true);
+        Font font = holder.font;
+        double rs = renderScale(scale), fallbackScale = unicodeScale(scale);
+        for (int i = 0; i < text.length();) {
+            boolean custom = font.hasGlyph(text.codePointAt(i));
+            int end = text.offsetByCodePoints(i, 1);
+            while (end < text.length() && font.hasGlyph(text.codePointAt(end)) == custom) end = text.offsetByCodePoints(end, 1);
+            String run = text.substring(i, end);
+            if (custom) {
+                if (shadow) {
+                    double off = Math.max(1, renderedHeight(scale) / 18);
+                    Color original = CustomTextRenderer.SHADOW_COLOR;
+                    font.renderClipped(holder.getMesh(), run, x + off, y + off,
+                        new Color(original.r, original.g, original.b, original.a * color.a / 255), rs, left, right, top, bottom);
+                }
+                font.renderClipped(holder.getMesh(), run, x, y, color, rs, left, right, top, bottom);
+                x += font.getWidth(run, run.length()) * rs;
+            } else {
+                unicodeText.draw(run, x, y, color, fallbackScale, shadow, left, right, top, bottom);
+                x += ClippedTextRenderer.width(run, fallbackScale);
+            }
+            i = end;
+        }
+        return x;
     }
 
     public double textWidth(String text, boolean shadow, double scale) {
@@ -443,7 +444,17 @@ public class HudRenderer {
 
         if (hud.hasCustomFont()) {
             double s = scale == -1 ? hud.getTextScale() : scale;
-            return getFont(s).getWidth(text, text.length()) * renderScale(s) + (shadow ? 1 : 0);
+            Font font = getFont(s);
+            double width = 0, rs = renderScale(s), fallbackScale = unicodeScale(s);
+            for (int i = 0; i < text.length();) {
+                boolean custom = font.hasGlyph(text.codePointAt(i));
+                int end = text.offsetByCodePoints(i, 1);
+                while (end < text.length() && font.hasGlyph(text.codePointAt(end)) == custom) end = text.offsetByCodePoints(end, 1);
+                String run = text.substring(i, end);
+                width += custom ? font.getWidth(run, run.length()) * rs : ClippedTextRenderer.width(run, fallbackScale);
+                i = end;
+            }
+            return width + (shadow ? 1 : 0);
         }
 
         VanillaTextRenderer.INSTANCE.scale = (scale == -1 ? hud.getTextScale() : scale) * 2;

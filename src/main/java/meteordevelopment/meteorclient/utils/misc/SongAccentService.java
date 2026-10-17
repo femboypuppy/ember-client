@@ -36,9 +36,13 @@ public final class SongAccentService {
     public static synchronized int update() {
         Config config = Config.get();
         if (config == null || !config.songAccent.get()) { wanted = ""; ready = false; color = -1; return -1; }
-        var playback = SpotifyPlayback.current();
+        var playback = MusicPlayback.current();
         String url = playback == null ? "" : ArtworkAccent.normalizeUrl(playback.artworkUrl());
-        if (url.isEmpty()) { wanted = ""; ready = false; color = -1; return -1; }
+        if (url.isEmpty()) {
+            wanted = ""; ready = false;
+            color = playback != null && playback.key().startsWith("desktop:") ? MediaInfo.getArtworkAccent() : -1;
+            return color;
+        }
         if (!url.equals(wanted)) {
             wanted = url; retryAt = 0; ready = false;
             Integer cached = CACHE.get(url);
@@ -60,20 +64,7 @@ public final class SongAccentService {
                 if (response.statusCode() != 200) throw new IllegalArgumentException("Artwork unavailable");
                 byte[] bytes = body.readNBytes(2_000_001);
                 if (bytes.length > 2_000_000) throw new IllegalArgumentException("Artwork too large");
-                try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
-                    var readers = ImageIO.getImageReaders(input);
-                    if (!readers.hasNext()) throw new IllegalArgumentException("Unsupported artwork");
-                    var reader = readers.next();
-                    try {
-                        reader.setInput(input, true, true);
-                        int w = reader.getWidth(0), h = reader.getHeight(0);
-                        if (w <= 0 || h <= 0 || w > 2048 || h > 2048) throw new IllegalArgumentException("Invalid artwork dimensions");
-                        var params = reader.getDefaultReadParam();
-                        int sample = Math.max(1, (Math.max(w, h) + 63) / 64);
-                        params.setSourceSubsampling(sample, sample, 0, 0);
-                        extracted = ArtworkAccent.extract(reader.read(0, params));
-                    } finally { reader.dispose(); }
-                }
+                extracted = extract(bytes);
             }
         } catch (Exception ignored) { /* Keep the manual accent when artwork is unavailable. */ }
         synchronized (SongAccentService.class) {
@@ -83,5 +74,24 @@ public final class SongAccentService {
                 color = extracted; ready = extracted >= 0; retryAt = System.currentTimeMillis() + 60_000;
             }
         }
+    }
+
+    /** The same bounded decoder also handles Windows-provided covers without an HTTP request. */
+    static int extract(byte[] bytes) {
+        if (bytes.length > 2_000_000) return -1;
+        try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
+            var readers = ImageIO.getImageReaders(input);
+            if (!readers.hasNext()) return -1;
+            var reader = readers.next();
+            try {
+                reader.setInput(input, true, true);
+                int w = reader.getWidth(0), h = reader.getHeight(0);
+                if (w <= 0 || h <= 0 || w > 2048 || h > 2048) return -1;
+                var params = reader.getDefaultReadParam();
+                int sample = Math.max(1, (Math.max(w, h) + 63) / 64);
+                params.setSourceSubsampling(sample, sample, 0, 0);
+                return ArtworkAccent.extract(reader.read(0, params));
+            } finally { reader.dispose(); }
+        } catch (Exception ignored) { return -1; }
     }
 }

@@ -12,8 +12,9 @@ import meteordevelopment.meteorclient.systems.config.Config;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.screens.HudEditorScreen;
-import meteordevelopment.meteorclient.utils.misc.SpicyLyricsService;
 import meteordevelopment.meteorclient.utils.misc.SpotifyPlayback;
+import meteordevelopment.meteorclient.utils.misc.MusicPlayback;
+import meteordevelopment.meteorclient.utils.misc.MusicLyricsService;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.EmberAppearance;
 import meteordevelopment.meteorclient.utils.render.color.Color;
@@ -41,7 +42,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         Appearance("Appearance", "Surfaces, accent colors and glass"),
         Typography("Typography", "Choose a readable font for Ember"),
         Widgets("HUD widgets", "Choose what appears in your game"),
-        Music("Spotify & lyrics", "Connections, vocals and synchronization");
+        Music("Music & lyrics", "Players, vocals and synchronization");
         final String title, subtitle;
         Page(String title, String subtitle) { this.title = title; this.subtitle = subtitle; }
     }
@@ -84,8 +85,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         scrollTarget = Math.clamp(scrollTarget, 0, Math.max(0, contentHeight - viewportH));
         scroll = EmberAnim.approach(scroll, scrollTarget, dt, 0.065);
         hits.clear(); fieldPositions.clear();
+        meteordevelopment.meteorclient.utils.render.EmberAtmosphere.background(graphics, theme, getWindowWidth(), getWindowHeight(), mx, my, openFade, 145);
         GuiRenderer r = new GuiRenderer(); r.theme = theme; r.begin(graphics);
-        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (145 * openFade)));
         EmberUI.shadow(r, px, py, pw, ph, (float) openFade);
         EmberUI.rim(r, px, py, pw, ph, 14, (float) openFade);
         r.roundedRect(px, py, pw, ph, 14, EmberUI.bg());
@@ -156,6 +157,17 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = toggle(r, y, "Match song artwork", "Use the cover's dominant color across the whole client.", Config.get().songAccent.get(),
             () -> Config.get().songAccent.set(!Config.get().songAccent.get()), dt);
         y += 12;
+        y = section(r, y, "ATMOSPHERE", "Celestial light and stars follow your accent or song artwork.");
+        Config ambience = Config.get();
+        y = toggle(r, y, "Atmospheric ambience", "A subtle aurora and drifting starlight behind the menu.", ambience.ambience.get(), () -> ambience.ambience.set(!ambience.ambience.get()), dt);
+        y = slider(r, y, "Intensity", ambience.ambienceIntensity.get(), percent(ambience.ambienceIntensity.get()), ambience.ambienceIntensity::set, dt);
+        y = slider(r, y, "Star density", ambience.ambienceDensity.get(), percent(ambience.ambienceDensity.get()), ambience.ambienceDensity::set, dt);
+        y = slider(r, y, "Drift speed", ambience.ambienceSpeed.get() / 2, percent(ambience.ambienceSpeed.get()), v -> ambience.ambienceSpeed.set(v * 2), dt);
+        y = toggle(r, y, "Show while playing", "A much fainter version in game. Hidden with the HUD.", ambience.ambienceHud.get(), () -> ambience.ambienceHud.set(!ambience.ambienceHud.get()), dt);
+        y = toggle(r, y, "Ground lighting", "Soft light on nearby ground, in the current accent color.", ambience.groundLight.get(), () -> ambience.groundLight.set(!ambience.groundLight.get()), dt);
+        y = slider(r, y, "Light brightness", ambience.groundLightIntensity.get(), percent(ambience.groundLightIntensity.get()), ambience.groundLightIntensity::set, dt);
+        y = slider(r, y, "Light radius", (ambience.groundLightRadius.get() - 1.5) / 5.5, String.format("%.1f blocks", ambience.groundLightRadius.get()), v -> ambience.groundLightRadius.set(1.5 + v * 5.5), dt);
+        y += 12;
         if (EmberAppearance.frosted()) {
             y = section(r, y, "GLASS DETAILS", "Fine-tune the surface against your game background.");
             Config c = Config.get();
@@ -213,14 +225,18 @@ public class EmberClientSettingsScreen extends WidgetScreen {
 
     private double music(GuiRenderer r, double y, double dt) {
         Config c = Config.get();
-        y = section(r, y, "PLAYBACK", "Spotify and lyrics have separate connection settings.");
-        y = status(r, y, "Spotify", SpotifyPlayback.status());
-        SpicyLyricsService.Result lyrics = SpicyLyricsService.update();
+        y = section(r, y, "PLAYBACK", "Detect music from Windows apps and compatible browser tabs.");
+        y = status(r, y, "Player", MusicPlayback.status());
+        MusicLyricsService.Result lyrics = MusicLyricsService.update();
         y = status(r, y, "Lyrics", !c.lyricsEnabled.get() ? "Lyric pill disabled" : lyrics.status().isEmpty() ? "Timed lyrics ready" : lyrics.status());
         y += 12;
+        y = toggle(r, y, "Detect desktop music", "Spotify, YouTube Music and SoundCloud through Windows media controls.", c.desktopMusic.get(), () -> c.desktopMusic.set(!c.desktopMusic.get()), dt);
+        y = toggle(r, y, "Search lyrics by song", "Find line-synced lyrics with LRCLIB. No login or API key needed.", c.lyricsSearchFallback.get(), () -> c.lyricsSearchFallback.set(!c.lyricsSearchFallback.get()), dt);
         y = section(r, y, "DISPLAY", "Compact lyrics with a fixed text size and syllable highlighting.");
         y = toggle(r, y, "Lyrics pill", "Show synced words beside the main status pill.", c.lyricsEnabled.get(), () -> c.lyricsEnabled.set(!c.lyricsEnabled.get()), dt);
         y = toggle(r, y, "Backing vocals", "Show background lyrics underneath the lead voice.", c.lyricsBackground.get(), () -> c.lyricsBackground.set(!c.lyricsBackground.get()), dt);
+        y = toggle(r, y, "Romanization", "Use romanized lyrics from Spicy Lyrics when available.", c.lyricsRomanization.get(), () -> c.lyricsRomanization.set(!c.lyricsRomanization.get()), dt);
+        y = toggle(r, y, "Always show lyric credits", "Otherwise, show provider names for five seconds per song or on hover.", c.lyricsCreditsAlways.get(), () -> c.lyricsCreditsAlways.set(!c.lyricsCreditsAlways.get()), dt);
         y = slider(r, y, "Maximum width", (c.lyricsMaxWidth.get() - 180) / 420.0, c.lyricsMaxWidth.get() + " px",
             v -> c.lyricsMaxWidth.set((int) Math.round((180 + 420 * v) / 10) * 10), dt);
         y = slider(r, y, "Text size", (c.lyricsTextSize.get() - 0.45) / 0.45, percent(c.lyricsTextSize.get()),
@@ -229,7 +245,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = slider(r, y, "Timing offset", (c.lyricsOffset.get() + 3000) / 6000, String.format("%+.0f ms", c.lyricsOffset.get()), v -> c.lyricsOffset.set(Math.rint((v * 6000 - 3000) / 10) * 10), dt);
         label(r, "Positive advances lyrics. Negative delays them.", contentX + 2, y, 0.63, EmberUI.TEXT_DIM, contentW); y += 30;
         action(r, contentX, y, contentW, 32, "Reset timing offset", () -> c.lyricsOffset.set(0.0), false, dt); y += 52;
-        y = section(r, y, "SPOTIFY CONNECTION", "Paste your app client ID, then connect in the browser.");
+        y = section(r, y, "OPTIONAL SPOTIFY CONNECTION", "Exact track IDs enable Spicy Lyrics word and syllable sync.");
         y = field(r, y, "Spotify client ID", c.spotifyClientId, false);
         double half = (contentW - 8) / 2;
         action(r, contentX, y, half, 36, "Connect Spotify", SpotifyPlayback::connect, true, dt);
@@ -238,7 +254,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         label(r, "Redirect URI (must match your Spotify app):", contentX, y, 0.65, EmberUI.TEXT_DIM, contentW); y += 22;
         label(r, SpotifyPlayback.REDIRECT, contentX, y, 0.75, EmberUI.TEXT, contentW); y += 28;
         action(r, contentX, y, contentW, 30, "Copy redirect URI", () -> mc.keyboard.setClipboard(SpotifyPlayback.REDIRECT), false, dt); y += 50;
-        y = section(r, y, "LYRICS PROVIDER", "Use a publishable sl_pk_ key with native-client access enabled.");
+        y = section(r, y, "OPTIONAL SPICY LYRICS", "For exact Spotify tracks. Desktop search works without this key.");
         y = field(r, y, "Spicy Lyrics client key", c.spicyLyricsKey, true);
         label(r, "Enable 'No origin header' in the key's client-access settings.", contentX, y, 0.62, EmberUI.TEXT_DIM, contentW); y += 28;
         action(r, contentX, y, contentW, 34, "Open Spicy Lyrics key dashboard", () -> open("https://developers.spicylyrics.org/dashboard/applications"), false, dt); y += 54;

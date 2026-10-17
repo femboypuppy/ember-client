@@ -1,10 +1,42 @@
-# Spotify lyric pill
+# Music lyric pill
 
-Open Ember's gear menu and select **Spotify & lyrics**, then enable **Lyrics pill**.
+Open Ember's gear menu and select **Music & lyrics**, then enable **Lyrics pill**.
 The pill follows the main status bar in every appearance. Liquid Glass uses the same
 scene-colored surface as the other HUD widgets.
 
-## Spicy Lyrics access
+## Automatic desktop detection (Windows)
+
+**Detect desktop music** and **Search lyrics by song** are enabled by default.
+Play music in Spotify, YouTube Music, SoundCloud, or another app/browser tab that
+publishes its media session to Windows. Ember reads the title, artist, album,
+playback position, pause state and thumbnail locally. No Spotify Premium,
+developer application, Spotify login or Spicetify installation is needed for
+this route. It does not record system audio or inspect private browser data.
+
+Without an exact Spotify track ID, Ember searches [LRCLIB](https://lrclib.net/docs)
+directly by title and artist. It verifies the title, artist and duration (within
+three seconds), ignoring cosmetic labels such as `(Official Music Video)` but
+preserving `Live`, remixes and other recording versions. Search results already
+contain lyrics, so there is no second request to download a matching record.
+Successful results and misses are cached for up to 32 recordings in memory.
+Only one search runs at a time, requests have timeouts, and rate-limit responses
+delay further searches. Nothing waits on HTTP on the render thread.
+
+LRCLIB's LRC fallback uses real **line timestamps**, with an LRCLIB credit in the details row.
+It does not invent word/syllable timings or backing vocals. Exact Spotify
+connections still use Spicy Lyrics first; if the direct connection matches the
+desktop song and duration, its exact ID is retained while Windows supplies the
+playback clock. Disable **Search lyrics by song** to use only Spicy Lyrics.
+
+Compatibility depends on the player exposing accurate metadata and a timeline
+to Windows. A browser tab with no artist, an unofficial upload, a live recording,
+or a music video with a different intro may not have a safe lyric match. Look at
+the **Player** and **Lyrics** status rows for the detected song and search result.
+The music must play on this PC; remote phone playback still needs Spotify's
+direct connection. Non-Windows systems retain the Spotify/Spicetify paths.
+Turning off **Detect desktop music** selects those exact Spotify paths instead.
+
+## Optional Spicy Lyrics access
 
 Create a publishable client key (`sl_pk_…`) in the
 [Spicy Lyrics developer dashboard](https://developers.spicylyrics.org/dashboard/applications).
@@ -17,8 +49,26 @@ keep their individual timing inside joined words, including pauses and punctuati
 between syllables. A white fill, soft glow, and small vertical lift follow each
 syllable without changing the font size. Line syncs
 advance by line. Static or missing lyrics show a status rather than invented timing.
-Provider credits remain visible under the lyrics; community contributor credits
-link to their profiles when clicked while a Minecraft menu is open.
+Provider and contributor credits appear for five seconds when each song is detected,
+then fade and collapse. Hover over the lyric pill with a Minecraft menu open to
+reveal them again; contributor names link to their profiles. Enable **Always show
+lyric credits** to keep the row visible. This option is off by default.
+
+## Original script and romanization
+
+Japanese, Korean, other characters outside the selected custom font, curly
+apostrophes and dashes use Minecraft's Unicode font fallback. Glyph measurements
+and clipping use the same font runs, preserving the fixed text size, scrolling,
+syllable fill and glow. Zero-duration punctuation remains attached to a real
+syllable instead of being discarded.
+
+Enable **Romanization** in **Music & lyrics → Display** to use Spicy Lyrics'
+`TransliteratedText` when available. It is off by default. The selection changes
+the cached lyric view immediately, without reconnecting or making another request.
+Original text remains visible wherever romanization is absent; LRCLIB search
+continues to display its supplied lyrics. Per-syllable romanizations retain the
+original timing. A romanization supplied only for a whole phrase displays at
+line precision rather than inventing word timings.
 
 ## Regular Spotify
 
@@ -42,12 +92,13 @@ millisecond playback position without a Spotify developer application:
 1. Copy `integrations/spicetify/ember-lyrics-bridge.js` to your Spicetify `Extensions` folder.
 2. Enable it using `spicetify config extensions ember-lyrics-bridge.js`, then
    `spicetify apply`.
-3. On Ember's **Spotify & lyrics** page, click **Enable local bridge**.
+3. On Ember's **Music & lyrics** page, click **Enable local bridge**.
 
 The bridge posts only track ID, title, artist, artwork URL, position, duration, and playback
 state to `127.0.0.1:18527`. It sends no Spotify access token or lyric API key.
 It is not installed automatically. Enable the bridge again after restarting
-Minecraft. The Spicy Lyrics client key is required with either connection method.
+Minecraft. The Spicy Lyrics client key is required for Spicy Lyrics with either
+connection method. LRCLIB metadata search does not require a client key.
 
 ## Timing and checks
 
@@ -59,10 +110,13 @@ long phrases scroll continuously with the vocal timing. Short phrases fit their
 text instead of stretching the panel to its maximum width. Use **Maximum width**
 and **Text size** on the music settings page to adjust the limit and font size.
 Backing vocals use their own syllable timestamps and appear below the lead, with up
-to two simultaneous backing lanes. Disable **Backing vocals** to hide those rows.
+to two simultaneous backing lanes. **Backing vocals** is enabled by default;
+disable it in **Music & lyrics → Display** to hide those rows.
 Backing rows expand and fade in only while they are needed, then fully collapse.
 Provider and contributor credits share a single quiet row that scrolls when it
-cannot fit, so attribution does not force a short lyric into a wide or tall box.
+cannot fit. When the credits and backing vocals are hidden, the lyric pill has
+exactly the same height as the neighboring status pill, with vertically centered
+text. Opening the details or a backing lane expands downward without moving the lead.
 
 **Timing offset** compensates for audio-output delay. Positive values advance
 the display. Requests run off the render thread, are cached for up to 32 songs,
@@ -77,14 +131,14 @@ or copyrighted lyric fixtures.
 ## Settings navigation
 
 The gear opens one settings window with four pages: **Appearance**, **Typography**,
-**HUD widgets**, and **Spotify & lyrics**. Each page scrolls independently of its
+**HUD widgets**, and **Music & lyrics**. Each page scrolls independently of its
 header and navigation. Music connection status and lyric-provider status are shown
 separately. Paste a key into its masked field with Ctrl+V; press Enter or click
 outside the field to save it. Existing connection settings are retained.
 
 ## Song artwork accent
 
-Enable **Match song artwork** in **Appearance** or **Spotify & lyrics** to recolor
+Enable **Match song artwork** in **Appearance** or **Music & lyrics** to recolor
 Ember's accents from the current track's album cover. The algorithm favors colors
 with substantial coverage, avoids letting white/black borders dominate colorful
 artwork, and keeps the resulting accent bright enough for controls and highlights.
@@ -94,6 +148,9 @@ The regular Spotify connection supplies cover metadata automatically; no new
 permissions or reconnect are needed. If you use the optional Spicetify bridge,
 replace its extension with the current `ember-lyrics-bridge.js` and reapply it so
 it sends artwork URLs. Old bridge versions still provide lyrics.
+
+Desktop players use their Windows-provided thumbnail for the same artwork accent,
+decoded locally on a worker thread without downloading a cover from another service.
 
 Cover downloads and image decoding run on a worker thread and cache 32 artwork
 colors. Missing artwork falls back to the chosen manual theme. Selecting a manual

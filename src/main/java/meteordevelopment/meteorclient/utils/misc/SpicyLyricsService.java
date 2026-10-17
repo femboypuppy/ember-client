@@ -21,12 +21,16 @@ public final class SpicyLyricsService {
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "Ember-Lyrics"); t.setDaemon(true); return t;
     });
-    private static final Map<String, LyricsTimeline> CACHE = new LinkedHashMap<>(32, 0.75f, true) {
-        @Override protected boolean removeEldestEntry(Map.Entry<String, LyricsTimeline> entry) { return size() > 32; }
+    private record Versions(LyricsTimeline original, LyricsTimeline romanized) {
+        LyricsTimeline select(boolean romanization) { return romanization ? romanized : original; }
+    }
+    private static final Map<String, Versions> CACHE = new LinkedHashMap<>(32, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Versions> entry) { return size() > 32; }
     };
     private static volatile Result result = new Result("", null, "Connect Spotify in Lyrics settings");
     private static String wanted = "", keyUsed = "";
     private static boolean busy;
+    private static boolean romanizationUsed;
     private static long retryAt, globallyLimitedUntil;
     public record Result(String trackId, LyricsTimeline timeline, String status) {}
 
@@ -47,9 +51,12 @@ public final class SpicyLyricsService {
         }
         String id = playback.trackId();
         if (!key.equals(keyUsed)) { keyUsed = key; retryAt = 0; wanted = ""; }
-        if (!id.equals(wanted)) {
+        boolean romanization = config.lyricsRomanization.get();
+        if (!id.equals(wanted) || romanizationUsed != romanization) {
             wanted = id; retryAt = 0;
-            LyricsTimeline cached = CACHE.get(id);
+            romanizationUsed = romanization;
+            Versions versions = CACHE.get(id);
+            LyricsTimeline cached = versions == null ? null : versions.select(romanization);
             result = new Result(id, cached, cached == null ? "Loading lyrics" : "");
         }
         long now = System.currentTimeMillis();
@@ -60,7 +67,7 @@ public final class SpicyLyricsService {
     }
 
     private static void fetch(String id, String key) {
-        LyricsTimeline timeline = null;
+        Versions versions = null;
         String status = "Lyrics unavailable; retrying shortly";
         long retry = 30_000;
         try {
@@ -78,8 +85,8 @@ public final class SpicyLyricsService {
                         || !id.equals(envelope.getAsJsonObject("Body").get("id").getAsString())) {
                         throw new IllegalArgumentException("Lyrics belong to another track");
                     }
-                    timeline = LyricsTimeline.parse(envelope);
-                    status = timeline.lines().isEmpty() && timeline.background().isEmpty() ? "No timed lyrics for this song" : "";
+                    versions = new Versions(LyricsTimeline.parse(envelope), LyricsTimeline.parse(envelope, true));
+                    status = versions.original.lines().isEmpty() && versions.original.background().isEmpty() ? "No timed lyrics for this song" : "";
                 } else if (code == 401 || code == 403) {
                     status = "Check your Spicy Lyrics client key and native-client access"; retry = 300_000;
                 } else if (code == 404) {
@@ -97,9 +104,9 @@ public final class SpicyLyricsService {
         }
         synchronized (SpicyLyricsService.class) {
             busy = false;
-            if (timeline != null) CACHE.put(id, timeline);
+            if (versions != null) CACHE.put(id, versions);
             if (id.equals(wanted) && key.equals(keyUsed)) {
-                result = new Result(id, timeline, status);
+                result = new Result(id, versions == null ? null : versions.select(romanizationUsed), status);
                 retryAt = System.currentTimeMillis() + retry;
             }
         }

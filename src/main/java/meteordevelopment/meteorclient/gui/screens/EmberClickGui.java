@@ -260,11 +260,11 @@ public class EmberClickGui extends TabScreen {
             p.scroll = EmberAnim.approach(p.scroll, p.scrollTarget, frameDt, 0.055);
         }
 
+        meteordevelopment.meteorclient.utils.render.EmberAtmosphere.background(graphics, theme, getWindowWidth(), getWindowHeight(), rawMx, rawMy, fade,
+            meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid() ? 45 : BG_OVERLAY.a);
         GuiRenderer r = new GuiRenderer();
         r.theme = theme;
         r.begin(graphics);
-
-        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) ((meteordevelopment.meteorclient.utils.render.EmberAppearance.liquid() ? 45 : BG_OVERLAY.a) * fade)));
 
         // No scissor needed to layer these under the panels: the renderer keeps glow in its
         // own batch and draws it before plain quads within a flush. Forcing a flush here just

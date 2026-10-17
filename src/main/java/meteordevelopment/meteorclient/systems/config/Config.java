@@ -34,12 +34,28 @@ public class Config extends System<Config> {
 
     public final Setting<Boolean> lyricsEnabled = sgLyrics.add(new BoolSetting.Builder()
         .name("lyrics-pill")
-        .description("Show timed Spotify lyrics beside the main status pill.")
+        .description("Show timed lyrics for the current music player beside the main status pill.")
+        .defaultValue(true).build());
+    public final Setting<Boolean> desktopMusic = sgLyrics.add(new BoolSetting.Builder()
+        .name("detect-desktop-music")
+        .description("Read music and playback timing from Windows, including compatible browser tabs. No Spotify login needed.")
+        .defaultValue(true).build());
+    public final Setting<Boolean> lyricsSearchFallback = sgLyrics.add(new BoolSetting.Builder()
+        .name("search-lyrics-by-song")
+        .description("Find line-synced lyrics through LRCLIB using title, artist and duration when Spicy Lyrics is unavailable.")
         .defaultValue(true).build());
     public final Setting<Boolean> lyricsBackground = sgLyrics.add(new BoolSetting.Builder()
         .name("lyrics-background-vocals")
         .description("Show separately timed backing vocals below the lead lyrics.")
         .defaultValue(true).build());
+    public final Setting<Boolean> lyricsCreditsAlways = sgLyrics.add(new BoolSetting.Builder()
+        .name("lyrics-credits-always")
+        .description("Keep provider and contributor credits visible. Otherwise show them for five seconds on each song and on hover.")
+        .defaultValue(false).build());
+    public final Setting<Boolean> lyricsRomanization = sgLyrics.add(new BoolSetting.Builder()
+        .name("lyrics-romanization")
+        .description("Use Spicy Lyrics romanized text when supplied. Keep the original script where romanization is unavailable.")
+        .defaultValue(false).build());
     public final Setting<Integer> lyricsMaxWidth = sgLyrics.add(new IntSetting.Builder()
         .name("lyrics-max-width")
         .description("Maximum lyric pill width before long lines scroll. Short lines fit their text.")
@@ -50,7 +66,7 @@ public class Config extends System<Config> {
         .defaultValue(0.64).range(0.45, 0.9).sliderRange(0.45, 0.9).build());
     public final Setting<Boolean> songAccent = sgVisual.add(new BoolSetting.Builder()
         .name("song-artwork-accent")
-        .description("Use the current Spotify artwork's dominant color for the whole Ember client.")
+        .description("Use the current song artwork's dominant color for the whole Ember client.")
         .defaultValue(false).build());
     public final Setting<String> spicyLyricsKey = sgLyrics.add(new StringSetting.Builder()
         .name("spicy-lyrics-client-key")
@@ -66,6 +82,23 @@ public class Config extends System<Config> {
         .defaultValue(0).range(-3000, 3000).sliderRange(-1500, 1500).build());
 
     // Visual
+
+    public final Setting<Boolean> ambience = sgVisual.add(new BoolSetting.Builder()
+        .name("celestial-ambience").description("Accent-colored aurora light, drifting stars and subtle constellations behind Ember's menus.").defaultValue(true).build());
+    public final Setting<Boolean> ambienceHud = sgVisual.add(new BoolSetting.Builder()
+        .name("ambience-in-game").description("Also show a much fainter atmosphere while playing, outside menus.").defaultValue(false).build());
+    public final Setting<Boolean> groundLight = sgVisual.add(new BoolSetting.Builder()
+        .name("ambience-ground-light").description("Soft additive accent light on nearby ground. Follows terrain without replacing block textures.").defaultValue(true).build());
+    public final Setting<Double> groundLightRadius = sgVisual.add(new DoubleSetting.Builder()
+        .name("ambience-light-radius").description("Radius of the accent light around your feet, in blocks.").defaultValue(3.4).range(1.5, 7).sliderRange(1.5, 7).build());
+    public final Setting<Double> groundLightIntensity = sgVisual.add(new DoubleSetting.Builder()
+        .name("ambience-light-intensity").description("Brightness of the colored floor illumination.").defaultValue(0.65).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> ambienceIntensity = sgVisual.add(new DoubleSetting.Builder()
+        .name("ambience-intensity").description("Strength of the ambient light and stars.").defaultValue(0.65).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> ambienceDensity = sgVisual.add(new DoubleSetting.Builder()
+        .name("ambience-density").description("Number of stars. The particle and geometry counts remain bounded.").defaultValue(0.55).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> ambienceSpeed = sgVisual.add(new DoubleSetting.Builder()
+        .name("ambience-speed").description("Star drift, aurora and parallax motion. Zero holds the atmosphere still.").defaultValue(0.8).range(0, 2).sliderRange(0, 2).build());
 
     public final Setting<Boolean> customFont = sgVisual.add(new BoolSetting.Builder()
         .name("custom-font")

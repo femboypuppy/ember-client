@@ -79,6 +79,7 @@ public class Font {
             int offset = packRange.get(i).first_unicode_codepoint_in_range();
 
             for (int j = 0; j < cbuf.capacity(); j++) {
+                if (STBTruetype.stbtt_FindGlyphIndex(fontInfo, j + offset) == 0) continue;
                 STBTTPackedchar packedChar = cbuf.get(j);
 
                 float ipw = 1f / size; // pixel width and height
@@ -102,8 +103,9 @@ public class Font {
     public double getWidth(String string, int length) {
         double width = 0;
 
-        for (int i = 0; i < length; i++) {
-            int cp = string.charAt(i);
+        for (int i = 0; i < length;) {
+            int cp = string.codePointAt(i);
+            i += Character.charCount(cp);
             CharData c = charMap.get(cp);
             if (c == null) c = charMap.get(32);
 
@@ -116,6 +118,8 @@ public class Font {
     public int getHeight() {
         return height;
     }
+
+    public boolean hasGlyph(int codePoint) { return charMap.containsKey(codePoint); }
 
     public double render(MeshBuilder mesh, String string, double x, double y, Color color, double scale) {
         return renderClipped(mesh, string, x, y, color, scale, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY);
@@ -132,8 +136,9 @@ public class Font {
         int length = string.length();
         mesh.ensureCapacity(length * 4, length * 6);
 
-        for (int i = 0; i < length; i++) {
-            int cp = string.charAt(i);
+        for (int i = 0; i < length;) {
+            int cp = string.codePointAt(i);
+            i += Character.charCount(cp);
             CharData c = charMap.get(cp);
             if (c == null) c = charMap.get(32);
 
