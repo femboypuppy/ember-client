@@ -6,6 +6,7 @@ import java.nio.file.Path;
 /** Exercises the exact procedural geometry used by Minecraft; also exports reviewable previews. */
 public final class CelestialVisualChecks {
     public static void main(String[] args) throws Exception {
+        HandLayoutChecks.run();
         EspGeometryChecks.run();
         terrainSurfaces();
         worldAtmosphere();

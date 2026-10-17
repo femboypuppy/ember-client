@@ -2,6 +2,8 @@ package meteordevelopment.meteorclient.gui.screens;
 
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.render.HandView;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
@@ -53,7 +55,7 @@ public class EmberSettingsPopup {
                          Runnable toggle, Keybind keybind, Runnable openNativeEditor) {
     }
 
-    private enum Kind { GROUP, MODULE_BIND, BOOL, INT, DOUBLE, ENUM, STRING, KEYBIND, COLOR, CHANNEL, RAINBOW, OTHER }
+    private enum Kind { GROUP, MODULE_BIND, BOOL, INT, DOUBLE, ENUM, STRING, KEYBIND, COLOR, CHANNEL, RAINBOW, OTHER, HAND_ACTION }
 
     private record Row(Kind kind, String title, String description, Setting<?> setting, int channel, double height) {
     }
@@ -184,6 +186,12 @@ public class EmberSettingsPopup {
     private List<Row> buildRows() {
         List<Row> rows = new ArrayList<>();
 
+        if (handView() != null) {
+            rows.add(new Row(Kind.GROUP, "Hand layout tools", null, null, 0, GROUP_H));
+            rows.add(new Row(Kind.HAND_ACTION, "Hand symmetry", "Choose the source hand to mirror.", null, 0, ROW_H));
+            rows.add(new Row(Kind.HAND_ACTION, "Visual layout", "Drag the position, rotation and scale.", null, 1, ROW_H));
+        }
+
         if (target.keybind() != null) {
             rows.add(new Row(Kind.GROUP, "Module", null, null, 0, GROUP_H));
             rows.add(new Row(Kind.MODULE_BIND, "Bind", "Key that toggles this module.", null, 0, ROW_H));
@@ -213,6 +221,11 @@ public class EmberSettingsPopup {
         }
 
         return rows;
+    }
+
+    private HandView handView() {
+        HandView hand = Modules.get().get(HandView.class);
+        return hand != null && target != null && target.settings() == hand.settings ? hand : null;
     }
 
     private static Kind kindOf(Setting<?> setting) {
@@ -398,6 +411,12 @@ public class EmberSettingsPopup {
                 double tw = 34, th = 18, tx = ctrlX + CTRL_W - tw;
                 drawToggle(r, row, ((SettingColor) row.setting().get()).rainbow, tx, cy - th / 2, tw, th, fade, dt);
                 hits.add(new Hit(tx, cy - th / 2, tw, th, row, "rainbow"));
+            }
+            case HAND_ACTION -> {
+                double bh = 28, by = cy - bh / 2;
+                r.roundedRect(ctrlX, by, CTRL_W, bh, 8, alpha(over(ctrlX, by, CTRL_W, bh) ? CONTROL_HOVER : CONTROL_BG, fade));
+                text(row.channel() == 0 ? "Make symmitrical" : "Open hand editor", ctrlX + CTRL_W / 2, by + (bh - 9) / 2, alpha(accent(), fade), LABEL_SCALE, 2, CTRL_W - 16);
+                hits.add(new Hit(ctrlX, by, CTRL_W, bh, row, "handAction"));
             }
             case OTHER -> {
                 double bh = 28, by = cy - bh / 2;
@@ -826,6 +845,15 @@ public class EmberSettingsPopup {
         if (!"enumOpen".equals(hit.area())) dropdownRow = null;
 
         switch (hit.area()) {
+            case "handAction" -> {
+                HandView hand = handView();
+                if (button == 0 && hand != null) {
+                    stopEditing(true);
+                    mouseReleased();
+                    if (row.channel() == 0) meteordevelopment.meteorclient.MeteorClient.mc.setScreen(new HandMirrorScreen(theme, hand, () -> {}));
+                    else meteordevelopment.meteorclient.MeteorClient.mc.setScreen(new HandEditorScreen(theme, hand));
+                }
+            }
             case "close" -> close();
             case "active" -> target.toggle().run();
             case "label" -> {

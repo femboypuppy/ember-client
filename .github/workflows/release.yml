@@ -44,6 +44,9 @@ jobs:
       - name: Check music bridge and artwork lifecycle
         run: python3 scripts/check_music_connection.py
 
+      - name: Check hand editor and mirror lifecycle
+        run: python3 scripts/check_hand_editor.py
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

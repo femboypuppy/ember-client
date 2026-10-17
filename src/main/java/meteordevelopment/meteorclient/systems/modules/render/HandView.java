@@ -11,6 +11,12 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.render.HandLayout;
+import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
+import meteordevelopment.meteorclient.gui.screens.HandEditorScreen;
+import meteordevelopment.meteorclient.gui.screens.HandMirrorScreen;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.Hand;
@@ -24,6 +30,10 @@ public class HandView extends Module {
     private final SettingGroup sgArm = settings.createGroup("Arm");
 
     // General
+
+    public final Setting<Boolean> includeEmptyArms = sgGeneral.add(new BoolSetting.Builder()
+        .name("include-empty-arms").description("Apply each hand's layout to empty arms too, before the shared Arm adjustments.")
+        .defaultValue(true).build());
 
     private final Setting<Boolean> followRotations = sgGeneral.add(new BoolSetting.Builder()
         .name("server-rotations")
@@ -182,6 +192,27 @@ public class HandView extends Module {
         super(Categories.Render, "hand-view", "Alters the way items are rendered in your hands.");
     }
 
+    public HandLayout.Pose pose(boolean main) {
+        return HandLayout.Pose.of((main ? posMain : posOff).get(), (main ? rotMain : rotOff).get(), (main ? scaleMain : scaleOff).get());
+    }
+
+    public void setPose(boolean main, HandLayout.Pose pose) {
+        if (!Double.isFinite(pose.x() + pose.y() + pose.z() + pose.rx() + pose.ry() + pose.rz() + pose.sx() + pose.sy() + pose.sz())) return;
+        (main ? posMain : posOff).set(pose.position());
+        (main ? rotMain : rotOff).set(pose.rotation());
+        (main ? scaleMain : scaleOff).set(pose.scale());
+    }
+    public HandLayout.Snapshot snapshot() { return new HandLayout.Snapshot(pose(true), pose(false)); }
+    public void restore(HandLayout.Snapshot snapshot) { setPose(true, snapshot.main()); setPose(false, snapshot.off()); }
+    public void mirrorFrom(boolean main) { setPose(!main, HandLayout.mirror(pose(main))); }
+
+    @Override public WWidget getWidget(GuiTheme theme) {
+        WVerticalList list = theme.verticalList();
+        list.add(theme.button("Make symmitrical")).expandX().widget().action = () -> mc.setScreen(new HandMirrorScreen(theme, this, () -> {}));
+        list.add(theme.button("Open hand editor")).expandX().widget().action = () -> mc.setScreen(new HandEditorScreen(theme, this));
+        return list;
+    }
+
     @EventHandler
     private void onHeldItemRender(HeldItemRendererEvent event) {
         if (Rotations.rotating && followRotations.get()) {
@@ -202,6 +233,12 @@ public class HandView extends Module {
 
     @EventHandler
     private void onRenderArm(ArmRenderEvent event) {
+        if (includeEmptyArms.get()) {
+            boolean main = event.hand == Hand.MAIN_HAND;
+            rotate(event.matrix, (main ? rotMain : rotOff).get());
+            scale(event.matrix, (main ? scaleMain : scaleOff).get());
+            translate(event.matrix, (main ? posMain : posOff).get());
+        }
         rotate(event.matrix, rotArm.get());
         scale(event.matrix, scaleArm.get());
         translate(event.matrix, posArm.get());
