@@ -12,6 +12,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.System;
 import meteordevelopment.meteorclient.systems.Systems;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.CelestialLighting;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -107,13 +108,13 @@ public class Config extends System<Config> {
     public final Setting<Boolean> worldLighting = sgVisual.add(new BoolSetting.Builder()
         .name("accent-world-lighting").description("Match daylight on blocks and entities to the accent sky using Minecraft's lightmap.").defaultValue(true).build());
     public final Setting<Double> worldDarkness = sgVisual.add(new DoubleSetting.Builder()
-        .name("accent-world-darkness").description("Dim daylight to suit the celestial sky. Torch and other block lighting remain independent.").defaultValue(0.42).range(0, 1).sliderRange(0, 1).build());
+        .name("accent-world-darkness").description("Dim daylight to suit the celestial sky. Torch and other block lighting remain independent.").defaultValue(CelestialLighting.BALANCED_DARKNESS).range(0, 1).sliderRange(0, 1).build());
     public final Setting<Double> worldLightTint = sgVisual.add(new DoubleSetting.Builder()
-        .name("accent-world-light-tint").description("How strongly daylight takes the accent color.").defaultValue(0.8).range(0, 1).sliderRange(0, 1).build());
+        .name("accent-world-light-tint").description("How strongly daylight takes the accent color.").defaultValue(CelestialLighting.BALANCED_TINT).range(0, 1).sliderRange(0, 1).build());
     public final Setting<Double> vanillaLightMix = sgVisual.add(new DoubleSetting.Builder()
         .name("vanilla-light-mix").description("Blend back to the original daylight and gamma. 100% restores vanilla lighting.").defaultValue(0).range(0, 1).sliderRange(0, 1).build());
     public final Setting<Double> daylightBrightness = sgVisual.add(new DoubleSetting.Builder()
-        .name("daylight-brightness").description("Brightness of sky illumination, independently of its accent color. Does not brighten unlit caves.").defaultValue(1).range(0.2, 1.6).sliderRange(0.2, 1.6).build());
+        .name("daylight-brightness").description("Brightness of sky illumination, independently of its accent color. Does not brighten unlit caves.").defaultValue(CelestialLighting.BALANCED_BRIGHTNESS).range(0.2, 1.6).sliderRange(0.2, 1.6).build());
     public final Setting<Boolean> worldStars = sgVisual.add(new BoolSetting.Builder()
         .name("world-stars").description("Distant celestial stars and world-anchored, depth-tested starlight motes.").defaultValue(true).build());
     public final Setting<Boolean> worldMotes = sgVisual.add(new BoolSetting.Builder()

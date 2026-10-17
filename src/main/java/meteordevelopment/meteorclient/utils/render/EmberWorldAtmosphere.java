@@ -86,7 +86,8 @@ public final class EmberWorldAtmosphere {
     public static Vector3fc lightTint(Vector3fc original) {
         if (!lightingEnabled()) return original;
         var accent = EmberPalette.accent();
-        float light = Math.max(original.x(), Math.max(original.y(), original.z()));
+        float light = Math.max(original.x(), Math.max(original.y(), original.z()))
+            * CelestialLighting.colorExposure(accent.r << 16 | accent.g << 8 | accent.b);
         int max = Math.max(accent.r, Math.max(accent.g, accent.b));
         double strength = Config.get().worldLightTint.get() * lightBlend();
         return new Vector3f(CelestialLighting.channel(original.x(), accent.r, max, light, strength),

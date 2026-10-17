@@ -92,8 +92,8 @@ public final class EmberGroundLight {
             || mc.world == null || mc.world != world || TILES.isEmpty()) return;
         var center = mc.player.getLerpedPos(event.tickDelta);
         var tint = EmberPalette.accent();
-        int rgb = (tint.r << 16) | (tint.g << 8) | tint.b;
-        double strength = config.groundLightIntensity.get() * 0.44 * MusicReactive.exposure(config.bassGround.get());
+        int rgb = CelestialLighting.surfaceColor((tint.r << 16) | (tint.g << 8) | tint.b);
+        double strength = config.groundLightIntensity.get() * CelestialLighting.SURFACE_GAIN * MusicReactive.exposure(config.bassGround.get());
         if (strength <= 0.001) return;
         MESH.clear();
         for (var tile : TILES) {

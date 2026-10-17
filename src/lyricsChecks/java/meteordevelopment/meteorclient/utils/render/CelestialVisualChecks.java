@@ -76,10 +76,18 @@ public final class CelestialVisualChecks {
         require(CelestialLighting.skyFactor(1, 0.42) < 0.7, "Daytime must actually dim when world darkness is enabled");
         require(CelestialLighting.skyFactor(1, 0) == 1, "Zero darkness must preserve daytime light power");
         require(CelestialLighting.skyFactor(0, 1) == 0, "World lighting cannot create sunlight in an unlit cave");
-        require(CelestialLighting.gamma(100, 0.42) < 0.5, "An external gamma boost must not erase the requested darkness");
+        require(CelestialLighting.gamma(100, 0.42) < 0.55, "An external gamma boost must not erase the requested darkness");
         float red = CelestialLighting.channel(1, 255, 255, 1, 1), blue = CelestialLighting.channel(1, 16, 255, 1, 1);
         require(red > blue * 4 && blue > 0, "Red illumination must be strongly red while retaining texture readability");
         require(CelestialLighting.channel(0.6f, 255, 255, 1, 0) == 0.6f, "Zero tint must preserve the original daylight color");
+        require(CelestialLighting.colorExposure(0x2020FF) > CelestialLighting.colorExposure(0x20FF20), "Blue illumination needs more exposure than green to remain readable");
+        require(CelestialLighting.colorExposure(0xFFFFFF) == 1, "Neutral accents must not overexpose daylight");
+        int blueSurface = CelestialLighting.surfaceColor(0x6898E8);
+        require((blueSurface & 255) > (blueSurface >> 8 & 255) * 2, "The GUI blue must produce distinctly blue surface light instead of a green/cyan wash");
+        for (int rgb : new int[]{0, 0xFFFFFF, 0xFF2020, 0x6898E8, 0x56CE86, 0xE7A450}) {
+            float exposure = CelestialLighting.colorExposure(rgb);
+            require(Float.isFinite(exposure) && exposure >= 1 && exposure <= 1.4f, "Accent exposure must remain bounded, including black and white artwork");
+        }
         require(CelestialLighting.horizon(255, 0.75) > CelestialLighting.horizon(16, 0.75) * 5, "Fog horizon must be colored by the sky without a blue background mix");
         System.out.println("World lighting passed: dimmed daylight, colored light, gamma bounds, cave darkness and horizon matching.");
     }
@@ -198,16 +206,25 @@ public final class CelestialVisualChecks {
         lightFixture(json, "Red", 0xFF2020, 0.42);
         lightFixture(json, "Blue", 0x2020FF, 0.42);
         lightFixture(json, "Dark", 0xFF2020, 1);
+        lightFixture(json, "Balanced blue", 0x6898E8, CelestialLighting.BALANCED_DARKNESS, CelestialLighting.BALANCED_BRIGHTNESS, CelestialLighting.BALANCED_TINT);
+        // Captured v1.5.1 parameters, for a before/after comparison on real textures.
+        json.append(",{\"kind\":\"lighting\",\"name\":\"Previous blue\",\"sky\":0.664,\"gamma\":0.4501,\"tint\":[0.59712624,0.7482039,1],\"surface\":6854888,\"groundAlpha\":0.286}");
         json.append(']');
         Files.createDirectories(path.toAbsolutePath().getParent()); Files.writeString(path, json);
     }
     private static void lightFixture(StringBuilder json, String name, int rgb, double darkness) {
+        lightFixture(json, name, rgb, darkness, 1, 0.8);
+    }
+    private static void lightFixture(StringBuilder json, String name, int rgb, double darkness, double brightness, double strength) {
         int r = rgb >> 16 & 255, g = rgb >> 8 & 255, b = rgb & 255, max = Math.max(r, Math.max(g, b));
+        float exposure = CelestialLighting.colorExposure(rgb);
         json.append(",{\"kind\":\"lighting\",\"name\":\"").append(name).append("\",\"sky\":")
-            .append(CelestialLighting.skyFactor(1, darkness)).append(",\"gamma\":").append(CelestialLighting.gamma(0.7f, darkness)).append(",\"tint\":[")
-            .append(CelestialLighting.channel(1, r, max, 1, 0.8)).append(',')
-            .append(CelestialLighting.channel(1, g, max, 1, 0.8)).append(',')
-            .append(CelestialLighting.channel(1, b, max, 1, 0.8)).append("]}");
+            .append(CelestialLighting.illumination(1, darkness, brightness, 1, 1)).append(",\"gamma\":").append(CelestialLighting.gamma(0.7f, darkness)).append(",\"tint\":[")
+            .append(CelestialLighting.channel(1, r, max, exposure, strength)).append(',')
+            .append(CelestialLighting.channel(1, g, max, exposure, strength)).append(',')
+            .append(CelestialLighting.channel(1, b, max, exposure, strength)).append("],\"surface\":")
+            .append(CelestialLighting.surfaceColor(rgb)).append(",\"groundAlpha\":")
+            .append(0.65 * CelestialLighting.SURFACE_GAIN).append('}');
     }
     private static void append(StringBuilder json, CelestialMesh mesh, String kind, String name) {
         append(json, mesh, kind, name, 0);

@@ -17,6 +17,7 @@ import meteordevelopment.meteorclient.utils.misc.MusicPlayback;
 import meteordevelopment.meteorclient.utils.misc.MusicLyricsService;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.EmberAppearance;
+import meteordevelopment.meteorclient.utils.render.CelestialLighting;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import net.minecraft.client.gui.Click;
@@ -178,10 +179,10 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             style.toString(), () -> ambience.celestialSky.set(style), ambience.celestialSky.get() == style, dt);
         y += 46;
         y = slider(r, y, "Sky intensity", ambience.skyIntensity.get(), percent(ambience.skyIntensity.get()), ambience.skyIntensity::set, dt);
-        y = section(r, y, "WORLD LIGHTING", "Presets set the sliders below. Mix toward vanilla for a more natural scene.");
+        y = section(r, y, "WORLD LIGHTING", "Balanced keeps terrain readable; Cinematic deepens the shadows.");
         double presetW = contentW / 3;
         action(r, contentX, y, presetW - 5, 34, "Vanilla", () -> lightingPreset(0), false, dt);
-        action(r, contentX + presetW, y, presetW - 5, 34, "Soft accent", () -> lightingPreset(1), false, dt);
+        action(r, contentX + presetW, y, presetW - 5, 34, "Balanced", () -> lightingPreset(1), false, dt);
         action(r, contentX + presetW * 2, y, presetW - 5, 34, "Cinematic", () -> lightingPreset(2), false, dt);
         y += 46;
         y = toggle(r, y, "Match world lighting", "Accent-colored daylight on blocks and entities, including during daytime.", ambience.worldLighting.get(), () -> ambience.worldLighting.set(!ambience.worldLighting.get()), dt);
@@ -236,10 +237,10 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     private static void lightingPreset(int preset) {
         Config c = Config.get();
         c.worldLighting.set(preset != 0);
-        c.vanillaLightMix.set(preset == 0 ? 1.0 : preset == 1 ? 0.45 : 0.0);
-        c.worldDarkness.set(preset == 0 ? 0.0 : preset == 1 ? 0.18 : 0.65);
-        c.worldLightTint.set(preset == 0 ? 0.0 : preset == 1 ? 0.35 : 0.9);
-        c.daylightBrightness.set(preset == 2 ? 0.8 : 1.0);
+        c.vanillaLightMix.set(preset == 0 ? 1.0 : 0.0);
+        c.worldDarkness.set(preset == 0 ? 0.0 : preset == 1 ? CelestialLighting.BALANCED_DARKNESS : 0.65);
+        c.worldLightTint.set(preset == 0 ? 0.0 : preset == 1 ? CelestialLighting.BALANCED_TINT : 0.95);
+        c.daylightBrightness.set(preset == 1 ? CelestialLighting.BALANCED_BRIGHTNESS : preset == 2 ? 0.9 : 1.0);
     }
 
     private double typography(GuiRenderer r, double y, double dt) {
