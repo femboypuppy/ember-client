@@ -39,12 +39,16 @@ public final class EmberWorldAtmosphere {
         var c = Config.get();
         return c != null && c.ambience.get() && c.worldAtmosphere.get() && mc.world != null && mc.player != null;
     }
-    private static boolean clearAir() {
-        return mc.gameRenderer.getCamera().getSubmersionType() == CameraSubmersionType.NONE
-            && !mc.player.hasStatusEffect(StatusEffects.BLINDNESS) && !mc.player.hasStatusEffect(StatusEffects.DARKNESS);
+    private static boolean effectsVisible() {
+        // Liquid changes fog visibility, not the selected atmosphere or daylight palette.
+        return !mc.player.hasStatusEffect(StatusEffects.BLINDNESS) && !mc.player.hasStatusEffect(StatusEffects.DARKNESS);
     }
-    public static boolean openSky() { return enabled() && mc.world.getDimension().hasSkyLight() && clearAir(); }
+    public static boolean openSky() { return enabled() && mc.world.getDimension().hasSkyLight() && effectsVisible(); }
     public static boolean fogEnabled() { return openSky() && Config.get().accentFog.get() && Config.get().fogAmount.get() > 0; }
+    public static boolean fogHazeEnabled() {
+        // Underwater/lava/snow distances belong to Minecraft's medium-specific fog.
+        return fogEnabled() && mc.gameRenderer.getCamera().getSubmersionType() == CameraSubmersionType.NONE;
+    }
     public static boolean skyActive() { return openSky() && Config.get().accentSky.get() && Config.get().skyIntensity.get() > 0; }
     public static boolean lightingEnabled() {
         return openSky() && Config.get().worldLighting.get() && (Config.get().worldDarkness.get() > 0 || Config.get().worldLightTint.get() > 0);
@@ -152,7 +156,7 @@ public final class EmberWorldAtmosphere {
     @EventHandler private static void onRender(Render3DEvent event) {
         if (!enabled()) { previous = 0; world = null; return; }
         advance();
-        if (!clearAir()) return;
+        if (!effectsVisible()) return;
         var c = Config.get(); var accent = EmberPalette.accent();
         int rgb = accent.r << 16 | accent.g << 8 | accent.b;
         double intensity = c.ambienceIntensity.get();

@@ -36,7 +36,7 @@ public abstract class FogRendererMixin {
     @ModifyArgs(method = "applyFog(Lnet/minecraft/client/render/Camera;ILnet/minecraft/client/render/RenderTickCounter;FLnet/minecraft/client/world/ClientWorld;)Lorg/joml/Vector4f;",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/fog/FogRenderer;applyFog(Ljava/nio/ByteBuffer;ILorg/joml/Vector4f;FFFFFF)V"))
     private void ember$haze(Args args) {
-        if (!EmberWorldAtmosphere.fogEnabled()) return;
+        if (!EmberWorldAtmosphere.fogHazeEnabled()) return;
         float distance = args.get(6);
         if (!Float.isFinite(distance) || distance <= 24) return;
         double amount = Config.get().fogAmount.get();
