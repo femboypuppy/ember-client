@@ -26,6 +26,7 @@ import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.EmberStrip;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
@@ -656,6 +657,31 @@ public class SusChunkFinder extends Module {
         .range(32, 2048)
         .sliderRange(64, 1024)
         .visible(renderCenterDot::get)
+        .build()
+    );
+
+    private final Setting<Boolean> tracers = sgRender.add(new BoolSetting.Builder()
+        .name("tracers")
+        .description("Draw a line from your crosshair to every flagged chunk, including ones saved from earlier sessions.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> tracerRange = sgRender.add(new IntSetting.Builder()
+        .name("tracer-range")
+        .description("Only draw tracers to chunks within this many blocks.")
+        .defaultValue(4096)
+        .range(64, 100000)
+        .sliderRange(256, 20000)
+        .visible(tracers::get)
+        .build()
+    );
+
+    private final Setting<SettingColor> tracerColor = sgRender.add(new ColorSetting.Builder()
+        .name("tracer-color")
+        .description("Tracer color. High-confidence and griefed chunks keep their dot color.")
+        .defaultValue(new SettingColor(170, 120, 255, 200))
+        .visible(tracers::get)
         .build()
     );
 
@@ -2457,6 +2483,8 @@ public class SusChunkFinder extends Module {
             }
         }
 
+        if (tracers.get()) drawTracers(event, visible);
+
         if (!renderCenterDot.get()) {
             hovered = null;
             return;
@@ -2506,6 +2534,22 @@ public class SusChunkFinder extends Module {
             case PlayerEyeY -> Double.isNaN(smoothEyeY) ? fc.focusY + 0.5 : smoothEyeY;
             case FixedY -> renderY.get() + 0.5;
         };
+    }
+
+    /** Lines from the crosshair to each chunk's center dot, so a find stays easy to get back to. */
+    private void drawTracers(Render3DEvent event, List<FlaggedChunk> visible) {
+        double range = tracerRange.get();
+        double px = mc.player.getX(), pz = mc.player.getZ();
+
+        for (FlaggedChunk fc : visible) {
+            double cx = (fc.chunkX << 4) + 8.0, cz = (fc.chunkZ << 4) + 8.0;
+            double dx = cx - px, dz = cz - pz;
+            if (dx * dx + dz * dz > range * range) continue;
+
+            Color tone = dotColor(fc);
+            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, cx, dotY(fc), cz,
+                tone != null ? tone : tracerColor.get());
+        }
     }
 
     private void drawChunk(Render3DEvent event, FlaggedChunk fc, double y) {
