@@ -10,7 +10,9 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.Reference2ByteOpenHashMap;
 import meteordevelopment.meteorclient.MeteorClient;
+import it.unimi.dsi.fastutil.longs.LongIterator;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
@@ -38,6 +40,10 @@ import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.ChestBlockEntity;
 import net.minecraft.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.client.render.Camera;
+import net.minecraft.client.world.ClientWorld;
+import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
+import net.minecraft.network.packet.s2c.play.LightData;
+import net.minecraft.network.packet.s2c.play.LightUpdateS2CPacket;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.state.property.Properties;
@@ -54,8 +60,13 @@ import net.minecraft.world.World;
 import net.minecraft.world.dimension.DimensionType;
 import org.joml.Vector3d;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -214,6 +225,14 @@ public class SusChunkFinder extends Module {
         .defaultValue(20)
         .sliderRange(-64, 64)
         .visible(undergroundStorage::get)
+        .onChanged(v -> rescanLoadedChunks())
+        .build()
+    );
+
+    private final Setting<Boolean> lightLeak = sgBlocks.add(new BoolSetting.Builder()
+        .name("light-leak")
+        .description("Experimental. Spots dug-out rooms from light data, which the server still sends for blocks it hides below the deepslate. Natural caves can trigger it too on some servers. Chunks you walk through are remembered and never flagged for this, so your own digging doesn't count.")
+        .defaultValue(false)
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
@@ -768,6 +787,30 @@ public class SusChunkFinder extends Module {
     private float hoverAnim;
     private float shellAnim;
 
+    // Light data, see onPacket. Kept across the relog (a rejoin) and only reset for another world.
+    // The maps are guarded by flagged; the protection bookkeeping is main-thread only.
+
+    /** Per chunk, light sections (bit = light section index) sent as a sky-light array of all zeros. */
+    private final Long2IntMap lightZeroed = new Long2IntOpenHashMap();
+    /** Per chunk, light sections seen lit or untouched at some point. */
+    private final Long2IntMap lightSentNotDark = new Long2IntOpenHashMap();
+    /** Chunks that had a light signal this session; protection doesn't take that back. */
+    private final LongSet lightFlaggedOnce = new LongOpenHashSet();
+    /** Chunks you have been around, never flagged for light so your own digging doesn't count. Saved per world. */
+    private final LongSet dugProtected = new LongOpenHashSet();
+    private final LongSet protectPending = new LongOpenHashSet();
+    private long protectCenter = Long.MIN_VALUE;
+    private boolean protectEntryPending, protectDirty;
+    private int protectSaveTimer;
+    private String lightPlace = "";
+    private int lightStatChunks, lightStatDark, lightStatLogged, lightStatTimer;
+    private volatile boolean loggedLightError;
+
+    private static final int LIGHT_MAP_CAP = 250_000;
+    /** Light sections reaching above this are surface, where sky light is ordinary. */
+    private static final int LIGHT_CEILING_Y = 62;
+    private static final int PROTECT_RADIUS = 2;
+
     public SusChunkFinder() {
         super(Categories.Donut, "sus-chunk-finder", "Highlights chunks showing signs of player activity.");
     }
@@ -783,6 +826,7 @@ public class SusChunkFinder extends Module {
 
         lastDimension = mc.world.getDimension();
         context = FindsStorage.context();
+        selectLightPlace(context.world() + "|" + context.dimension());
 
         synchronized (flagged) {
             for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) {
@@ -802,6 +846,7 @@ public class SusChunkFinder extends Module {
 
     @Override
     public void onDeactivate() {
+        saveProtected();
         clear();
     }
 
@@ -899,6 +944,280 @@ public class SusChunkFinder extends Module {
         for (BlockEntity be : chunk.getBlockEntities().values()) if (isStorage(be)) out.add(be.getPos().asLong());
     }
 
+    // Light data
+    //
+    // The server hides the blocks below the deepslate while you are above it, but not their light.
+    // A section nobody touched has no sky-light array at all and is sent as "empty". Once blocks
+    // there change, the light engine gives it a real array, which deep underground is all zeros.
+    // So an all-zero array below the surface means someone dug or built there, even with the blocks
+    // themselves hidden.
+
+    private static final int LIGHT_UNKNOWN = 0, LIGHT_ZERO = 1, LIGHT_LIT = 2;
+
+    /** Network thread: ChunkData and LightUpdate packets, read before the client applies them. */
+    @EventHandler
+    private void onPacket(PacketEvent.Receive event) {
+        // An exception here would end up in the network handler and disconnect you.
+        try {
+            readLight(event);
+        } catch (Throwable t) {
+            if (!loggedLightError) {
+                loggedLightError = true;
+                MeteorClient.LOG.warn("Sus chunk light read failed", t);
+            }
+        }
+    }
+
+    private void readLight(PacketEvent.Receive event) {
+        LightData data;
+        int chunkX, chunkZ;
+        boolean fresh;
+        if (event.packet instanceof ChunkDataS2CPacket packet) {
+            data = packet.getLightData();
+            chunkX = packet.getChunkX();
+            chunkZ = packet.getChunkZ();
+            fresh = true;
+        } else if (event.packet instanceof LightUpdateS2CPacket packet) {
+            data = packet.getData();
+            chunkX = packet.getChunkX();
+            chunkZ = packet.getChunkZ();
+            fresh = false;
+        } else {
+            return;
+        }
+
+        ClientWorld world = mc.world;
+        if (data == null || world == null || world.getRegistryKey() != World.OVERWORLD) return;
+
+        int count = world.countVerticalSections(), bottom = world.getBottomSectionCoord();
+        BitSet inited = data.getInitedSky(), uninited = data.getUninitedSky();
+        List<byte[]> nibbles = data.getSkyNibbles();
+
+        int zeroSet = 0, zeroClear = 0, notDark = 0, next = 0;
+        // Light sections run from one below the world to one above it, so index i is section bottom + i - 1.
+        for (int i = 0; i < count + 2 && i < 32; i++) {
+            boolean sent = inited.get(i);
+            byte[] payload = sent && next < nibbles.size() ? nibbles.get(next) : null;
+            if (sent) next++;
+            if (i < 1 || i > count || !lightCandidate(i, bottom)) continue;
+
+            if (sent) {
+                int status = classifyLight(payload);
+                if (status == LIGHT_ZERO) zeroSet |= 1 << i;
+                else if (status == LIGHT_LIT) {
+                    zeroClear |= 1 << i;
+                    notDark |= 1 << i;
+                }
+            } else if (uninited.get(i)) {
+                zeroClear |= 1 << i;
+                notDark |= 1 << i;
+            }
+        }
+
+        long key = ChunkPos.toLong(chunkX, chunkZ);
+        // Below the deepslate the blocks are real anyway, and the light around you is your own digging.
+        boolean below = mc.player != null && mc.player.getY() < 0;
+
+        synchronized (flagged) {
+            // How often dark deep sections turn up at all, logged now and then (see onTick): in untouched
+            // terrain this is the false positive rate of the light-leak signal.
+            if (fresh && !below) {
+                lightStatChunks++;
+                if (zeroSet != 0) lightStatDark++;
+            }
+
+            if (notDark != 0) {
+                if (lightSentNotDark.size() >= LIGHT_MAP_CAP) lightSentNotDark.clear();
+                lightSentNotDark.put(key, lightSentNotDark.get(key) | notDark);
+            }
+            if (below) return;
+
+            // Sections a packet leaves out keep what was known about them.
+            int old = lightZeroed.get(key);
+            int now = (old & ~zeroClear) | zeroSet;
+            if (now == 0) lightZeroed.remove(key);
+            else {
+                if (lightZeroed.size() >= LIGHT_MAP_CAP) lightZeroed.clear();
+                lightZeroed.put(key, now);
+            }
+            // A full chunk gets scanned when it is applied; a light update on its own needs a rescan.
+            if (!fresh && now != old) pendingRescan.add(key);
+        }
+    }
+
+    /** Every five minutes while chunks keep arriving, so a play session shows how noisy the signal would be. */
+    private void logLightStats() {
+        int chunks, dark;
+        synchronized (flagged) {
+            chunks = lightStatChunks;
+            dark = lightStatDark;
+        }
+        if (chunks == lightStatLogged) return;
+        lightStatLogged = chunks;
+        MeteorClient.LOG.info("[Ember SusChunk] Light stats: {} of {} chunks loaded from above had dark deep sections ({}%); light-leak is {}",
+            dark, chunks, chunks == 0 ? 0 : Math.round(dark * 1000.0 / chunks) / 10.0, lightLeak.get() ? "on" : "off");
+    }
+
+    private static boolean lightCandidate(int index, int bottomSection) {
+        return (bottomSection + index - 1) * 16 + 15 < LIGHT_CEILING_Y;
+    }
+
+    private static int classifyLight(byte[] payload) {
+        if (payload == null || payload.length != 2048) return LIGHT_UNKNOWN;
+        for (byte b : payload) if (b != 0) return LIGHT_LIT;
+        return LIGHT_ZERO;
+    }
+
+    /**
+     * Whether a section and the six around it hold no air, as when the server sends hidden blocks as
+     * solid fill. A dark array there is less certain, since nothing around it can be checked.
+     */
+    private boolean airlessAround(int chunkX, int sectionY, int chunkZ) {
+        if (!airless(chunkX, sectionY, chunkZ)) return false;
+        return airless(chunkX, sectionY + 1, chunkZ) && airless(chunkX, sectionY - 1, chunkZ)
+            && airless(chunkX + 1, sectionY, chunkZ) && airless(chunkX - 1, sectionY, chunkZ)
+            && airless(chunkX, sectionY, chunkZ + 1) && airless(chunkX, sectionY, chunkZ - 1);
+    }
+
+    private boolean airless(int chunkX, int sectionY, int chunkZ) {
+        if (sectionY < mc.world.getBottomSectionCoord() || sectionY > mc.world.getTopSectionCoord()) return true;
+        if (!(mc.world.getChunk(chunkX, chunkZ, ChunkStatus.FULL, false) instanceof WorldChunk chunk)) return false;
+
+        ChunkSection section = chunk.getSection(chunk.sectionCoordToIndex(sectionY));
+        if (section.isEmpty()) return false;
+        // The palette can keep an air entry no block uses any more, so only a hit there needs the full look.
+        if (!section.hasAny(BlockState::isAir)) return true;
+        for (int y = 0; y < 16; y++) {
+            for (int z = 0; z < 16; z++) {
+                for (int x = 0; x < 16; x++) {
+                    if (section.getBlockState(x, y, z).isAir()) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Main thread. {zeroed, turned dark, airless} section bits for a chunk's light signal, or null without one. */
+    private int[] lightInputs(WorldChunk chunk) {
+        if (!lightLeak.get() || mc.world == null || mc.world.getRegistryKey() != World.OVERWORLD) return null;
+
+        long key = chunk.getPos().toLong();
+        int zeroed, turnedDark;
+        synchronized (flagged) {
+            zeroed = lightZeroed.get(key);
+            if (zeroed == 0 || (dugProtected.contains(key) && !lightFlaggedOnce.contains(key))) return null;
+            turnedDark = zeroed & lightSentNotDark.get(key);
+        }
+
+        int airless = 0, bottom = mc.world.getBottomSectionCoord();
+        for (int i = 1; i < 32; i++) {
+            if ((zeroed & ~turnedDark & (1 << i)) != 0 && airlessAround(chunk.getPos().x, bottom + i - 1, chunk.getPos().z)) airless |= 1 << i;
+        }
+        return new int[] {zeroed, turnedDark, airless};
+    }
+
+    /**
+     * Main thread. Once the chunk you are in has arrived without a light signal, the chunks around it
+     * get protected as they arrive: whatever digging shows up there later is most likely your own.
+     */
+    private void updateProtection() {
+        if (!lightLeak.get() || mc.player == null || mc.world.getRegistryKey() != World.OVERWORLD) return;
+
+        long here = mc.player.getChunkPos().toLong();
+        if (here != protectCenter) {
+            protectCenter = here;
+            protectEntryPending = true;
+            protectPending.clear();
+        }
+
+        if (protectEntryPending) {
+            if (!isLoaded(here)) return;
+            protectEntryPending = false;
+
+            boolean hereFlagged;
+            synchronized (flagged) {
+                hereFlagged = lightZeroed.get(here) != 0;
+            }
+            if (hereFlagged) return;
+
+            int cx = ChunkPos.getPackedX(here), cz = ChunkPos.getPackedZ(here);
+            for (int dx = -PROTECT_RADIUS; dx <= PROTECT_RADIUS; dx++) {
+                for (int dz = -PROTECT_RADIUS; dz <= PROTECT_RADIUS; dz++) protectPending.add(ChunkPos.toLong(cx + dx, cz + dz));
+            }
+        }
+
+        if (protectPending.isEmpty()) return;
+        synchronized (flagged) {
+            LongIterator it = protectPending.iterator();
+            while (it.hasNext()) {
+                long key = it.nextLong();
+                if (!isLoaded(key)) continue;
+                it.remove();
+                if (lightZeroed.get(key) == 0 && dugProtected.add(key)) protectDirty = true;
+            }
+        }
+    }
+
+    private boolean isLoaded(long key) {
+        return mc.world.getChunk(ChunkPos.getPackedX(key), ChunkPos.getPackedZ(key), ChunkStatus.FULL, false) != null;
+    }
+
+    /** Switches the light state to another world or dimension; the relog keeps the same place. */
+    private void selectLightPlace(String place) {
+        if (place.equals(lightPlace)) return;
+        saveProtected();
+
+        synchronized (flagged) {
+            lightPlace = place;
+            lightZeroed.clear();
+            lightSentNotDark.clear();
+            lightFlaggedOnce.clear();
+            dugProtected.clear();
+            protectDirty = false;
+
+            File file = protectedFile(place);
+            if (file != null && file.isFile()) {
+                try {
+                    ByteBuffer buffer = ByteBuffer.wrap(Files.readAllBytes(file.toPath()));
+                    while (buffer.remaining() >= Long.BYTES) dugProtected.add(buffer.getLong());
+                } catch (IOException e) {
+                    MeteorClient.LOG.warn("Couldn't read {}", file, e);
+                }
+            }
+        }
+        protectCenter = Long.MIN_VALUE;
+        protectPending.clear();
+    }
+
+    /** Writes the protected chunks on the scan thread, so the game never waits for the disk. */
+    private void saveProtected() {
+        long[] keys;
+        File file;
+        synchronized (flagged) {
+            if (!protectDirty) return;
+            protectDirty = false;
+            keys = dugProtected.toLongArray();
+            file = protectedFile(lightPlace);
+        }
+        if (file == null) return;
+
+        worker.submit(() -> {
+            try {
+                ByteBuffer buffer = ByteBuffer.allocate(keys.length * Long.BYTES);
+                for (long key : keys) buffer.putLong(key);
+                Files.createDirectories(file.getParentFile().toPath());
+                Files.write(file.toPath(), buffer.array());
+            } catch (IOException e) {
+                MeteorClient.LOG.warn("Couldn't save {}", file, e);
+            }
+        });
+    }
+
+    private static File protectedFile(String place) {
+        if (place.isEmpty() || place.startsWith("|")) return null;
+        return new File(new File(MeteorClient.FOLDER, "ember-finds"), place.replaceAll("[^A-Za-z0-9._-]", "_") + ".dug-protected");
+    }
+
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
         if (!isUpdateRelevant(event.newState) && !isUpdateRelevant(event.oldState)) return;
@@ -944,6 +1263,16 @@ public class SusChunkFinder extends Module {
             }
         }
 
+        updateProtection();
+        if (++protectSaveTimer >= 200) {
+            protectSaveTimer = 0;
+            saveProtected();
+        }
+        if (++lightStatTimer >= 6000) {
+            lightStatTimer = 0;
+            logLightStats();
+        }
+
         if (++rescanTimer < 20) return;
         rescanTimer = 0;
 
@@ -966,6 +1295,7 @@ public class SusChunkFinder extends Module {
         boolean nether = mc.world != null && mc.world.getRegistryKey() == World.NETHER;
         boolean end = mc.world != null && mc.world.getRegistryKey() == World.END;
         long[] storage = storageAround(chunk);
+        int[] light = lightInputs(chunk);
 
         worker.submit(() -> {
             if (!isActive() || generation != scanGeneration.get()) return;
@@ -979,7 +1309,7 @@ public class SusChunkFinder extends Module {
             Scan scan;
             FlaggedChunk result;
             try {
-                scan = new Scan(chunk, nether, end, storage);
+                scan = new Scan(chunk, nether, end, storage, light);
                 result = scan.run(neighborCtx);
             } catch (Throwable t) {
                 if (!loggedScanError) {
@@ -991,7 +1321,7 @@ public class SusChunkFinder extends Module {
 
             if (scan.hiddenSections > 0 && !loggedHiddenDeep) {
                 loggedHiddenDeep = true;
-                MeteorClient.LOG.info("[Ember SusChunk] Chunk {} arrived with {} sections below Y 0 hidden (sent as {}); judging such chunks from above the deepslate only",
+                MeteorClient.LOG.info("[Ember SusChunk] Chunk {} arrived with {} sections below Y 0 hidden ({}); judging such chunks from above the deepslate only",
                     chunk.getPos(), scan.hiddenSections, scan.blankLook);
             }
 
@@ -1038,6 +1368,11 @@ public class SusChunkFinder extends Module {
                 } else {
                     flagged.put(key, result);
                     cleared.remove(key);
+                    if (scan.lightLabel != null && result.reasons.contains(scan.lightLabel) && lightFlaggedOnce.add(key)) {
+                        MeteorClient.LOG.info("[Ember SusChunk] Light leak at {}: {} (dark sections {}, went dark {}, in hidden fill {}, deep part hidden {})",
+                            chunk.getPos(), scan.lightLabel, Integer.toBinaryString(scan.light[0]), Integer.toBinaryString(scan.light[1]),
+                            Integer.toBinaryString(scan.light[2]), scan.hiddenSections > 0);
+                    }
                     // Chunks remembered from earlier sessions were already announced back then.
                     isNewFind = !saved.containsKey(key) && announced.add(key);
                     if (isNewFind ? saveFinds.get() : firstFullLook && saved.containsKey(key)) saved.put(key, result);
@@ -1093,7 +1428,7 @@ public class SusChunkFinder extends Module {
 
     /** Wording of the reasons that can still flag a chunk on their own. */
     private static final String[] MAIN_REASONS = {"rotated deepslate", "cobbled deepslate", "in one room", "redstone parts (",
-        "spawner grinder", "kelp", "vines", "amethyst", "bamboo", "cocoa", "bee nest"};
+        "spawner grinder", "kelp", "vines", "amethyst", "bamboo", "cocoa", "bee nest", "(light data)"};
 
     /** Whether a saved find from an earlier session passes the current filters. */
     private boolean savedVisible(FlaggedChunk fc) {
@@ -1394,8 +1729,13 @@ public class SusChunkFinder extends Module {
         /** Lowest Y with real data. */
         final int floorY;
 
-        Scan(WorldChunk chunk, boolean nether, boolean end, long[] storage) {
+        /** From {@link #lightInputs}: zeroed, turned dark and airless light section bits, or null. */
+        final int[] light;
+        String lightLabel;
+
+        Scan(WorldChunk chunk, boolean nether, boolean end, long[] storage, int[] light) {
             this.storage = storage;
+            this.light = light;
             this.lowY = limitHeight.get() ? Math.min(heightMin.get(), heightMax.get()) : Integer.MIN_VALUE;
             this.highY = limitHeight.get() ? Math.max(heightMin.get(), heightMax.get()) : Integer.MAX_VALUE;
             this.sections = chunk.getSectionArray();
@@ -1410,22 +1750,25 @@ public class SusChunkFinder extends Module {
             this.end = end;
             this.playerY = new int[height];
 
-            // DonutSMP leaves out everything below the deepslate while you are above it. Two blank deep
-            // sections can't happen in real terrain, so that marks a chunk sent that way.
+            // DonutSMP leaves out everything below the deepslate while you are above it. Deep terrain can
+            // generate one solid cube of plain deepslate now and then (seen in testing), but not three
+            // of the four sections below Y 0, so that marks a chunk sent that way.
             this.blank = new boolean[sections.length];
             int blanks = 0;
+            StringBuilder look = new StringBuilder();
             if (!nether && !end) {
                 for (int i = 0; i < sections.length && minY + (i << 4) + 15 < 0; i++) {
-                    blank[i] = isBlank(sections[i]);
+                    ChunkSection section = sections[i];
+                    blank[i] = isBlank(section);
                     if (blank[i]) blanks++;
+                    if (look.length() > 0) look.append(", ");
+                    look.append("Y ").append(minY + (i << 4)).append(": ").append(!blank[i] ? "real terrain"
+                        : section == null || section.isEmpty() ? "empty" : Registries.BLOCK.getId(section.getBlockState(0, 0, 0).getBlock()).toString());
                 }
             }
-            if (blanks < 2) Arrays.fill(blank, false);
-            else {
-                ChunkSection first = sections[0];
-                blankLook = first == null || first.isEmpty() ? "empty" : Registries.BLOCK.getId(first.getBlockState(0, 0, 0).getBlock()).toString();
-            }
-            this.hiddenSections = blanks < 2 ? 0 : blanks;
+            if (blanks < 3) Arrays.fill(blank, false);
+            else blankLook = look.toString();
+            this.hiddenSections = blanks < 3 ? 0 : blanks;
             this.floorY = hiddenSections > 0 ? 0 : minY;
 
             Arrays.fill(kelpBottom, Integer.MAX_VALUE);
@@ -1766,6 +2109,20 @@ public class SusChunkFinder extends Module {
                     signals.add(bees);
                     hivesCounted = includeBeehives.get();
                 }
+            }
+
+            // Dug-out space from light data. Sure when some dark section can't be explained away; only
+            // possible when every one went dark after being seen lit, or sits in hidden solid fill.
+            if (light != null) {
+                int zeroed = light[0];
+                int sure = zeroed & ~light[1] & ~light[2];
+                int bits = sure != 0 ? sure : zeroed;
+                int bottomSection = minY >> 4;
+                int yLo = (bottomSection + Integer.numberOfTrailingZeros(bits) - 1) * 16;
+                int yHi = (bottomSection + 31 - Integer.numberOfLeadingZeros(bits) - 1) * 16 + 15;
+                String where = "Y " + yLo + " to " + yHi + " (light data)";
+                lightLabel = (sure != 0 ? "dug-out space at " : "possible dug-out space at ") + where;
+                signals.add(new Signal(lightLabel, CAT_BUILD, sure != 0 ? 0.6 : 0.35, false, true, (yLo + yHi) / 2));
             }
 
             // Supporting clues. None of these flag a chunk alone, since griefed chunks all over DonutSMP
