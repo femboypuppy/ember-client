@@ -35,3 +35,19 @@ exception recovery. The installed jar and game configuration are read only.
 
 This checks cache scheduling and composition; final driver rendering still needs
 an in-game check with the built mod.
+
+## Top-bar logo
+
+The brand glyph uses `assets/meteor-client/icon.png`, shared with the Fabric icon
+and README. The compact Liquid Glass status bar places it in an inner rounded
+tile with a gentle float/pulse and a highlight following the rounded perimeter.
+In **HUD → Ember Status Bar**, **Animate logo** switches motion off and **Logo
+motion** controls its speed. Appearance's global Motion setting also applies.
+
+Artwork draws through a deferred HUD task, after color and text batches finish,
+with a white tint and linear sampling. The regular status bar uses the same
+artwork without the animated tile. No additional render target is allocated.
+
+`python scripts/check_ember_logo.py` checks the production tile's bounds, reduced
+motion, highlight loop, draw budget, fade and deferred texture submission. It also
+exports draw commands under `build/logo-preview` for visual review.

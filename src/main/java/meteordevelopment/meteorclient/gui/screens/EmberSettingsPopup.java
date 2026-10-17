@@ -4,6 +4,9 @@ import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.render.HandView;
+import meteordevelopment.meteorclient.systems.modules.render.Chams;
+import meteordevelopment.meteorclient.systems.modules.render.StorageESP;
+import meteordevelopment.meteorclient.systems.modules.render.blockesp.BlockESP;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
@@ -55,7 +58,7 @@ public class EmberSettingsPopup {
                          Runnable toggle, Keybind keybind, Runnable openNativeEditor) {
     }
 
-    private enum Kind { GROUP, MODULE_BIND, BOOL, INT, DOUBLE, ENUM, STRING, KEYBIND, COLOR, CHANNEL, RAINBOW, OTHER, HAND_ACTION }
+    private enum Kind { GROUP, MODULE_BIND, BOOL, INT, DOUBLE, ENUM, STRING, KEYBIND, COLOR, CHANNEL, RAINBOW, OTHER, HAND_ACTION, PREVIEW_ACTION }
 
     private record Row(Kind kind, String title, String description, Setting<?> setting, int channel, double height) {
     }
@@ -186,6 +189,11 @@ public class EmberSettingsPopup {
     private List<Row> buildRows() {
         List<Row> rows = new ArrayList<>();
 
+        if (hasMaterialPreview()) {
+            rows.add(new Row(Kind.GROUP, "3D preview", null, null, 0, GROUP_H));
+            rows.add(new Row(Kind.PREVIEW_ACTION, "Live preview", "Rotate, zoom and view the material.", null, 0, ROW_H));
+        }
+
         if (handView() != null) {
             rows.add(new Row(Kind.GROUP, "Hand layout tools", null, null, 0, GROUP_H));
             rows.add(new Row(Kind.HAND_ACTION, "Hand symmetry", "Choose the source hand to mirror.", null, 0, ROW_H));
@@ -226,6 +234,17 @@ public class EmberSettingsPopup {
     private HandView handView() {
         HandView hand = Modules.get().get(HandView.class);
         return hand != null && target != null && target.settings() == hand.settings ? hand : null;
+    }
+
+    private boolean hasMaterialPreview() {
+        var modules = Modules.get();
+        if (modules == null || target == null || target.openNativeEditor() == null) return false;
+        var chams = modules.get(Chams.class);
+        var block = modules.get(BlockESP.class);
+        var storage = modules.get(StorageESP.class);
+        return (chams != null && chams.settings == target.settings())
+            || (block != null && block.settings == target.settings())
+            || (storage != null && storage.settings == target.settings());
     }
 
     private static Kind kindOf(Setting<?> setting) {
@@ -412,11 +431,11 @@ public class EmberSettingsPopup {
                 drawToggle(r, row, ((SettingColor) row.setting().get()).rainbow, tx, cy - th / 2, tw, th, fade, dt);
                 hits.add(new Hit(tx, cy - th / 2, tw, th, row, "rainbow"));
             }
-            case HAND_ACTION -> {
+            case HAND_ACTION, PREVIEW_ACTION -> {
                 double bh = 28, by = cy - bh / 2;
                 r.roundedRect(ctrlX, by, CTRL_W, bh, 8, alpha(over(ctrlX, by, CTRL_W, bh) ? CONTROL_HOVER : CONTROL_BG, fade));
-                text(row.channel() == 0 ? "Make symmitrical" : "Open hand editor", ctrlX + CTRL_W / 2, by + (bh - 9) / 2, alpha(accent(), fade), LABEL_SCALE, 2, CTRL_W - 16);
-                hits.add(new Hit(ctrlX, by, CTRL_W, bh, row, "handAction"));
+                text(row.kind() == Kind.PREVIEW_ACTION ? "Open 3D preview" : row.channel() == 0 ? "Make symmitrical" : "Open hand editor", ctrlX + CTRL_W / 2, by + (bh - 9) / 2, alpha(accent(), fade), LABEL_SCALE, 2, CTRL_W - 16);
+                hits.add(new Hit(ctrlX, by, CTRL_W, bh, row, row.kind() == Kind.PREVIEW_ACTION ? "previewAction" : "handAction"));
             }
             case OTHER -> {
                 double bh = 28, by = cy - bh / 2;
@@ -845,6 +864,13 @@ public class EmberSettingsPopup {
         if (!"enumOpen".equals(hit.area())) dropdownRow = null;
 
         switch (hit.area()) {
+            case "previewAction" -> {
+                if (button == 0 && hasMaterialPreview()) {
+                    stopEditing(true);
+                    mouseReleased();
+                    target.openNativeEditor().run();
+                }
+            }
             case "handAction" -> {
                 HandView hand = handView();
                 if (button == 0 && hand != null) {

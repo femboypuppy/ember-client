@@ -14,6 +14,7 @@ import meteordevelopment.meteorclient.utils.render.EmberIcons;
 import meteordevelopment.meteorclient.utils.render.EmberStrip;
 import meteordevelopment.meteorclient.utils.render.EmberAppearance;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
+import meteordevelopment.meteorclient.utils.render.EmberLogo;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import net.minecraft.util.Identifier;
@@ -55,6 +56,20 @@ public class EmberStatusBarHud extends HudElement {
         .build());
     private float glassIntro;
     private double glassWidth;
+    private double logoTime;
+    private final Setting<Boolean> animateLogo = sgGeneral.add(new BoolSetting.Builder()
+        .name("animate-logo")
+        .description("Gently float the Ember logo and move a highlight around its inner rounded tile.")
+        .defaultValue(true)
+        .build());
+    private final Setting<Double> logoMotion = sgGeneral.add(new DoubleSetting.Builder()
+        .name("logo-motion")
+        .description("Motion speed of the logo tile. Also respects Appearance's Motion setting.")
+        .defaultValue(1)
+        .range(0, 2)
+        .sliderRange(0, 2)
+        .visible(animateLogo::get)
+        .build());
 
     private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
         .name("scale")
@@ -157,8 +172,10 @@ public class EmberStatusBarHud extends HudElement {
 
     @Override
     public void render(HudRenderer renderer) {
+        double dt = glassClock.tick();
+        if (animateLogo.get()) logoTime += dt * logoMotion.get() * EmberAppearance.motion();
         if (EmberAppearance.liquid() && compactGlass.get()) {
-            renderLiquid(renderer);
+            renderLiquid(renderer, dt);
             return;
         }
         double s = scale.get();
@@ -242,8 +259,7 @@ public class EmberStatusBarHud extends HudElement {
     }
 
     /** Your actual skin face, falling back to a lettered chip before the skin has loaded. */
-    private void renderLiquid(HudRenderer renderer) {
-        double dt = glassClock.tick();
+    private void renderLiquid(HudRenderer renderer, double dt) {
         double motion = EmberAppearance.motion();
         glassIntro = EmberAnim.approach(glassIntro, 1, dt, motion == 0 ? 0 : 0.09 / motion);
         double s = scale.get(), ts = 0.74 * s;
@@ -255,7 +271,8 @@ public class EmberStatusBarHud extends HudElement {
         counter.tick();
         double cx = x;
         EmberStrip.panel(renderer, cx, by, h, h, radius, glassIntro);
-        EmberIcons.draw(renderer, EmberIcons.Glyph.BRAND, cx + h * 0.25, by + h * 0.25, h * 0.5, white, EmberStrip.background());
+        EmberLogo.tile(renderer, cx, by, h, logoTime,
+            animateLogo.get() ? logoMotion.get() * motion : 0, accent, glassIntro);
         cx += h + gap;
 
         if (showUser.get()) {

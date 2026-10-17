@@ -310,6 +310,12 @@ public class HudRenderer {
      */
     public void roundedTextureRegion(Identifier id, double x, double y, double size, double radius,
                                      double u1, double v1, double u2, double v2, Color color) {
+        roundedTextureRegion(id, x, y, size, radius, u1, v1, u2, v2, color, false);
+    }
+
+    /** Smooth artwork downsampling; pixel-art callers retain their texture's sampler. */
+    public void roundedTextureRegion(Identifier id, double x, double y, double size, double radius,
+                                     double u1, double v1, double u2, double v2, Color color, boolean smooth) {
         if (size <= 0) return;
 
         radius = Math.min(radius, size / 2);
@@ -321,7 +327,9 @@ public class HudRenderer {
         Renderer2D.TEXTURE.begin();
         meteordevelopment.meteorclient.utils.render.EmberShapes.roundedTexture(
             Renderer2D.TEXTURE, x, y, size, radius, u1, v1, u2, v2, color);
-        Renderer2D.TEXTURE.render(texture.getGlTextureView(), texture.getSampler());
+        Renderer2D.TEXTURE.render(texture.getGlTextureView(), smooth
+            ? com.mojang.blaze3d.systems.RenderSystem.getSamplerCache().get(com.mojang.blaze3d.textures.FilterMode.LINEAR)
+            : texture.getSampler());
     }
 
     /**

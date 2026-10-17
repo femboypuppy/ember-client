@@ -4,10 +4,8 @@ import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 
 /**
- * Small procedural glyphs for the Ember HUD, drawn from rounded quads rather than a sprite
- * sheet. HudRenderer.texture() is unreliable inside the HUD - it renders nothing and leaves
- * the next text draw corrupted - so shapes are built out of primitives instead. They also
- * scale to any size without going blurry, which a bitmap at this size would not.
+ * Small procedural glyphs for the Ember HUD. The brand mark uses the uploaded artwork,
+ * deferred until the HUD's font and color batches finish; other glyphs use primitives.
  *
  * Every glyph is drawn inside a square of side {@code size} with its top left at (x, y).
  * Glyphs that need a hole take the panel colour behind them as {@code bg} and punch the
@@ -15,7 +13,7 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
  */
 public final class EmberIcons {
     public enum Glyph {
-        /** The Ember mark: a flame built from two circles. */
+        /** The uploaded Ember meteor mark. */
         BRAND,
         /** Stacked server racks. */
         SERVER,
@@ -89,9 +87,7 @@ public final class EmberIcons {
     }
 
     private static void brand(HudRenderer r, double x, double y, double s, Color c) {
-        // A small teardrop: a wide base circle with a narrower tip sitting on top of it.
-        circle(r, x + s * 0.08, y + s * 0.34, s * 0.84, c);
-        circle(r, x + s * 0.30, y, s * 0.44, c);
+        EmberLogo.draw(r, x, y, s, c.a / 255.0);
     }
 
     private static void server(HudRenderer r, double x, double y, double s, Color c, Color bg) {

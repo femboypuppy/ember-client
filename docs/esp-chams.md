@@ -1,7 +1,8 @@
 # ESP surfaces and chams materials
 
-Open **Render → Block ESP**, **Storage ESP**, or **Chams**. A live 3D preview is
-shown above the settings. Drag to rotate it, scroll over it to zoom, or
+Open **Render → Block ESP**, **Storage ESP**, or **Chams**, then click
+**Open 3D preview** at the top of the settings popup. This opens the full settings
+screen with a live 3D preview above the controls. Drag to rotate it, scroll over it to zoom, or
 double-click to reset. In Chams, click the Player/Hand switch at the top right
 to preview each independently. You can preview a module while it is disabled.
 

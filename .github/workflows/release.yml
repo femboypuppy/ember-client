@@ -47,6 +47,9 @@ jobs:
       - name: Check hand editor and mirror lifecycle
         run: python3 scripts/check_hand_editor.py
 
+      - name: Check animated HUD logo
+        run: python3 scripts/check_ember_logo.py
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
