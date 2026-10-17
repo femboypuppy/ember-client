@@ -200,7 +200,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = slider(r, y, "Light radius", (ambience.groundLightRadius.get() - 1.5) / 5.5, String.format("%.1f blocks", ambience.groundLightRadius.get()), v -> ambience.groundLightRadius.set(1.5 + v * 5.5), dt);
         y = slider(r, y, "Light shimmer", ambience.lightShimmer.get(), percent(ambience.lightShimmer.get()), ambience.lightShimmer::set, dt);
         y = section(r, y, "BASS REACTION", meteordevelopment.meteorclient.utils.misc.MusicReactive.status());
-        y = toggle(r, y, "React to music", "Windows desktop output. Game and system sounds can also trigger it.", ambience.musicReactive.get(), () -> ambience.musicReactive.set(!ambience.musicReactive.get()), dt);
+        y = toggle(r, y, "React to Spotify", "Spotify desktop audio only. Minecraft and other apps are excluded.", ambience.musicReactive.get(), () -> ambience.musicReactive.set(!ambience.musicReactive.get()), dt);
         if (ambience.musicReactive.get()) {
             double bassLevel = meteordevelopment.meteorclient.utils.misc.MusicReactive.level();
             label(r, "Bass level", contentX + 2, y + 4, 0.72, EmberUI.TEXT, contentW / 3);

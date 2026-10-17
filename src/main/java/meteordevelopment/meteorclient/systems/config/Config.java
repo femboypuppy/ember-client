@@ -140,7 +140,7 @@ public class Config extends System<Config> {
         .name("ambience-speed").description("Star drift, aurora and parallax motion. Zero holds the atmosphere still.").defaultValue(0.8).range(0, 2).sliderRange(0, 2).build());
     public enum BassMode { Darken, Glow }
     public final Setting<Boolean> musicReactive = sgVisual.add(new BoolSetting.Builder()
-        .name("music-reactive-atmosphere").description("Analyze bass from Windows desktop output locally. Other sounds on that output can also trigger the effect.").defaultValue(false).build());
+        .name("music-reactive-atmosphere").description("React only to Spotify desktop audio on Windows. Other applications and Minecraft sounds are excluded.").defaultValue(false).build());
     public final Setting<BassMode> bassMode = sgVisual.add(new EnumSetting.Builder<BassMode>()
         .name("bass-effect").description("Darken the scene on bass, or make it glow brighter.").defaultValue(BassMode.Darken).build());
     public final Setting<Double> bassStrength = sgVisual.add(new DoubleSetting.Builder()

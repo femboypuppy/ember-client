@@ -15,7 +15,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
-/** Opt-in output-only audio analysis; capture and compilation never run on the render thread. */
+/** Opt-in Spotify process audio analysis; capture and compilation never run on the render thread. */
 public final class MusicReactive {
     private static final BassEnvelope ENVELOPE = new BassEnvelope();
     private static volatile Thread worker;
@@ -37,7 +37,7 @@ public final class MusicReactive {
         boolean want = c != null && c.ambience.get() && c.musicReactive.get();
         requested = want;
         if (!want) { stop(); return; }
-        if (!WINDOWS) { status = "Desktop audio is supported on Windows"; return; }
+        if (!WINDOWS) { status = "Spotify audio capture requires Windows"; return; }
         if (worker == null) start();
     }
     private static synchronized void start() {
@@ -50,7 +50,10 @@ public final class MusicReactive {
         Thread t = worker; if (t != null) t.interrupt();
         sample = new Sample(0, 0); status = "Off";
     }
-    public static String status() { return status; }
+    public static String status() {
+        return requested && sample.received != 0 && System.nanoTime() - sample.received > 2_000_000_000L
+            ? "Waiting for Spotify audio" : status;
+    }
     public static double level() {
         var c = Config.get();
         long now = System.nanoTime();
@@ -66,32 +69,27 @@ public final class MusicReactive {
     }
     private static void run() {
         try {
-            status = "Starting desktop audio";
+            status = "Starting Spotify audio";
             Path executable = executable();
             while (requested && !Thread.currentThread().isInterrupted()) {
                 Process p = new ProcessBuilder(executable.toString()).redirectError(ProcessBuilder.Redirect.DISCARD).start();
                 process = p;
                 if (!requested) { p.destroyForcibly(); break; }
-                status = "Waiting for desktop audio";
+                status = "Waiting for Spotify desktop";
                 try (var reader = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
                     String line;
                     while (requested && (line = reader.readLine()) != null) {
-                        String[] parts = line.split(" ", 2);
-                        try {
-                            double bass = Double.parseDouble(parts[0]);
-                            if (Double.isFinite(bass) && bass >= 0 && bass <= 1) {
-                                sample = new Sample(bass, System.nanoTime()); status = "Listening to desktop output";
-                            }
-                        } catch (NumberFormatException ignored) {}
+                        var signal = SpotifyAudioSignal.parse(line);
+                        if (signal != null) { sample = new Sample(signal.bass(), System.nanoTime()); status = signal.status(); }
                     }
                 } finally { p.destroyForcibly(); process = null; }
-                if (requested) { status = "Waiting for an output device"; Thread.sleep(3000); }
+                if (requested) { status = "Waiting to reconnect to Spotify audio"; Thread.sleep(3000); }
             }
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
             if (requested) {
-                status = "Desktop audio unavailable";
+                status = "Spotify audio unavailable";
                 MeteorClient.LOG.warn("Bass analysis unavailable: {}", e.toString());
             }
             // Do not retry compilation every tick. A later toggle can retry.

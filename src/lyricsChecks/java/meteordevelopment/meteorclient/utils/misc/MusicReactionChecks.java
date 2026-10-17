@@ -5,6 +5,13 @@ import meteordevelopment.meteorclient.utils.render.CelestialLighting;
 public final class MusicReactionChecks {
     private MusicReactionChecks() {}
     public static void run() {
+        require(SpotifyAudioSignal.parse("STATUS waiting").status().contains("Open Spotify"), "Missing Spotify must have an actionable status");
+        require(SpotifyAudioSignal.parse("LEVEL 0 0").status().contains("silent"), "Zero measurements cannot claim music was detected");
+        require(SpotifyAudioSignal.parse("LEVEL 0 0.1").status().contains("low bass"), "Audible music without bass is different from a missing stream");
+        require(SpotifyAudioSignal.parse("LEVEL 0.02 0.1").bass() == 0.02, "The real Spotify bass sample must reach the envelope");
+        require(SpotifyAudioSignal.parse("ERROR 80070057").bass() == 0, "A capture error must clear the signal and show its reason");
+        for (String invalid : new String[]{"0.01 0.1", "LEVEL NaN 0", "LEVEL 0 Infinity", "LEVEL -1 0", "LEVEL 0 2", "ERROR private payload", "LEVEL 0 0 junk"})
+            require(SpotifyAudioSignal.parse(invalid) == null, "Malformed or obsolete helper output must be rejected");
         var envelope = new BassEnvelope();
         for (int i = 0; i < 1000; i++) require(envelope.update(0, 1.5, 0.45, 1.0 / 60) == 0, "Silence must not synthesize a beat");
         require(envelope.update(0.001, 4, 0.45, 0.1) == 0, "The noise floor must not pulse");
