@@ -108,6 +108,7 @@
     "FogRendererMixin",
     "GameOptionsMixin",
     "GameRendererMixin",
+    "exordium.BufferInstanceMixin",
     "GlBackendMixin",
     "GlCommandEncoderMixin",
     "HandledScreenAccessor",

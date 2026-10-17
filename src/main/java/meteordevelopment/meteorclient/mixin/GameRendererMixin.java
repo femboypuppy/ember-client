@@ -27,6 +27,7 @@ import meteordevelopment.meteorclient.systems.modules.render.Zoom;
 import meteordevelopment.meteorclient.systems.modules.world.HighwayBuilder;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.CustomBannerGuiElementRenderer;
+import meteordevelopment.meteorclient.utils.render.EmberGuiPass;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import net.minecraft.client.MinecraftClient;
@@ -171,8 +172,25 @@ public abstract class GameRendererMixin implements IGameRenderer {
         meteor$renderHud = false;
     }
 
+    @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/hud/InGameHud;render(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V", shift = At.Shift.AFTER))
+    private void afterHudExtraction(RenderTickCounter tickCounter, boolean tick, CallbackInfo info) {
+        // Exordium cancels InGameHud.render on cached frames. Its caller still runs,
+        // so schedule Ember here instead of inside the cancelled method's tail.
+        meteor$renderHud = true;
+    }
+
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/render/GuiRenderer;render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V", shift = At.Shift.AFTER))
     private void onRenderGui(RenderTickCounter tickCounter, boolean tick, CallbackInfo info) {
+        EmberGuiPass.begin();
+        try {
+            meteor$renderOverlays(tickCounter);
+        } finally {
+            EmberGuiPass.end();
+        }
+    }
+
+    @Unique
+    private void meteor$renderOverlays(RenderTickCounter tickCounter) {
         meteordevelopment.meteorclient.utils.render.EmberGlass.ensureCaptured();
         if (meteor$renderHud) {
             meteor$renderHud = false;
@@ -281,14 +299,14 @@ public abstract class GameRendererMixin implements IGameRenderer {
     }
 
     @Override
-    public void meteor$markHudForRendering() {
-        meteor$renderHud = true;
-    }
-
-    @Override
     public void meteor$flushGuiState() {
-        meteor$clearGuiDepth();
-        guiRenderer.render(fogRenderer.getFogBuffer(FogRenderer.FogType.NONE));
+        EmberGuiPass.begin();
+        try {
+            meteor$clearGuiDepth();
+            guiRenderer.render(fogRenderer.getFogBuffer(FogRenderer.FogType.NONE));
+        } finally {
+            EmberGuiPass.end();
+        }
         // Vanilla advances the GUI frame once after its render call. Extra
         // flushes belong to that same frame and must not advance its caches.
     }

@@ -6,7 +6,6 @@
 package meteordevelopment.meteorclient.mixin;
 
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
-import meteordevelopment.meteorclient.mixininterface.IGameRenderer;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.misc.BetterChat;
 import meteordevelopment.meteorclient.systems.modules.render.Freecam;
@@ -29,13 +28,6 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 @Mixin(InGameHud.class)
 public abstract class InGameHudMixin {
     @Shadow public abstract void clear();
-
-    @Inject(method = "render", at = @At("TAIL"))
-    private void onRender(DrawContext context, RenderTickCounter tickCounter, CallbackInfo ci) {
-        // Vanilla is still collecting GUI state here. Draw Ember only after
-        // Minecraft has submitted that state at its normal GUI render point.
-        ((IGameRenderer) mc.gameRenderer).meteor$markHudForRendering();
-    }
 
     @Inject(method = "renderStatusEffectOverlay", at = @At("HEAD"), cancellable = true)
     private void onRenderStatusEffectOverlay(CallbackInfo info) {

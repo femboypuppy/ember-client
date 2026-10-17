@@ -27,6 +27,7 @@ public class MixinPlugin implements IMixinConfigPlugin {
     private static boolean isLithiumPresent;
     public static boolean isIrisPresent;
     private static boolean isVFPPresent;
+    private static boolean isExordiumPresent;
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -65,6 +66,7 @@ public class MixinPlugin implements IMixinConfigPlugin {
         isLithiumPresent = FabricLoader.getInstance().isModLoaded("lithium");
         isIrisPresent = FabricLoader.getInstance().isModLoaded("iris");
         isVFPPresent = FabricLoader.getInstance().isModLoaded("viafabricplus");
+        isExordiumPresent = FabricLoader.getInstance().isModLoaded("exordium");
 
         loaded = true;
     }
@@ -93,6 +95,9 @@ public class MixinPlugin implements IMixinConfigPlugin {
         }
         else if (mixinClassName.startsWith(mixinPackage + ".viafabricplus")) {
             return isVFPPresent;
+        }
+        else if (mixinClassName.startsWith(mixinPackage + ".exordium")) {
+            return isExordiumPresent;
         }
 
 
