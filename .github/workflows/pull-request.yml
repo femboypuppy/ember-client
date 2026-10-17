@@ -26,6 +26,9 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Check sky render-pass lifecycle
+        run: python3 scripts/check_sky_submission.py
+
       - name: Build
         run: ./gradlew build
 

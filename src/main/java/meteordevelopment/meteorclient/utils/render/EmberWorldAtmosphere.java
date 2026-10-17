@@ -131,6 +131,10 @@ public final class EmberWorldAtmosphere {
         var mesh = renderer.triangles;
         renderer.lines.end(); mesh.end();
         if (mesh.getIndicesCount() == 0) return;
+        // Uploads issue command-encoder writes, which are forbidden inside a render pass.
+        // Prepare both buffers before opening the pass (including on the first sky frame).
+        var vertexBuffer = mesh.getVertexBuffer();
+        var indexBuffer = mesh.getIndexBuffer();
         var transforms = RenderSystem.getDynamicUniforms().write(RenderSystem.getModelViewMatrix(), new Vector4f(1), new Vector3f(), new Matrix4f());
         var target = mc.getFramebuffer();
         try (var pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(() -> "Ember celestial sky",
@@ -139,8 +143,8 @@ public final class EmberWorldAtmosphere {
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", transforms);
             if (background) pass.setUniform("SkyData", skyData);
-            pass.setVertexBuffer(0, mesh.getVertexBuffer());
-            pass.setIndexBuffer(mesh.getIndexBuffer(), VertexFormat.IndexType.INT);
+            pass.setVertexBuffer(0, vertexBuffer);
+            pass.setIndexBuffer(indexBuffer, VertexFormat.IndexType.INT);
             pass.drawIndexed(0, 0, mesh.getIndicesCount(), 1);
         }
     }

@@ -30,6 +30,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Check sky render-pass lifecycle
+        run: python3 scripts/check_sky_submission.py
+
       - name: Build release
         env:
           RELEASE_TAG: ${{ github.ref_name }}
