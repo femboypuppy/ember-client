@@ -9,6 +9,7 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.Reference2ByteOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import meteordevelopment.meteorclient.MeteorClient;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
@@ -231,8 +232,8 @@ public class SusChunkFinder extends Module {
 
     private final Setting<Boolean> lightLeak = sgBlocks.add(new BoolSetting.Builder()
         .name("light-leak")
-        .description("Experimental. Spots dug-out rooms from light data, which the server still sends for blocks it hides below the deepslate. Natural caves can trigger it too on some servers. Chunks you walk through are remembered and never flagged for this, so your own digging doesn't count.")
-        .defaultValue(false)
+        .description("Spots dug-out rooms from light data the server sends even for blocks you can't see. On DonutSMP natural terrain almost never triggers it (2 in 96,000 chunks in testing); on other servers natural caves can. Chunks you walk through are remembered and never flagged for this, so your own digging doesn't count.")
+        .defaultValue(true)
         .onChanged(v -> rescanLoadedChunks())
         .build()
     );
@@ -805,6 +806,11 @@ public class SusChunkFinder extends Module {
     private String lightPlace = "";
     private int lightStatChunks, lightStatDark, lightStatLogged, lightStatTimer;
     private volatile boolean loggedLightError;
+    /** Chunks left to describe in the log this session, to learn how the server sends what it hides. */
+    private final AtomicInteger blockDiagLeft = new AtomicInteger(), lightDiagLeft = new AtomicInteger();
+    private static final int DIAG_CHUNKS = 3;
+    /** Well above the deepslate, so whatever hiding there is applies. */
+    private static final double DIAG_MIN_PLAYER_Y = 40;
 
     private static final int LIGHT_MAP_CAP = 250_000;
     /** Light sections reaching above this are surface, where sky light is ordinary. */
@@ -827,6 +833,8 @@ public class SusChunkFinder extends Module {
         lastDimension = mc.world.getDimension();
         context = FindsStorage.context();
         selectLightPlace(context.world() + "|" + context.dimension());
+        blockDiagLeft.set(DIAG_CHUNKS);
+        lightDiagLeft.set(DIAG_CHUNKS);
 
         synchronized (flagged) {
             for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) {
@@ -885,6 +893,17 @@ public class SusChunkFinder extends Module {
         queueScan(chunk);
         if (mc.world == null) return;
 
+        if (mc.player != null && mc.player.getY() > DIAG_MIN_PLAYER_Y && mc.world.getRegistryKey() == World.OVERWORLD
+            && blockDiagLeft.getAndDecrement() > 0) {
+            StringBuilder blocks = new StringBuilder();
+            ChunkSection[] sections = chunk.getSectionArray();
+            for (int i = 0; i < sections.length && chunk.getBottomY() + (i << 4) <= 0; i++) {
+                if (blocks.length() > 0) blocks.append(" | ");
+                blocks.append("Y ").append(chunk.getBottomY() + (i << 4)).append(": ").append(describe(sections[i]));
+            }
+            MeteorClient.LOG.info("[Ember SusChunk] Diagnostic, blocks of chunk {} with you at Y {}: {}", chunk.getPos(), (int) mc.player.getY(), blocks);
+        }
+
         // Neighbours scanned before this chunk arrived only saw part of a storage room on the border.
         boolean[] sides = new boolean[9];
         for (BlockEntity be : chunk.getBlockEntities().values()) {
@@ -903,6 +922,27 @@ public class SusChunkFinder extends Module {
             if (sides[i] && mc.world.getChunk(pos.x + i / 3 - 1, pos.z + i % 3 - 1, ChunkStatus.FULL, false) instanceof WorldChunk neighbor
                 && hasStorage(neighbor)) queueScan(neighbor);
         }
+    }
+
+    /** The four commonest blocks of a section with their counts, for the diagnostic log. */
+    private static String describe(ChunkSection section) {
+        if (section == null || section.isEmpty()) return "empty";
+
+        Reference2IntOpenHashMap<Block> counts = new Reference2IntOpenHashMap<>();
+        for (int y = 0; y < 16; y++) {
+            for (int z = 0; z < 16; z++) {
+                for (int x = 0; x < 16; x++) counts.addTo(section.getBlockState(x, y, z).getBlock(), 1);
+            }
+        }
+
+        List<Block> top = new ArrayList<>(counts.keySet());
+        top.sort((a, b) -> Integer.compare(counts.getInt(b), counts.getInt(a)));
+        StringBuilder out = new StringBuilder().append(counts.size()).append(" kinds: ");
+        for (int i = 0; i < Math.min(4, top.size()); i++) {
+            if (i > 0) out.append(", ");
+            out.append(Registries.BLOCK.getId(top.get(i)).getPath()).append(' ').append(counts.getInt(top.get(i)));
+        }
+        return out.toString();
     }
 
     /** Blocks that make up a storage room. Ender chests are left out: on DonutSMP they are everywhere. */
@@ -1017,6 +1057,21 @@ public class SusChunkFinder extends Module {
         long key = ChunkPos.toLong(chunkX, chunkZ);
         // Below the deepslate the blocks are real anyway, and the light around you is your own digging.
         boolean below = mc.player != null && mc.player.getY() < 0;
+
+        if (fresh && mc.player != null && mc.player.getY() > DIAG_MIN_PLAYER_Y && lightDiagLeft.getAndDecrement() > 0) {
+            StringBuilder sky = new StringBuilder();
+            int n = 0;
+            for (int i = 0; i < count + 2 && i < 32; i++) {
+                boolean sent = inited.get(i);
+                byte[] payload = sent && n < nibbles.size() ? nibbles.get(n) : null;
+                if (sent) n++;
+                int y = (bottom + i - 1) * 16;
+                if (i < 1 || y > 48) continue;
+                if (sky.length() > 0) sky.append(", ");
+                sky.append("Y ").append(y).append(": ").append(sent ? (classifyLight(payload) == LIGHT_ZERO ? "sent dark" : "sent lit") : uninited.get(i) ? "empty" : "absent");
+            }
+            MeteorClient.LOG.info("[Ember SusChunk] Diagnostic, sky light of chunk {}, {} with you at Y {}: {}", chunkX, chunkZ, (int) mc.player.getY(), sky);
+        }
 
         synchronized (flagged) {
             // How often dark deep sections turn up at all, logged now and then (see onTick): in untouched
