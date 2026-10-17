@@ -13,7 +13,8 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.EmberIcons;
-import meteordevelopment.meteorclient.utils.render.EmberStrip;
+import meteordevelopment.meteorclient.utils.render.EmberHudCards;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import net.minecraft.client.sound.PositionedSoundInstance;
@@ -59,8 +60,10 @@ public class EmberNotificationsHud extends HudElement {
         public Color resolveColor(Color custom) {
             if (custom != null) return custom;
             return switch (this) {
-                case TOGGLE_ON, SUCCESS -> GOOD;
-                case TOGGLE_OFF, ERROR -> BAD;
+                case TOGGLE_ON -> EmberPalette.accent();
+                case TOGGLE_OFF -> EmberPalette.textDim();
+                case SUCCESS -> GOOD;
+                case ERROR -> BAD;
                 case WARNING -> WARN;
                 case INFO -> EmberPalette.accent();
             };
@@ -74,7 +77,7 @@ public class EmberNotificationsHud extends HudElement {
     private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
         .name("scale")
         .description("Size of the notifications.")
-        .defaultValue(1.15)
+        .defaultValue(1.0)
         .min(0.5)
         .max(3.0)
         .sliderRange(0.5, 3.0)
@@ -335,20 +338,20 @@ public class EmberNotificationsHud extends HudElement {
         }
 
         double s = scale.get();
-        double titleScale = 1.18 * s;
-        double subScale = 0.96 * s;
-        double badgeScale = 0.80 * s;
-        double titleH = renderer.textHeight(true, titleScale);
-        double subH = renderer.textHeight(true, subScale);
+        double titleScale = 0.90 * s;
+        double subScale = 0.73 * s;
+        double badgeScale = 0.59 * s;
+        double titleH = renderer.textHeight(false, titleScale);
+        double subH = renderer.textHeight(false, subScale);
 
-        double minW = 275 * s;
-        double maxW = 410 * s;
-        double padX = 14 * s;
-        double padY = 12 * s;
-        double chipSize = 31 * s;
-        double chipGap = 11.5 * s;
-        double gap = 8.5 * s;
-        double baseRowH = Math.max(chipSize + padY * 2, padY * 2 + titleH + subH + 4 * s) + 4.5 * s;
+        double maxW = Math.min(350 * s, Math.max(150, Utils.getWindowWidth() - 24 * s));
+        double minW = Math.min(230 * s, maxW);
+        double padX = 12 * s;
+        double padY = 11 * s;
+        double chipSize = 26 * s;
+        double chipGap = 10 * s;
+        double gap = 7 * s;
+        double baseRowH = Math.max(chipSize + padY * 2, padY * 2 + titleH + subH * 2 + 5 * s) + 5 * s;
         double boxH = maxShown.get() * (baseRowH + gap);
 
         setSize(maxW, boxH);
@@ -379,14 +382,12 @@ public class EmberNotificationsHud extends HudElement {
 
             targetY -= (layout.h + gap) * Math.min(1f, toast.anim * 1.15f);
             if (Double.isNaN(toast.renderY)) {
-                toast.renderY = targetY + 14 * s;
+                toast.renderY = targetY + 6 * s;
             } else {
-                toast.renderY = EmberAnim.approach(toast.renderY, targetY, dt, 0.055);
+                toast.renderY = EmberAnim.approach(toast.renderY, targetY, dt, 0.09);
             }
 
-            boolean entering = toast.age < maxLife;
-            double eased = entering ? EmberAnim.backOut(Math.min(1.0, toast.anim)) : EmberAnim.easeOut(toast.anim);
-            double slide = (1.0 - eased) * 68 * s;
+            double slide = (1.0 - EmberAnim.easeOut(toast.anim)) * 24 * s;
             double cardX = x + maxW - layout.w + slide;
             double progress = Math.max(0, Math.min(1, 1.0 - toast.age / maxLife));
 
@@ -394,77 +395,24 @@ public class EmberNotificationsHud extends HudElement {
         }
     }
 
-    private record CardLayout(double w, double h, List<String> lines, String badgeText, double badgeW) {}
+    private record CardLayout(double w, double h, String title, List<String> lines, String badgeText, double badgeW) {}
 
     private CardLayout measureCard(HudRenderer renderer, Toast toast, double s, double minW, double maxW,
                                    double padX, double padY, double chipSize, double chipGap,
                                    double titleScale, double subScale, double badgeScale, double titleH, double subH) {
-        String badgeText = toast.repeatCount > 1 ? "x" + toast.repeatCount : toast.kind.badge;
-        double badgeW = badgeText != null ? renderer.textWidth(badgeText, true, badgeScale) + 12 * s : 0;
-
-        double leftContentOffset = padX + 5.5 * s + chipSize + chipGap;
-        double maxTextW = maxW - leftContentOffset - padX;
-
-        List<String> lines = wrapSubtitle(renderer, toast.subtitle, maxTextW, subScale);
-        double longestSubW = 0;
-        for (String line : lines) {
-            longestSubW = Math.max(longestSubW, renderer.textWidth(line, true, subScale));
-        }
-
-        double titleRowW = renderer.textWidth(toast.title, true, titleScale) + (badgeW > 0 ? badgeW + 10 * s : 0);
-        double contentW = Math.max(titleRowW, longestSubW);
-        double w = Math.max(minW, Math.min(maxW, leftContentOffset + contentW + padX));
-
-        int lineCount = Math.max(1, lines.size());
-        double textBlockH = titleH + 3.5 * s + lineCount * subH + (lineCount - 1) * (2.0 * s);
-        double h = Math.max(chipSize + padY * 2, padY * 2 + textBlockH) + 5.0 * s;
-
-        return new CardLayout(w, h, lines, badgeText, badgeW);
-    }
-
-    private List<String> wrapSubtitle(HudRenderer renderer, String text, double maxW, double scale) {
-        List<String> out = new ArrayList<>(2);
-        if (text == null || text.isEmpty()) {
-            out.add("");
-            return out;
-        }
-
-        if (renderer.textWidth(text, true, scale) <= maxW) {
-            out.add(text);
-            return out;
-        }
-
-        String[] words = text.split("\\s+");
-        StringBuilder line1 = new StringBuilder();
-        int idx = 0;
-
-        while (idx < words.length) {
-            String candidate = line1.isEmpty() ? words[idx] : line1 + " " + words[idx];
-            if (renderer.textWidth(candidate, true, scale) <= maxW || line1.isEmpty()) {
-                line1.setLength(0);
-                line1.append(candidate);
-                idx++;
-            } else {
-                break;
-            }
-        }
-        out.add(line1.toString());
-
-        if (idx < words.length) {
-            StringBuilder line2 = new StringBuilder();
-            while (idx < words.length) {
-                if (!line2.isEmpty()) line2.append(' ');
-                line2.append(words[idx++]);
-            }
-            String second = line2.toString();
-            while (second.length() > 4 && renderer.textWidth(second + "...", true, scale) > maxW) {
-                second = second.substring(0, second.length() - 1).trim();
-            }
-            if (second.length() < line2.length()) second = second + "...";
-            out.add(second);
-        }
-
-        return out;
+        String badgeText = toast.repeatCount > 1 ? "\u00d7" + toast.repeatCount : toast.kind.badge;
+        double badgeW = badgeText == null ? 0 : EmberHudCards.badgeWidth(renderer, badgeText, badgeScale, s);
+        double left = padX + chipSize + chipGap;
+        double textLimit = Math.max(0, maxW - left - padX);
+        double badgeSpace = badgeW > 0 ? badgeW + 8 * s : 0;
+        String title = EmberHudCards.fit(renderer, toast.title, titleScale, textLimit - badgeSpace);
+        List<String> lines = EmberHudCards.wrap(renderer, toast.subtitle, subScale, textLimit);
+        double contentW = renderer.textWidth(title, false, titleScale) + badgeSpace;
+        for (String line : lines) contentW = Math.max(contentW, renderer.textWidth(line, false, subScale));
+        double w = Math.clamp(left + contentW + padX, minW, maxW);
+        double textBlockH = titleH + (lines.isEmpty() ? 0 : 4 * s + lines.size() * subH + (lines.size() - 1) * 2 * s);
+        double h = Math.max(chipSize, textBlockH) + padY * 2 + 5 * s;
+        return new CardLayout(w, h, title, lines, badgeText, badgeW);
     }
 
     private void drawToast(HudRenderer renderer, Toast toast, CardLayout layout, float a,
@@ -472,108 +420,33 @@ public class EmberNotificationsHud extends HudElement {
                            double titleScale, double subScale, double badgeScale,
                            double titleH, double subH, double progress) {
         if (a <= 0.01f) return;
+        double w = layout.w, h = layout.h;
+        double pad = 12 * s, chipSize = 26 * s;
+        Color accent = EmberPalette.accent(), status = toast.color();
+        EmberHudCards.surface(renderer, tx, ty, w, h, s, a, glow.get());
 
-        double w = layout.w;
-        double h = layout.h;
-        double padX = 14 * s;
-        double padY = 12 * s;
-        double chipSize = 31 * s;
-        double chipGap = 11.5 * s;
-        double radius = 10 * s;
-
-        Color color = toast.color();
-        Color bright = new Color(255, 255, 255, (int) (255 * a));
-        Color dim = new Color(185, 185, 198, (int) (250 * a));
-        Color bg = EmberStrip.background();
-
-        if (glow.get()) {
-            int glowAlpha = (int) ((165 + 75 * toast.pulse) * a);
-            renderer.softGlow(tx, ty, w, h, radius, 14 * s, withAlpha(color, glowAlpha));
-        }
-
-        renderer.dropShadow(tx, ty, w, h, radius, 26 * s, a);
-
-        // High-visibility colored rim around the card
-        double rimPad = 1.4 * s;
-        int rimAlpha = (int) ((105 + 120 * toast.pulse) * a);
-        renderer.roundedQuad(tx - rimPad, ty - rimPad, w + rimPad * 2, h + rimPad * 2, radius + rimPad, withAlpha(color, rimAlpha));
-
-        EmberStrip.panel(renderer, tx, ty, w, h, radius, a);
-
-        // Entrance flash tint so newly arrived notifications immediately catch the eye
-        if (toast.pulse > 0.01f) {
-            renderer.roundedQuad(tx, ty, w, h, radius, withAlpha(color, (int) (42 * toast.pulse * a)));
-        }
-
-        // Bold left vertical accent bar
-        double barH = h - 16 * s;
-        renderer.roundedQuad(tx + 4.5 * s, ty + 7 * s, 3.8 * s, barH, 1.9 * s, withAlpha(color, (int) (255 * a)));
-
-        // Rounded icon chip with tinted background and procedural glyph
-        double chipX = tx + padX + 3 * s;
-        double chipY = ty + (h - 4 * s - chipSize) / 2;
-        double chipRadius = 8 * s;
-        renderer.roundedQuad(chipX - 1.1 * s, chipY - 1.1 * s, chipSize + 2.2 * s, chipSize + 2.2 * s, chipRadius + 1.1 * s, withAlpha(color, (int) (95 * a)));
-        renderer.roundedQuad(chipX, chipY, chipSize, chipSize, chipRadius, new Color(
-            (bg.r * 3 + color.r) / 4,
-            (bg.g * 3 + color.g) / 4,
-            (bg.b * 3 + color.b) / 4,
-            (int) (242 * a)
-        ));
-
-        double iconSize = 16.0 * s;
-        EmberIcons.draw(
-            renderer,
-            toast.kind.glyph,
-            chipX + (chipSize - iconSize) / 2,
-            chipY + (chipSize - iconSize) / 2,
-            iconSize,
-            withAlpha(color, (int) (255 * a)),
-            bg
-        );
-
-        // Title and optional right status/repeat pill badge
-        double textX = chipX + chipSize + chipGap;
-        double textTopY = ty + padY;
-        renderer.text(toast.title, textX, textTopY, bright, true, titleScale);
-
+        double chipX = tx + pad, chipY = ty + (h - 5 * s - chipSize) / 2;
+        EmberHudCards.icon(renderer, toast.kind.glyph, chipX, chipY, chipSize, status, a);
+        double textX = chipX + chipSize + 10 * s;
+        double textH = titleH + (layout.lines.isEmpty() ? 0 : 4 * s + layout.lines.size() * subH + (layout.lines.size() - 1) * 2 * s);
+        double textY = ty + (h - 5 * s - textH) / 2;
+        renderer.text(layout.title, textX, textY, EmberHudCards.alpha(EmberPalette.textBright(), a), false, titleScale);
         if (layout.badgeText != null) {
-            double badgeH = renderer.textHeight(true, badgeScale) + 5.0 * s;
-            double badgeX = tx + w - padX - layout.badgeW;
-            double badgeY = textTopY + (titleH - badgeH) / 2;
-            renderer.roundedQuad(badgeX, badgeY, layout.badgeW, badgeH, badgeH / 2, withAlpha(color, (int) (55 * a)));
-            double btW = renderer.textWidth(layout.badgeText, true, badgeScale);
-            double btH = renderer.textHeight(true, badgeScale);
-            renderer.text(
-                layout.badgeText,
-                badgeX + (layout.badgeW - btW) / 2,
-                badgeY + (badgeH - btH) / 2,
-                withAlpha(color, (int) (255 * a)),
-                true,
-                badgeScale
-            );
+            double badgeH = renderer.textHeight(false, badgeScale) + 6 * s;
+            EmberHudCards.badge(renderer, layout.badgeText, tx + w - pad - layout.badgeW,
+                textY + (titleH - badgeH) / 2, badgeScale, s, status, a);
         }
-
-        // Subtitle lines
-        double subY = textTopY + titleH + 3.5 * s;
+        double subY = textY + titleH + 4 * s;
         for (String line : layout.lines) {
-            if (!line.isEmpty()) {
-                renderer.text(line, textX, subY, dim, true, subScale);
-            }
-            subY += subH + 2.0 * s;
+            renderer.text(line, textX, subY, EmberHudCards.alpha(EmberPalette.textDim(), a), false, subScale);
+            subY += subH + 2 * s;
         }
 
-        // Recessed bottom progress track + smooth draining bar
-        double trackX = tx + 10 * s;
-        double trackW = w - 20 * s;
-        double trackY = ty + h - 5.5 * s;
-        double trackH = 3.0 * s;
-        renderer.roundedQuad(trackX, trackY, trackW, trackH, trackH / 2, new Color(0, 0, 0, (int) (145 * a)));
-
+        double trackX = tx + pad, trackW = w - pad * 2, trackY = ty + h - 5 * s, trackH = Math.max(1, 1.4 * s);
+        renderer.roundedQuad(trackX, trackY, trackW, trackH, trackH / 2, new Color(255, 255, 255, (int) (18 * a)));
         double barW = trackW * progress;
-        if (barW > 1.5) {
-            renderer.roundedQuad(trackX, trackY, barW, trackH, trackH / 2, withAlpha(color, (int) (235 * a)));
-        }
+        if (barW > 0.5) renderer.roundedQuad(trackX, trackY, barW, trackH, trackH / 2,
+            EmberHudCards.alpha(accent, a * (0.55 + toast.pulse * 0.2)));
     }
 
     private void trackModuleToggles() {
@@ -598,7 +471,4 @@ public class EmberNotificationsHud extends HudElement {
         lastActive = now;
     }
 
-    private static Color withAlpha(Color c, int alpha) {
-        return new Color(c.r, c.g, c.b, Math.max(0, Math.min(255, alpha)));
-    }
 }

@@ -5,6 +5,9 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.render.EmberHudCards;
+import meteordevelopment.meteorclient.utils.render.EmberIcons;
+import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.sound.SoundEvents;
@@ -382,74 +385,47 @@ public final class StaffWatchingEffect {
     private void drawCard(HudRenderer r, double sw, double sh, float t) {
         float in = easeOutCubic(clamp(t / SLIDE_SECONDS));
         float out = clamp((level.seconds - t) / FADE_OUT_SECONDS);
-        float alpha = Math.min(in, out);
-        if (alpha <= 0.01f) return;
-
-        double s = Math.max(0.85, Math.min(1.6, sh / 1000.0));
-        double pad = 10 * s;
-        double face = 28 * s;
-        double gap = 10 * s;
-        double titleScale = 0.95 * s;
-        double subScale = 0.72 * s;
-        double tagScale = 0.62 * s;
-
-        double titleW = r.textWidth(title, false, titleScale);
-        double subW = subtitle.isEmpty() ? 0 : r.textWidth(subtitle, false, subScale);
-        double tagW = r.textWidth(level.tag, false, tagScale);
-        double tagPad = 5 * s;
-
-        double w = pad + face + gap + Math.max(titleW, subW) + gap + tagW + tagPad * 2 + pad;
-        double h = pad * 2 + face;
-        double radius = 9 * s;
-        double x = (sw - w) / 2;
-        double y = 16 * s - (1 - in) * (h + 24 * s);
-
-        Color accent = level.accent;
-
-        r.dropShadow(x, y, w, h, radius, 16 * s, alpha * 0.9f);
-        r.roundedQuad(x - 1, y - 1, w + 2, h + 2, radius + 1, alpha(work, accent, 70 * alpha));
-        r.roundedQuad(x, y, w, h, radius, new Color(16, 16, 20, Math.round(235 * alpha)));
-
-        // Face
-        double fx = x + pad;
-        double fy = y + pad;
-        double faceRadius = face * 0.2;
-        r.roundedQuad(fx, fy, face, face, faceRadius, new Color(40, 40, 46, Math.round(255 * alpha)));
+        float opacity = Math.min(in, out);
+        if (opacity <= 0.01f) return;
+        double s = Math.clamp(sh / 1000, 0.85, 1.6);
+        double pad = 12 * s, face = 26 * s, gap = 10 * s;
+        double titleScale = 0.85 * s, subScale = 0.68 * s, tagScale = 0.58 * s;
+        double tagW = EmberHudCards.badgeWidth(r, level.tag, tagScale, s);
+        double fixedW = pad * 2 + face + gap * 2 + tagW;
+        double textW = Math.max(r.textWidth(title, false, titleScale), r.textWidth(subtitle, false, subScale));
+        double maxW = Math.min(520 * s, sw - 24 * s);
+        double w = Math.min(maxW, Math.max(320 * s, fixedW + textW));
+        double available = Math.max(0, w - fixedW);
+        String heading = EmberHudCards.fit(r, title, titleScale, available);
+        var lines = EmberHudCards.wrap(r, subtitle, subScale, available);
+        double titleH = r.textHeight(false, titleScale), subH = r.textHeight(false, subScale);
+        double textH = titleH + (lines.isEmpty() ? 0 : 4 * s + lines.size() * subH + (lines.size() - 1) * 2 * s);
+        double h = pad * 2 + Math.max(face, textH) + 5 * s;
+        double x = (sw - w) / 2, y = 16 * s - (1 - in) * (h + 24 * s);
+        Color status = level == Level.REGION ? EmberPalette.accent() : level.accent;
+        EmberHudCards.surface(r, x, y, w, h, s, opacity, true);
+        double fx = x + pad, fy = y + (h - 5 * s - face) / 2, radius = face * 0.26;
+        EmberHudCards.icon(r, EmberIcons.Glyph.USER, fx, fy, face, status, opacity);
         Identifier texture = skin != null ? skin.texture() : null;
         if (texture != null) {
-            Color faceTint = new Color(255, 255, 255, Math.round(255 * alpha));
+            Color faceTint = EmberHudCards.alpha(Color.WHITE, opacity);
             r.post(() -> {
-                r.roundedTextureRegion(texture, fx, fy, face, faceRadius, 0.125, 0.125, 0.25, 0.25, faceTint);
-                r.roundedTextureRegion(texture, fx, fy, face, faceRadius, 0.625, 0.125, 0.75, 0.25, faceTint);
+                r.roundedTextureRegion(texture, fx, fy, face, radius, 0.125, 0.125, 0.25, 0.25, faceTint);
+                r.roundedTextureRegion(texture, fx, fy, face, radius, 0.625, 0.125, 0.75, 0.25, faceTint);
             });
         }
-
-        // Text
-        double tx = fx + face + gap;
-        double titleH = r.textHeight(false, titleScale);
-        double subH = r.textHeight(false, subScale);
-        double block = subtitle.isEmpty() ? titleH : titleH + 3 * s + subH;
-        double ty = y + (h - block) / 2;
-        r.text(title, tx, ty, new Color(245, 245, 248, Math.round(255 * alpha)), false, titleScale);
-        if (!subtitle.isEmpty()) {
-            r.text(subtitle, tx, ty + titleH + 3 * s, new Color(160, 160, 172, Math.round(255 * alpha)), false, subScale);
+        double tx = fx + face + gap, ty = y + (h - 5 * s - textH) / 2;
+        r.text(heading, tx, ty, EmberHudCards.alpha(EmberPalette.textBright(), opacity), false, titleScale);
+        double subY = ty + titleH + 4 * s;
+        for (String line : lines) {
+            r.text(line, tx, subY, EmberHudCards.alpha(EmberPalette.textDim(), opacity), false, subScale);
+            subY += subH + 2 * s;
         }
-
-        // Level tag on the right
-        double tagH = r.textHeight(false, tagScale) + tagPad;
-        double tagX = x + w - pad - tagW - tagPad * 2;
-        double tagY = y + (h - tagH) / 2;
-        r.roundedQuad(tagX, tagY, tagW + tagPad * 2, tagH, tagH / 2, alpha(new Color(), accent, 45 * alpha));
-        r.text(level.tag, tagX + tagPad, tagY + tagPad / 2, alpha(new Color(), accent, 255 * alpha), false, tagScale);
-
-        // Time left
-        double remaining = 1 - t / level.seconds;
-        double barH = 2 * s;
-        r.quad(x + radius, y + h - barH - 2 * s, (w - radius * 2) * remaining, barH, alpha(new Color(), accent, 160 * alpha));
-    }
-
-    private static Color alpha(Color out, Color base, float alpha) {
-        return out.set(base.r, base.g, base.b, Math.round(Math.max(0, Math.min(255, alpha))));
+        double tagH = r.textHeight(false, tagScale) + 6 * s;
+        EmberHudCards.badge(r, level.tag, x + w - pad - tagW, y + (h - 5 * s - tagH) / 2, tagScale, s, status, opacity);
+        double barW = (w - pad * 2) * clamp(1 - t / level.seconds);
+        if (barW > 0.5) r.roundedQuad(x + pad, y + h - 5 * s, barW, Math.max(1, 1.4 * s), s,
+            EmberHudCards.alpha(status, opacity * 0.6));
     }
 
     private float elapsed() {
