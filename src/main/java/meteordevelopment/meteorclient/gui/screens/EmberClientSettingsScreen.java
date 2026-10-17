@@ -144,6 +144,11 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             hits.add(new Hit(x, y, cardW, 84, () -> Config.get().appearance.set(option)));
         }
         y += 104;
+        action(r, contentX, y, contentW, 34, "Use Liquid Glass defaults", () -> {
+            var c = Config.get();
+            c.appearance.reset(); c.glass.reset(); c.glassBlur.reset(); c.glassLiquid.reset(); c.glassTint.reset(); c.glassAccent.reset();
+        }, false, dt);
+        y += 46;
         y = section(r, y, "ACCENT COLOR", "Used for selections, switches and lyric highlights.");
         int count = EmberPalette.NAMES.length;
         double sw = Math.min(40, (contentW - 8 * (count - 1)) / count);

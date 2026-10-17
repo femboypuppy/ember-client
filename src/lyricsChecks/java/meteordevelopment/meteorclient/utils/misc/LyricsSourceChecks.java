@@ -28,6 +28,29 @@ final class LyricsSourceChecks {
         require(LyricsSourcePolicy.select(true, true, () -> missing, secondary, null) == fallback, "Unavailable primary must use the enabled fallback");
         require(LyricsSourcePolicy.select(true, false, () -> missing, secondary, fallback) == missing, "Spicy-only must retain its own unavailable status");
 
+        var session = new LyricsSourcePolicy.Session();
+        String cacheKey = session.begin("spotify:test", 180000, false);
+        require(session.select(true, true, primary, secondary, null) == ready, "A session must acquire the primary normally");
+        int callsAfterLoad = primaryCalls.get(), fallbackAfterLoad = fallbackCalls.get();
+        for (int i = 0; i < 10000; i++) {
+            require(session.begin("spotify:test", 180000 + i % 5 * 100, false).equals(cacheKey), "Duration jitter cannot invalidate the recording cache");
+            require(session.select(true, true, () -> { throw new AssertionError("Loaded primary must not poll or re-resolve"); }, secondary, fallback) == ready,
+                "A loaded Spicy timeline cannot be replaced by a fallback during a transient provider failure");
+        }
+        require(primaryCalls.get() == callsAfterLoad && fallbackCalls.get() == fallbackAfterLoad, "No provider calls or downloads while a loaded primary is pinned");
+        require(session.select(false, true, primary, secondary, null) == fallback, "Explicitly disabling Spicy must release the pin");
+        session.select(true, true, primary, secondary, null);
+        session.begin("spotify:test", 180000, true);
+        require(session.select(true, true, () -> pending, secondary, null) == pending, "Changing romanization must load the requested version");
+        session.select(true, true, primary, secondary, null);
+        session.begin("spotify:different", 180000, true);
+        require(session.select(true, true, () -> missing, secondary, null) == fallback, "A new song must not inherit the old Spicy timeline");
+        session.select(true, true, primary, secondary, null);
+        session.begin("spotify:different", 190000, true);
+        require(session.select(true, true, () -> missing, secondary, null) == fallback, "A different recording duration must invalidate the loaded primary");
+        session.select(true, true, primary, secondary, null); session.reset(); session.begin("spotify:different", 190000, true);
+        require(session.select(true, true, () -> pending, secondary, null) == pending, "Closed playback cannot resurrect an old timeline");
+
         var query = new LrclibLyrics.Query("Synthetic Song", "Example Artist", 180000);
         String id = "0123456789ABCDEFGHIJKL";
         var candidates = SpotifyTrackResolver.candidates(JsonParser.parseString("""
@@ -48,7 +71,7 @@ final class LyricsSourceChecks {
         require(SpotifyTrackResolver.verifiedId(fixture, "ZZ23456789ABCDEFGHIJKL", query).isEmpty(), "Metadata for another ID cannot validate the candidate");
         require(SpotifyTrackResolver.verifiedId("<html>changed schema</html>", id, query).isEmpty(), "Missing public metadata must safely fall back");
         require(SpotifyTrackResolver.verifiedId(fixture.replace("{\"props\"", "{broken"), id, query).isEmpty(), "Malformed metadata must safely fall back");
-        System.out.println("Lyric sources passed: independent toggles, primary priority, retry continuity and verified Spotify metadata matching.");
+        System.out.println("Lyric sources passed: toggles, sticky loaded primary, no repeated provider calls, duration jitter, track/version resets, retry continuity and verified Spotify matching.");
     }
     static void liveResolver() {
         var playback = new MusicPlayback.Playback("smoke-test", "", "Blinding Lights", "The Weeknd", "", "Test", "",

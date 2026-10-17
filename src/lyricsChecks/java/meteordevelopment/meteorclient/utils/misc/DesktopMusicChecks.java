@@ -20,7 +20,29 @@ public final class DesktopMusicChecks {
         require(DesktopMediaSession.parse("invalid", session, now) == null, "Malformed media samples are ignored");
 
         var direct = new SpotifyPlayback.Playback("0000000000000000000000", session.title(), session.artist(), "", session.clock(), now);
-        require(MusicPlayback.choose(direct, session).spotifyId().equals(direct.trackId()), "Matching desktop songs retain the exact Spotify ID");
+        var exact = MusicPlayback.choose(direct, session);
+        require(exact.spotifyId().equals(direct.trackId()), "Matching desktop songs retain the exact Spotify ID");
+        for (int i = 0; i < 200; i++) {
+            var jitter = new DesktopMediaSession(session.title(), session.artist(), i % 2 == 0 ? "" : session.album(), session.appId(),
+                new PlaybackClock(60000 + i, 180000 + i % 4 * 100, true, now + i), now + i);
+            var droppedPoll = MusicPlayback.choose(i % 5 == 0 ? direct : null, jitter);
+            require(droppedPoll.spotifyId().equals(direct.trackId()) && droppedPoll.key().equals(exact.key()),
+                "A temporary Spotify dropout, duration jitter, or late album must not change the verified recording ID");
+        }
+        var otherApp = new DesktopMediaSession(session.title(), session.artist(), session.album(), "Chrome.exe", session.clock(), now);
+        require(MusicPlayback.choose(null, otherApp).spotifyId().isEmpty(), "Another app must verify its own recording before inheriting an ID");
+        MusicPlayback.choose(direct, session);
+        var otherVersion = new DesktopMediaSession(session.title(), session.artist(), "", session.appId(), new PlaybackClock(0, 200000, true, now), now);
+        require(MusicPlayback.choose(null, otherVersion).spotifyId().isEmpty(), "A changed recording duration must clear the retained ID");
+        MusicPlayback.choose(direct, session);
+        require(MusicPlayback.choose(null, null) == null, "Missing players must not fabricate active playback");
+        require(MusicPlayback.choose(null, session).spotifyId().equals(direct.trackId()), "A media-session reconnect can reuse verified recording metadata");
+        // Clear the binding through a known different song before testing desktop-only identity.
+        MusicPlayback.choose(null, otherVersion);
+        var desktopAlbum = MusicPlayback.choose(null, session);
+        var withoutAlbum = new DesktopMediaSession(session.title(), session.artist(), "", session.appId(), session.clock(), now);
+        require(MusicPlayback.choose(null, withoutAlbum).key().equals(desktopAlbum.key()), "An arriving album label must not reset desktop lyrics either");
+        MusicPlayback.choose(direct, session);
         var differentSong = new DesktopMediaSession("Another Song", "Another Artist", "", "Chrome.exe", session.clock(), now);
         var browser = MusicPlayback.choose(direct, differentSong);
         require(browser.spotifyId().isEmpty() && browser.title().equals("Another Song"), "A playing browser song must never inherit an unrelated Spotify ID");

@@ -8,6 +8,8 @@ import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.player.NameProtect;
 import meteordevelopment.meteorclient.utils.render.EmberIcons;
 import meteordevelopment.meteorclient.utils.render.EmberStrip;
 import meteordevelopment.meteorclient.utils.render.EmberAppearance;
@@ -211,7 +213,7 @@ public class EmberStatusBarHud extends HudElement {
         }
 
         if (showUser.get()) {
-            segments.add(new EmberStrip.Segment(EmberIcons.Glyph.USER, mc.getSession().getUsername()));
+            segments.add(new EmberStrip.Segment(EmberIcons.Glyph.USER, displayName()));
         }
 
         double h = EmberStrip.height(renderer, s, textScale);
@@ -257,7 +259,7 @@ public class EmberStatusBarHud extends HudElement {
         cx += h + gap;
 
         if (showUser.get()) {
-            String user = mc.getSession().getUsername();
+            String user = displayName();
             double badge = h - 8 * s;
             double uw = renderer.textWidth(user, true, ts) + 16 * s + (showAvatar.get() ? badge + 5 * s : 0);
             EmberStrip.panel(renderer, cx, by, uw, h, radius, glassIntro);
@@ -332,15 +334,22 @@ public class EmberStatusBarHud extends HudElement {
 
         renderer.roundedQuad(bx, by, size, size, size / 2, accent);
 
-        String name = mc.getSession().getUsername();
+        String name = displayName();
         if (name.isEmpty()) return;
 
-        String initial = name.substring(0, 1).toUpperCase();
+        String initial = name.substring(0, name.offsetByCodePoints(0, 1)).toUpperCase(java.util.Locale.ROOT);
         double letterScale = size / renderer.textHeight(true, 1) * 0.62;
         double lw = renderer.textWidth(initial, true, letterScale);
         double lh = renderer.textHeight(true, letterScale);
 
         renderer.text(initial, bx + (size - lw) / 2, by + (size - lh) / 2, EmberStrip.background(), true, letterScale);
+    }
+
+    private static String displayName() {
+        String name = mc.getSession().getUsername();
+        var modules = Modules.get();
+        NameProtect protect = modules == null ? null : modules.get(NameProtect.class);
+        return protect == null ? name : protect.getName(name);
     }
 
     /** The local player's skin, or null while offline or before it has downloaded. */

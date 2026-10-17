@@ -33,6 +33,7 @@ public final class MusicLyricsService {
     };
     private static long nextSearchAt;
     private static boolean busy;
+    private static final LyricsSourcePolicy.Session SESSION = new LyricsSourcePolicy.Session();
 
     private MusicLyricsService() {}
 
@@ -40,15 +41,15 @@ public final class MusicLyricsService {
 
     public static synchronized Result update(MusicPlayback.Playback playback) {
         var config = Config.get();
-        if (config == null || !config.lyricsEnabled.get()) { SpotifyTrackResolver.stop(); return new Result("", null, ""); }
-        if (playback == null) { SpotifyTrackResolver.stop(); return new Result("", null, MusicPlayback.status()); }
-        String requestKey = playback.key() + "\u0001" + playback.clock().durationMs();
+        if (config == null || !config.lyricsEnabled.get()) { SESSION.reset(); SpotifyTrackResolver.stop(); return new Result("", null, ""); }
+        if (playback == null) { SESSION.reset(); SpotifyTrackResolver.stop(); return new Result("", null, MusicPlayback.status()); }
+        String requestKey = SESSION.begin(playback.key(), playback.clock().durationMs(), config.lyricsRomanization.get());
         long now = System.currentTimeMillis();
         if (!config.spicyLyricsEnabled.get() || !config.lyricsResolveSpotify.get()) SpotifyTrackResolver.stop();
         Cached cached = CACHE.get(requestKey);
         var readyFallback = cached != null && cached.timeline != null && now < cached.retryAt
             ? new LyricsSourcePolicy.Response(cached.timeline, cached.status, false) : null;
-        var selected = LyricsSourcePolicy.select(config.spicyLyricsEnabled.get(), config.lyricsSearchFallback.get(),
+        var selected = SESSION.select(config.spicyLyricsEnabled.get(), config.lyricsSearchFallback.get(),
             () -> primary(playback), () -> fallback(playback, requestKey, now), readyFallback);
         return new Result(playback.key(), selected.timeline(), selected.status());
     }

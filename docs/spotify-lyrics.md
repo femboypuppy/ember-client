@@ -21,6 +21,13 @@ missing client key or a service error. Initial requests wait for the primary;
 existing cached LRCLIB lyrics remain visible during later primary retries.
 Disabled sources do not start new requests or display cached lyrics.
 
+Once Spicy Lyrics has loaded for the current recording, Ember keeps that timed
+timeline until the track changes, romanization changes, or Spicy Lyrics is
+explicitly disabled. Temporary playback/API failures cannot downgrade it to
+LRCLIB. Small duration corrections and late album metadata do not restart the
+search. Verified Spotify IDs survive a matching desktop session's reconnect;
+another player or recording still needs its own verification.
+
 With a Spicy Lyrics key, **Find Spotify track IDs** uses the public
 [ListenBrainz metadata lookup](https://labs.api.listenbrainz.org/spotify-id-from-metadata)
 to find candidate IDs from title, artist and album without Spotify credentials.

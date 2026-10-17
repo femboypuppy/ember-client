@@ -15,7 +15,7 @@ public enum EmberAppearance {
 
     public static EmberAppearance current() {
         Config config = Config.get();
-        return config == null ? Solid : config.appearance.get();
+        return config == null ? LiquidGlass : config.appearance.get();
     }
 
     public static boolean frosted() {
@@ -43,7 +43,7 @@ public enum EmberAppearance {
      */
     public static double glass() {
         Config config = Config.get();
-        return config == null ? 0.45 : config.glass.get();
+        return config == null ? 0.5 : config.glass.get();
     }
 
     /**
@@ -54,13 +54,13 @@ public enum EmberAppearance {
      */
     public static double glassBlur() {
         Config config = Config.get();
-        return config == null ? 0.35 : config.glassBlur.get();
+        return config == null ? 0.6 : config.glassBlur.get();
     }
 
     /** How hard the edges bend the scene and split its colour. */
     public static double glassLiquid() {
         Config config = Config.get();
-        return config == null ? 0.75 : config.glassLiquid.get();
+        return config == null ? 0 : config.glassLiquid.get();
     }
 
     /** 0 is a dark pane, 1 is white. The wash and the film both follow it. */

@@ -199,6 +199,8 @@ public final class LyricsPill {
             return;
         }
         Color accent = EmberPalette.accent();
+        Color dim = new Color(173, 175, 185, (int) (235 * opacity));
+        Color lit = new Color(250, 250, 255, (int) (255 * opacity));
         for (Part part : layout.parts) {
             double sx = x + part.start - scroll;
             if (sx + part.width < x || sx > right) continue;
@@ -206,8 +208,8 @@ public final class LyricsPill {
             double progress = syllable.progress(seconds);
             double activity = animate ? LyricMotion.activity(seconds, syllable.start(), syllable.end()) : 0;
             double sy = y - activity * 1.2 * scale;
-            Color dim = new Color(173, 175, 185, (int) (235 * opacity));
-            r.textClipped(syllable.text(), sx, sy, dim, scale, x, right, top, bottom);
+            // Completed syllables need one white draw, not two overlaid font submissions.
+            if (progress < 1) r.textClipped(syllable.text(), sx, sy, dim, scale, x, right, top, bottom);
             double fillRight = Math.min(right, sx + part.width * progress);
             double fillLeft = Math.max(x, sx);
             if (fillRight <= fillLeft) continue;
@@ -222,7 +224,7 @@ public final class LyricsPill {
             }
             // Independent syllable fill preserves a held cut inside a joined word; the
             // white sweep resumes only at the next supplied syllable timestamp.
-            r.textClipped(syllable.text(), sx, sy, new Color(250, 250, 255, (int) (255 * opacity)), scale, fillLeft, fillRight, top, bottom);
+            r.textClipped(syllable.text(), sx, sy, lit, scale, fillLeft, fillRight, top, bottom);
         }
     }
 
