@@ -156,15 +156,38 @@ public final class CelestialGeometry {
     /** A terrain-conforming light tile. Shared edge samples make neighboring surfaces seamless. */
     public static void groundTile(CelestialMesh mesh, double x, double y, double z, double width, double depth,
                                    double radius, double strength, int rgb) {
-        for (int ix = 0; ix < 4; ix++) for (int iz = 0; iz < 4; iz++) {
-            double x0 = x + width * ix / 4, x1 = x + width * (ix + 1) / 4;
-            double z0 = z + depth * iz / 4, z1 = z + depth * (iz + 1) / 4;
-            double a = groundFalloff(x0, y, z0, radius) * strength, b = groundFalloff(x1, y, z0, radius) * strength;
-            double c = groundFalloff(x1, y, z1, radius) * strength, d = groundFalloff(x0, y, z1, radius) * strength;
+        lightSurface(mesh, x, y, z, width, 0, 0, 0, 0, depth, radius, strength, rgb);
+    }
+
+    /** The same per-position illumination on horizontal and vertical terrain faces. */
+    public static void lightSurface(CelestialMesh mesh, double x, double y, double z,
+                                    double ux, double uy, double uz, double vx, double vy, double vz,
+                                    double radius, double strength, int rgb) {
+        lightSurface(mesh, x, y, z, ux, uy, uz, vx, vy, vz, radius, strength, rgb, 0, 0);
+    }
+    public static void lightSurface(CelestialMesh mesh, double x, double y, double z,
+                                    double ux, double uy, double uz, double vx, double vy, double vz,
+                                    double radius, double strength, int rgb, double time, double shimmer) {
+        int nu = Math.clamp((int) Math.ceil(Math.sqrt(ux * ux + uy * uy + uz * uz) * 4), 1, 8);
+        int nv = Math.clamp((int) Math.ceil(Math.sqrt(vx * vx + vy * vy + vz * vz) * 4), 1, 8);
+        for (int iu = 0; iu < nu; iu++) for (int iv = 0; iv < nv; iv++) {
+            if (!mesh.hasRoom(6)) return;
+            double u0 = (double) iu / nu, u1 = (double) (iu + 1) / nu, v0 = (double) iv / nv, v1 = (double) (iv + 1) / nv;
+            double ax = x + ux * u0 + vx * v0, ay = y + uy * u0 + vy * v0, az = z + uz * u0 + vz * v0;
+            double bx = x + ux * u1 + vx * v0, by = y + uy * u1 + vy * v0, bz = z + uz * u1 + vz * v0;
+            double cx = x + ux * u1 + vx * v1, cy = y + uy * u1 + vy * v1, cz = z + uz * u1 + vz * v1;
+            double dx = x + ux * u0 + vx * v1, dy = y + uy * u0 + vy * v1, dz = z + uz * u0 + vz * v1;
+            double a = groundSample(ax, ay, az, radius, time, shimmer) * strength, b = groundSample(bx, by, bz, radius, time, shimmer) * strength;
+            double c = groundSample(cx, cy, cz, radius, time, shimmer) * strength, d = groundSample(dx, dy, dz, radius, time, shimmer) * strength;
             if (Math.max(Math.max(a, b), Math.max(c, d)) < 0.003) continue;
-            mesh.quad(x0, y, z0, x1, y, z0, x1, y, z1, x0, y, z1,
+            mesh.quad(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz,
                 color(rgb, a, 0), color(rgb, b, 0), color(rgb, c, 0), color(rgb, d, 0));
         }
+    }
+
+    private static double groundSample(double x, double y, double z, double radius, double time, double shimmer) {
+        double wave = shimmer <= 0 ? 1 : 1 - shimmer * 0.3 + shimmer * 0.3 * (0.5 + 0.5 * Math.sin(time * 0.35 + x * 0.9 + Math.sin(z * 0.7 - time * 0.2)));
+        return groundFalloff(x, y, z, radius) * wave;
     }
 
     public static void atmosphere(CelestialMesh m, double w, double h, double time, double mouseX, double mouseY,

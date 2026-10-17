@@ -31,8 +31,7 @@ public final class MusicLyricsService {
     private static final Map<String, Cached> CACHE = new LinkedHashMap<>(32, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Cached> entry) { return size() > 32; }
     };
-    private static String wanted = "";
-    private static long nextSearchAt, waitingSince;
+    private static long nextSearchAt;
     private static boolean busy;
 
     private MusicLyricsService() {}
@@ -41,42 +40,50 @@ public final class MusicLyricsService {
 
     public static synchronized Result update(MusicPlayback.Playback playback) {
         var config = Config.get();
-        if (config == null || !config.lyricsEnabled.get()) return new Result("", null, "");
-        if (playback == null) { wanted = ""; return new Result("", null, MusicPlayback.status()); }
+        if (config == null || !config.lyricsEnabled.get()) { SpotifyTrackResolver.stop(); return new Result("", null, ""); }
+        if (playback == null) { SpotifyTrackResolver.stop(); return new Result("", null, MusicPlayback.status()); }
         String requestKey = playback.key() + "\u0001" + playback.clock().durationMs();
         long now = System.currentTimeMillis();
-        if (!requestKey.equals(wanted)) { wanted = requestKey; waitingSince = now; }
-
-        String spicyStatus = "";
-        boolean exact = !playback.spotifyId().isEmpty() && config.spicyLyricsKey.get().trim().startsWith("sl_pk_");
-        if (exact) {
-            var spicy = SpicyLyricsService.update();
-            if (spicy.trackId().equals(playback.spotifyId())) {
-                var timeline = spicy.timeline();
-                if (timeline != null && (!timeline.lines().isEmpty() || !timeline.background().isEmpty())) {
-                    return new Result(playback.key(), timeline, "Spicy Lyrics ready");
-                }
-                spicyStatus = spicy.status();
-            }
-        }
-        if (!config.lyricsSearchFallback.get()) return new Result(playback.key(), null,
-            exact ? spicyStatus : "Enable song search or connect Spotify with a Spicy Lyrics key");
+        if (!config.spicyLyricsEnabled.get() || !config.lyricsResolveSpotify.get()) SpotifyTrackResolver.stop();
         Cached cached = CACHE.get(requestKey);
-        if (cached != null && now < cached.retryAt) return new Result(playback.key(), cached.timeline, cached.status);
-        if (exact && now - waitingSince < 1200 && spicyStatus.equals("Loading lyrics")) {
-            return new Result(playback.key(), null, spicyStatus);
+        var readyFallback = cached != null && cached.timeline != null && now < cached.retryAt
+            ? new LyricsSourcePolicy.Response(cached.timeline, cached.status, false) : null;
+        var selected = LyricsSourcePolicy.select(config.spicyLyricsEnabled.get(), config.lyricsSearchFallback.get(),
+            () -> primary(playback), () -> fallback(playback, requestKey, now), readyFallback);
+        return new Result(playback.key(), selected.timeline(), selected.status());
+    }
+
+    private static LyricsSourcePolicy.Response primary(MusicPlayback.Playback playback) {
+        var config = Config.get();
+        String key = config.spicyLyricsKey.get().trim();
+        if (!key.startsWith("sl_pk_") || key.length() < 12) return new LyricsSourcePolicy.Response(null, "Add a Spicy Lyrics client key", false);
+        String id = playback.spotifyId();
+        if (id.isEmpty() && config.lyricsResolveSpotify.get()) {
+            var lookup = SpotifyTrackResolver.update(playback);
+            if (lookup.pending() || lookup.id().isEmpty()) return new LyricsSourcePolicy.Response(null, lookup.status(), lookup.pending());
+            id = lookup.id();
         }
+        if (id.isEmpty()) return new LyricsSourcePolicy.Response(null, "Connect Spotify or enable Find Spotify track IDs", false);
+        var spicy = SpicyLyricsService.update(id);
+        LyricsTimeline timeline = spicy.trackId().equals(id) ? spicy.timeline() : null;
+        if (timeline != null && timeline.lines().isEmpty() && timeline.background().isEmpty()) timeline = null;
+        return new LyricsSourcePolicy.Response(timeline, timeline != null ? "Spicy Lyrics ready" : spicy.status(), spicy.pending());
+    }
+
+    private static LyricsSourcePolicy.Response fallback(MusicPlayback.Playback playback, String requestKey, long now) {
+        Cached cached = CACHE.get(requestKey);
+        if (cached != null && now < cached.retryAt) return new LyricsSourcePolicy.Response(cached.timeline, cached.status, false);
         if (!busy && now >= nextSearchAt) {
             var query = LrclibLyrics.query(playback.title(), playback.artist(), playback.clock().durationMs());
             if (query.artist().isBlank()) {
                 var missing = new Cached(null, "The player hasn't supplied an artist for this song", now + 10_000);
                 CACHE.put(requestKey, missing);
-                return new Result(playback.key(), null, missing.status);
+                return new LyricsSourcePolicy.Response(null, missing.status, false);
             }
             busy = true;
             WORKER.execute(() -> search(requestKey, query));
         }
-        return new Result(playback.key(), null, now < nextSearchAt ? "Lyrics search is waiting to retry" : "Finding lyrics by song");
+        return new LyricsSourcePolicy.Response(null, now < nextSearchAt ? "LRCLIB is waiting to retry" : "Finding lyrics with LRCLIB", true);
     }
 
     private static void search(String key, LrclibLyrics.Query query) {

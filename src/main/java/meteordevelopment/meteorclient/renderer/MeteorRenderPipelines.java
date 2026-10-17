@@ -98,6 +98,23 @@ public abstract class MeteorRenderPipelines {
         .withCull(false)
         .build());
 
+    public static final RenderPipeline CELESTIAL_SKY = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)
+        .withLocation(MeteorClient.identifier("pipeline/celestial_sky"))
+        .withVertexFormat(VertexFormats.POSITION_COLOR, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexShader(MeteorClient.identifier("shaders/celestial_sky.vert"))
+        .withFragmentShader(MeteorClient.identifier("shaders/celestial_sky.frag"))
+        .withUniform("SkyData", UniformType.UNIFORM_BUFFER)
+        .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST).withDepthWrite(false)
+        .withBlend(BlendFunction.TRANSLUCENT).withCull(false).build());
+
+    public static final RenderPipeline CELESTIAL_STARS = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)
+        .withLocation(MeteorClient.identifier("pipeline/celestial_stars"))
+        .withVertexFormat(VertexFormats.POSITION_COLOR, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexShader(MeteorClient.identifier("shaders/celestial_sky.vert"))
+        .withFragmentShader(MeteorClient.identifier("shaders/pos_color.frag"))
+        .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST).withDepthWrite(false)
+        .withBlend(new BlendFunction(SourceFactor.SRC_ALPHA, DestFactor.ONE)).withCull(false).build());
+
     // UI
 
     public static final RenderPipeline UI_COLORED = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)

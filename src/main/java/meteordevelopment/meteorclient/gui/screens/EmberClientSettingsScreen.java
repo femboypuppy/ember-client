@@ -163,10 +163,23 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = slider(r, y, "Intensity", ambience.ambienceIntensity.get(), percent(ambience.ambienceIntensity.get()), ambience.ambienceIntensity::set, dt);
         y = slider(r, y, "Star density", ambience.ambienceDensity.get(), percent(ambience.ambienceDensity.get()), ambience.ambienceDensity::set, dt);
         y = slider(r, y, "Drift speed", ambience.ambienceSpeed.get() / 2, percent(ambience.ambienceSpeed.get()), v -> ambience.ambienceSpeed.set(v * 2), dt);
-        y = toggle(r, y, "Show while playing", "A much fainter version in game. Hidden with the HUD.", ambience.ambienceHud.get(), () -> ambience.ambienceHud.set(!ambience.ambienceHud.get()), dt);
+        y = toggle(r, y, "Screen ambience while playing", "Optional faint screen overlay. The 3D atmosphere below works independently.", ambience.ambienceHud.get(), () -> ambience.ambienceHud.set(!ambience.ambienceHud.get()), dt);
+        y = section(r, y, "WORLD ATMOSPHERE", "A 3D sky, starlight and gentle haze in your current accent.");
+        y = toggle(r, y, "World atmosphere", "Show the effects in the world, including when the menu is closed.", ambience.worldAtmosphere.get(), () -> ambience.worldAtmosphere.set(!ambience.worldAtmosphere.get()), dt);
+        y = toggle(r, y, "Accent skybox", "A procedural sky that reacts to your accent and song artwork.", ambience.accentSky.get(), () -> ambience.accentSky.set(!ambience.accentSky.get()), dt);
+        label(r, "Sky style", contentX + 2, y + 10, 0.72, EmberUI.TEXT, contentW / 3);
+        double skyW = contentW * 0.66 / Config.CelestialSky.values().length;
+        for (var style : Config.CelestialSky.values()) action(r, contentX + contentW * 0.34 + skyW * style.ordinal(), y, skyW - 5, 34,
+            style.toString(), () -> ambience.celestialSky.set(style), ambience.celestialSky.get() == style, dt);
+        y += 46;
+        y = slider(r, y, "Sky intensity", ambience.skyIntensity.get(), percent(ambience.skyIntensity.get()), ambience.skyIntensity::set, dt);
+        y = toggle(r, y, "3D starlight", "Distant stars and drifting motes with depth, parallax and terrain occlusion.", ambience.worldStars.get(), () -> ambience.worldStars.set(!ambience.worldStars.get()), dt);
+        y = toggle(r, y, "Accent fog", "Tint distant haze while keeping nearby blocks readable.", ambience.accentFog.get(), () -> ambience.accentFog.set(!ambience.accentFog.get()), dt);
+        y = slider(r, y, "Fog amount", ambience.fogAmount.get(), percent(ambience.fogAmount.get()), ambience.fogAmount::set, dt);
         y = toggle(r, y, "Ground lighting", "Soft light on nearby ground, in the current accent color.", ambience.groundLight.get(), () -> ambience.groundLight.set(!ambience.groundLight.get()), dt);
         y = slider(r, y, "Light brightness", ambience.groundLightIntensity.get(), percent(ambience.groundLightIntensity.get()), ambience.groundLightIntensity::set, dt);
         y = slider(r, y, "Light radius", (ambience.groundLightRadius.get() - 1.5) / 5.5, String.format("%.1f blocks", ambience.groundLightRadius.get()), v -> ambience.groundLightRadius.set(1.5 + v * 5.5), dt);
+        y = slider(r, y, "Light shimmer", ambience.lightShimmer.get(), percent(ambience.lightShimmer.get()), ambience.lightShimmer::set, dt);
         y += 12;
         if (EmberAppearance.frosted()) {
             y = section(r, y, "GLASS DETAILS", "Fine-tune the surface against your game background.");
@@ -231,7 +244,10 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = status(r, y, "Lyrics", !c.lyricsEnabled.get() ? "Lyric pill disabled" : lyrics.status().isEmpty() ? "Timed lyrics ready" : lyrics.status());
         y += 12;
         y = toggle(r, y, "Detect desktop music", "Spotify, YouTube Music and SoundCloud through Windows media controls.", c.desktopMusic.get(), () -> c.desktopMusic.set(!c.desktopMusic.get()), dt);
-        y = toggle(r, y, "Search lyrics by song", "Find line-synced lyrics with LRCLIB. No login or API key needed.", c.lyricsSearchFallback.get(), () -> c.lyricsSearchFallback.set(!c.lyricsSearchFallback.get()), dt);
+        y = section(r, y, "LYRIC SOURCES", "Spicy Lyrics first, then LRCLIB if a timed sync is unavailable.");
+        y = toggle(r, y, "Spicy Lyrics", "Primary source for timed words, syllables and backing vocals.", c.spicyLyricsEnabled.get(), () -> c.spicyLyricsEnabled.set(!c.spicyLyricsEnabled.get()), dt);
+        y = toggle(r, y, "LRCLIB", "Line-synced fallback. Also works alone without a key or login.", c.lyricsSearchFallback.get(), () -> c.lyricsSearchFallback.set(!c.lyricsSearchFallback.get()), dt);
+        y = toggle(r, y, "Find Spotify track IDs", "Match title, artist and duration without a Spotify connection.", c.lyricsResolveSpotify.get(), () -> c.lyricsResolveSpotify.set(!c.lyricsResolveSpotify.get()), dt);
         y = section(r, y, "DISPLAY", "Compact lyrics with a fixed text size and syllable highlighting.");
         y = toggle(r, y, "Lyrics pill", "Show synced words beside the main status pill.", c.lyricsEnabled.get(), () -> c.lyricsEnabled.set(!c.lyricsEnabled.get()), dt);
         y = toggle(r, y, "Backing vocals", "Show background lyrics underneath the lead voice.", c.lyricsBackground.get(), () -> c.lyricsBackground.set(!c.lyricsBackground.get()), dt);
@@ -254,7 +270,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         label(r, "Redirect URI (must match your Spotify app):", contentX, y, 0.65, EmberUI.TEXT_DIM, contentW); y += 22;
         label(r, SpotifyPlayback.REDIRECT, contentX, y, 0.75, EmberUI.TEXT, contentW); y += 28;
         action(r, contentX, y, contentW, 30, "Copy redirect URI", () -> mc.keyboard.setClipboard(SpotifyPlayback.REDIRECT), false, dt); y += 50;
-        y = section(r, y, "OPTIONAL SPICY LYRICS", "For exact Spotify tracks. Desktop search works without this key.");
+        y = section(r, y, "SPICY LYRICS ACCESS", "Your publishable key is needed even when track IDs are found automatically.");
         y = field(r, y, "Spicy Lyrics client key", c.spicyLyricsKey, true);
         label(r, "Enable 'No origin header' in the key's client-access settings.", contentX, y, 0.62, EmberUI.TEXT_DIM, contentW); y += 28;
         action(r, contentX, y, contentW, 34, "Open Spicy Lyrics key dashboard", () -> open("https://developers.spicylyrics.org/dashboard/applications"), false, dt); y += 54;

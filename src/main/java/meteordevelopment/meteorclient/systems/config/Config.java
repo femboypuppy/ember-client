@@ -44,6 +44,14 @@ public class Config extends System<Config> {
         .name("search-lyrics-by-song")
         .description("Find line-synced lyrics through LRCLIB using title, artist and duration when Spicy Lyrics is unavailable.")
         .defaultValue(true).build());
+    public final Setting<Boolean> spicyLyricsEnabled = sgLyrics.add(new BoolSetting.Builder()
+        .name("spicy-lyrics-enabled")
+        .description("Try Spicy Lyrics first. Requires your publishable client key and a Spotify track ID.")
+        .defaultValue(true).build());
+    public final Setting<Boolean> lyricsResolveSpotify = sgLyrics.add(new BoolSetting.Builder()
+        .name("find-spotify-track-ids")
+        .description("Find Spotify IDs with ListenBrainz and verify public track metadata. No Spotify login or developer key needed.")
+        .defaultValue(true).build());
     public final Setting<Boolean> lyricsBackground = sgLyrics.add(new BoolSetting.Builder()
         .name("lyrics-background-vocals")
         .description("Show separately timed backing vocals below the lead lyrics.")
@@ -87,6 +95,23 @@ public class Config extends System<Config> {
         .name("celestial-ambience").description("Accent-colored aurora light, drifting stars and subtle constellations behind Ember's menus.").defaultValue(true).build());
     public final Setting<Boolean> ambienceHud = sgVisual.add(new BoolSetting.Builder()
         .name("ambience-in-game").description("Also show a much fainter atmosphere while playing, outside menus.").defaultValue(false).build());
+    public enum CelestialSky { Nebula, Aurora, Dusk }
+    public final Setting<Boolean> worldAtmosphere = sgVisual.add(new BoolSetting.Builder()
+        .name("world-atmosphere").description("Enable the celestial atmosphere in the 3D world, independently of menus and HUD visibility.").defaultValue(true).build());
+    public final Setting<Boolean> accentSky = sgVisual.add(new BoolSetting.Builder()
+        .name("accent-skybox").description("Procedural accent-colored sky in dimensions with skylight.").defaultValue(true).build());
+    public final Setting<CelestialSky> celestialSky = sgVisual.add(new EnumSetting.Builder<CelestialSky>()
+        .name("celestial-sky-style").description("Choose a nebula, aurora or soft dusk skybox.").defaultValue(CelestialSky.Nebula).build());
+    public final Setting<Double> skyIntensity = sgVisual.add(new DoubleSetting.Builder()
+        .name("accent-sky-intensity").description("Strength of the custom sky and its accent color.").defaultValue(0.75).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Boolean> worldStars = sgVisual.add(new BoolSetting.Builder()
+        .name("world-stars").description("Distant celestial stars and world-anchored, depth-tested starlight motes.").defaultValue(true).build());
+    public final Setting<Boolean> accentFog = sgVisual.add(new BoolSetting.Builder()
+        .name("accent-fog").description("A subtle accent tint and atmospheric haze in open-air dimensions.").defaultValue(true).build());
+    public final Setting<Double> fogAmount = sgVisual.add(new DoubleSetting.Builder()
+        .name("accent-fog-amount").description("Fog tint and distant haze strength. Nearby terrain stays clear.").defaultValue(0.3).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> lightShimmer = sgVisual.add(new DoubleSetting.Builder()
+        .name("world-light-shimmer").description("Slow moving pools of accent light across nearby terrain.").defaultValue(0.3).range(0, 1).sliderRange(0, 1).build());
     public final Setting<Boolean> groundLight = sgVisual.add(new BoolSetting.Builder()
         .name("ambience-ground-light").description("Soft additive accent light on nearby ground. Follows terrain without replacing block textures.").defaultValue(true).build());
     public final Setting<Double> groundLightRadius = sgVisual.add(new DoubleSetting.Builder()

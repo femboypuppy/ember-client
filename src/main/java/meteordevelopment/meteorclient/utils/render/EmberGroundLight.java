@@ -12,14 +12,16 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 /** Additive colored illumination projected onto cached nearby terrain surfaces, including slabs and stairs. */
 public final class EmberGroundLight {
-    private record Tile(double x, double y, double z, double width, double depth) {}
-    private static final List<Tile> TILES = new ArrayList<>();
+    private static final List<TerrainLightSurfaces.Face> TILES = new ArrayList<>();
     private static final CelestialMesh MESH = new CelestialMesh(60000);
     private static Renderer3D renderer;
     private static Object world;
@@ -41,24 +43,46 @@ public final class EmberGroundLight {
         scanX = mc.player.getX(); scanY = mc.player.getY(); scanZ = mc.player.getZ();
         int reach = (int) Math.ceil(radius) + 1, px = mc.player.getBlockX(), py = mc.player.getBlockY(), pz = mc.player.getBlockZ();
         BlockPos.Mutable pos = new BlockPos.Mutable();
+        Map<Long, List<TerrainLightSurfaces.Bounds>> shapes = new HashMap<>();
+        scan:
         for (int x = px - reach; x <= px + reach; x++) for (int z = pz - reach; z <= pz + reach; z++) {
             if (Math.hypot(x + 0.5 - scanX, z + 0.5 - scanZ) > radius + 1) continue;
             if (!mc.world.getChunkManager().isChunkLoaded(x >> 4, z >> 4)) continue;
             for (int y = py + 1; y >= py - 3; y--) {
-                pos.set(x, y, z);
-                var state = mc.world.getBlockState(pos);
-                if (state.getCollisionShape(mc.world, pos).isEmpty()) continue;
-                boolean found = false;
-                for (var box : state.getOutlineShape(mc.world, pos).getBoundingBoxes()) {
-                    double top = y + box.maxY;
-                    if (top > scanY + 1.05 || top < scanY - 2.75) continue;
-                    if (TILES.size() >= 600) return;
-                    TILES.add(new Tile(x + box.minX, top + 0.008, z + box.minZ, box.maxX - box.minX, box.maxZ - box.minZ));
-                    found = true;
+                var boxes = bounds(shapes, pos, x, y, z);
+                if (boxes.isEmpty()) continue;
+                List<TerrainLightSurfaces.Bounds> nearby = new ArrayList<>(boxes);
+                nearby.addAll(bounds(shapes, pos, x - 1, y, z)); nearby.addAll(bounds(shapes, pos, x + 1, y, z));
+                nearby.addAll(bounds(shapes, pos, x, y - 1, z)); nearby.addAll(bounds(shapes, pos, x, y + 1, z));
+                nearby.addAll(bounds(shapes, pos, x, y, z - 1)); nearby.addAll(bounds(shapes, pos, x, y, z + 1));
+                for (var box : boxes) {
+                    TILES.addAll(TerrainLightSurfaces.exposed(box, nearby));
+                    if (TILES.size() >= 4096) break scan;
                 }
-                if (found) break;
             }
         }
+        TILES.sort(Comparator.comparingDouble(f -> Math.pow(f.center(0) - scanX, 2)
+            + Math.pow(f.center(1) - scanY, 2) + Math.pow(f.center(2) - scanZ, 2)));
+    }
+
+    private static List<TerrainLightSurfaces.Bounds> bounds(Map<Long, List<TerrainLightSurfaces.Bounds>> cache,
+                                                          BlockPos.Mutable pos, int x, int y, int z) {
+        long key = BlockPos.asLong(x, y, z);
+        var cached = cache.get(key);
+        if (cached != null) return cached;
+        List<TerrainLightSurfaces.Bounds> result = new ArrayList<>();
+        if (mc.world.getChunkManager().isChunkLoaded(x >> 4, z >> 4)) {
+            pos.set(x, y, z);
+            var state = mc.world.getBlockState(pos);
+            if (!state.getCollisionShape(mc.world, pos).isEmpty()) {
+                for (var b : state.getOutlineShape(mc.world, pos).getBoundingBoxes()) {
+                    if (result.size() >= 32) break;
+                    result.add(new TerrainLightSurfaces.Bounds(x + b.minX, y + b.minY, z + b.minZ, x + b.maxX, y + b.maxY, z + b.maxZ));
+                }
+            }
+        }
+        cache.put(key, result);
+        return result;
     }
 
     @EventHandler private static void onRender(Render3DEvent event) {
@@ -72,9 +96,9 @@ public final class EmberGroundLight {
         if (strength <= 0.001) return;
         MESH.clear();
         for (var tile : TILES) {
-            if (!MESH.hasRoom(96)) break;
-            CelestialGeometry.groundTile(MESH, tile.x - center.x, tile.y - center.y, center.z - tile.z - tile.depth,
-                tile.width, tile.depth, config.groundLightRadius.get(), strength, rgb);
+            if (!MESH.hasRoom(384)) break;
+            tile.light(MESH, center.x, center.y, center.z, config.groundLightRadius.get(), strength, rgb,
+                EmberWorldAtmosphere.time(), config.worldAtmosphere.get() ? config.lightShimmer.get() : 0);
         }
         if (MESH.size == 0) return;
         if (renderer == null) renderer = new Renderer3D(MeteorRenderPipelines.WORLD_COLORED_LINES_DEPTH, MeteorRenderPipelines.WORLD_ACCENT_LIGHT);

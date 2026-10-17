@@ -3,7 +3,6 @@ package meteordevelopment.meteorclient.utils.misc;
 import com.google.gson.JsonParser;
 import meteordevelopment.meteorclient.systems.config.Config;
 
-import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -32,24 +31,30 @@ public final class SpicyLyricsService {
     private static boolean busy;
     private static boolean romanizationUsed;
     private static long retryAt, globallyLimitedUntil;
-    public record Result(String trackId, LyricsTimeline timeline, String status) {}
+    public record Result(String trackId, LyricsTimeline timeline, String status, boolean pending) {
+        public Result(String trackId, LyricsTimeline timeline, String status) { this(trackId, timeline, status, false); }
+    }
 
     private SpicyLyricsService() {}
 
     public static synchronized Result update() {
+        var playback = SpotifyPlayback.current();
+        return update(playback == null ? "" : playback.trackId());
+    }
+
+    public static synchronized Result update(String id) {
         Config config = Config.get();
         if (config == null || !config.lyricsEnabled.get()) return new Result("", null, "");
+        if (!config.spicyLyricsEnabled.get()) { wanted = ""; return new Result(id, null, "Spicy Lyrics is disabled"); }
         String key = config.spicyLyricsKey.get().trim();
         if (!key.startsWith("sl_pk_") || key.length() < 12) {
             wanted = "";
             return result = new Result("", null, "Add a Spicy Lyrics client key in Lyrics settings");
         }
-        SpotifyPlayback.Playback playback = SpotifyPlayback.current();
-        if (playback == null) {
+        if (!id.matches("[A-Za-z0-9]{22}")) {
             wanted = "";
-            return result = new Result("", null, SpotifyPlayback.status());
+            return result = new Result("", null, "No matching Spotify track ID");
         }
-        String id = playback.trackId();
         if (!key.equals(keyUsed)) { keyUsed = key; retryAt = 0; wanted = ""; }
         boolean romanization = config.lyricsRomanization.get();
         if (!id.equals(wanted) || romanizationUsed != romanization) {
@@ -60,8 +65,12 @@ public final class SpicyLyricsService {
             result = new Result(id, cached, cached == null ? "Loading lyrics" : "");
         }
         long now = System.currentTimeMillis();
-        if (result.timeline != null || busy || now < retryAt || now < globallyLimitedUntil) return result;
+        if (result.timeline != null) return result;
+        if (now < globallyLimitedUntil) return result = new Result(id, null, "Spicy Lyrics rate limited; waiting to retry");
+        if (busy) return result = new Result(id, null, "Loading Spicy Lyrics", true);
+        if (now < retryAt) return result;
         busy = true;
+        result = new Result(id, null, "Loading Spicy Lyrics", true);
         WORKER.execute(() -> fetch(id, key));
         return result;
     }
@@ -74,12 +83,11 @@ public final class SpicyLyricsService {
             HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.spicylyrics.org/v1/lyrics/" + id))
                 .timeout(Duration.ofSeconds(12)).header("Authorization", "Bearer " + key)
                 .header("Accept", "application/json").header("User-Agent", "EmberClient-Lyrics/1.0").GET().build();
-            HttpResponse<InputStream> response = HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            try (InputStream input = response.body()) {
+            HttpResponse<byte[]> response = HTTP.send(request, ignored -> MusicLyricsService.limitedBody());
+            {
                 int code = response.statusCode();
                 if (code == 200) {
-                    byte[] bytes = input.readNBytes(2_000_001);
-                    if (bytes.length > 2_000_000) throw new IllegalArgumentException("Lyrics response too large");
+                    byte[] bytes = response.body();
                     var envelope = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
                     if (!envelope.has("Body") || !envelope.getAsJsonObject("Body").has("id")
                         || !id.equals(envelope.getAsJsonObject("Body").get("id").getAsString())) {

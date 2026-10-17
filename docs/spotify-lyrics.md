@@ -6,15 +6,35 @@ scene-colored surface as the other HUD widgets.
 
 ## Automatic desktop detection (Windows)
 
-**Detect desktop music** and **Search lyrics by song** are enabled by default.
+**Detect desktop music**, both lyric sources, and **Find Spotify track IDs** are
+enabled by default.
 Play music in Spotify, YouTube Music, SoundCloud, or another app/browser tab that
 publishes its media session to Windows. Ember reads the title, artist, album,
 playback position, pause state and thumbnail locally. No Spotify Premium,
 developer application, Spotify login or Spicetify installation is needed for
 this route. It does not record system audio or inspect private browser data.
 
-Without an exact Spotify track ID, Ember searches [LRCLIB](https://lrclib.net/docs)
-directly by title and artist. It verifies the title, artist and duration (within
+In **Music & lyrics → Lyric sources**, toggle **Spicy Lyrics** and **LRCLIB**
+independently. Spicy Lyrics always has priority when enabled and configured.
+LRCLIB takes over if the primary has no verified track ID, no timed lyrics, a
+missing client key or a service error. Initial requests wait for the primary;
+existing cached LRCLIB lyrics remain visible during later primary retries.
+Disabled sources do not start new requests or display cached lyrics.
+
+With a Spicy Lyrics key, **Find Spotify track IDs** uses the public
+[ListenBrainz metadata lookup](https://labs.api.listenbrainz.org/spotify-id-from-metadata)
+to find candidate IDs from title, artist and album without Spotify credentials.
+Ember then checks public Spotify embed metadata against the title, artist and
+duration before using an ID. This is a best-effort internet lookup, not an ID
+derived locally: catalog coverage is incomplete and Spotify's public metadata
+format may change. Invalid, mismatched and music-video results are rejected.
+Matching runs in the background with a shared eight-second budget, bounded
+responses and an in-memory cache. The desktop player continues to supply timing.
+Disable **Find Spotify track IDs** to keep only exact IDs from Spotify/Spicetify.
+Your own Spicy Lyrics client key is still required for the lyrics themselves.
+
+The [LRCLIB](https://lrclib.net/docs) fallback searches directly by title and
+artist without an API key. It verifies the title, artist and duration (within
 three seconds), ignoring cosmetic labels such as `(Official Music Video)` but
 preserving `Live`, remixes and other recording versions. Search results already
 contain lyrics, so there is no second request to download a matching record.
@@ -24,9 +44,10 @@ delay further searches. Nothing waits on HTTP on the render thread.
 
 LRCLIB's LRC fallback uses real **line timestamps**, with an LRCLIB credit in the details row.
 It does not invent word/syllable timings or backing vocals. Exact Spotify
-connections still use Spicy Lyrics first; if the direct connection matches the
+connections retain their exact IDs; if the direct connection matches the
 desktop song and duration, its exact ID is retained while Windows supplies the
-playback clock. Disable **Search lyrics by song** to use only Spicy Lyrics.
+playback clock. Disable **LRCLIB** to use only Spicy Lyrics, or disable
+**Spicy Lyrics** to use only LRCLIB.
 
 Compatibility depends on the player exposing accurate metadata and a timeline
 to Windows. A browser tab with no artist, an unofficial upload, a live recording,

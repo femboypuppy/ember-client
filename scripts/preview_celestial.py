@@ -22,13 +22,13 @@ def main():
         raise SystemExit("Set JAVA_HOME to a Java 21 JDK.")
     package = Path("meteordevelopment/meteorclient/utils/render")
     classes = ROOT / "build" / "visual-checks"
-    sources = [ROOT / "src/main/java" / package / f"{name}.java" for name in ("CelestialMesh", "CelestialGeometry")]
+    sources = [ROOT / "src/main/java" / package / f"{name}.java" for name in ("CelestialMesh", "CelestialGeometry", "TerrainLightSurfaces", "CelestialWorldGeometry")]
     sources.append(ROOT / "src/lyricsChecks/java" / package / "CelestialVisualChecks.java")
     sources.append(ROOT / "src/lyricsChecks/java" / package / "CelestialPreviewImage.java")
     subprocess.run([javac, "-d", str(classes), *map(str, sources)], check=True)
     subprocess.run([java, "-cp", str(classes), "meteordevelopment.meteorclient.utils.render.CelestialVisualChecks", str(OUT / "geometry.json")], check=True)
     subprocess.run([java, "-Djava.awt.headless=true", "-cp", str(classes), "meteordevelopment.meteorclient.utils.render.CelestialPreviewImage", str(OUT / "celestial-preview.png")], check=True)
-    data = [item for item in json.loads((OUT / "geometry.json").read_text()) if item["kind"] != "floor"]
+    data = [item for item in json.loads((OUT / "geometry.json").read_text()) if item["kind"] in {"wings", "circle", "atmosphere"}]
     (OUT / "index.html").write_text(HTML.replace("__GEOMETRY__", json.dumps(data, separators=(",", ":"))), encoding="utf-8")
     print("Preview:", OUT / "index.html", flush=True)
     if args.screenshot:

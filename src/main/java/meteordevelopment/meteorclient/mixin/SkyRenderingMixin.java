@@ -7,6 +7,7 @@ package meteordevelopment.meteorclient.mixin;
 
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.world.Ambience;
+import meteordevelopment.meteorclient.utils.render.EmberWorldAtmosphere;
 import net.minecraft.client.render.Camera;
 import net.minecraft.client.render.SkyRendering;
 import net.minecraft.client.render.state.SkyRenderState;
@@ -23,6 +24,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class SkyRenderingMixin {
     @Inject(method = "updateRenderState", at = @At("TAIL"))
     private void updateRenderState(ClientWorld world, float tickProgress, Camera camera, SkyRenderState state, CallbackInfo ci) {
+        state.skyColor = EmberWorldAtmosphere.skyTint(state.skyColor);
         Ambience ambience = Modules.get().get(Ambience.class);
         if (!ambience.isActive()) return;
 

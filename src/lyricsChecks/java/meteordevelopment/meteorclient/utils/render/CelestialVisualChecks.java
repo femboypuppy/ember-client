@@ -6,6 +6,8 @@ import java.nio.file.Path;
 /** Exercises the exact procedural geometry used by Minecraft; also exports reviewable previews. */
 public final class CelestialVisualChecks {
     public static void main(String[] args) throws Exception {
+        terrainSurfaces();
+        worldAtmosphere();
         var mesh = new CelestialMesh(90000);
         for (var style : CelestialGeometry.WingStyle.values()) {
             for (double time : new double[]{0, 0.1, 1.2, 10000}) {
@@ -72,6 +74,79 @@ public final class CelestialVisualChecks {
         require(mesh.size % 3 == 0 && mesh.size <= mesh.colors.length, "Triangle count must remain valid");
         for (int i = 0; i < mesh.size * 3; i++) require(Float.isFinite(mesh.positions[i]), "Every generated vertex must be finite");
     }
+    private static void terrainSurfaces() {
+        var cube = new TerrainLightSurfaces.Bounds(0, 0, 0, 1, 1, 1);
+        var alone = TerrainLightSurfaces.exposed(cube, java.util.List.of(cube));
+        require(alone.size() == 6, "An isolated block needs six lit faces, including vertical sides");
+        var neighbor = new TerrainLightSurfaces.Bounds(1, 0, 0, 2, 1, 1);
+        var pair = java.util.List.of(cube, neighbor);
+        require(TerrainLightSurfaces.exposed(cube, pair).size() == 5, "A shared full-block face must not be rendered");
+        var slab = new TerrainLightSurfaces.Bounds(1, 0, 0, 2, 0.5, 1);
+        var partial = TerrainLightSurfaces.exposed(cube, java.util.List.of(cube, slab));
+        double sideArea = partial.stream().filter(f -> f.axis() == 0 && f.sign() == 1).mapToDouble(TerrainLightSurfaces.Face::area).sum();
+        require(Math.abs(sideArea - 0.5) < 1e-9, "An adjacent slab must leave the upper half of the block side lit");
+        var lower = new TerrainLightSurfaces.Bounds(0, 0, 0, 1, 0.5, 1);
+        var step = new TerrainLightSurfaces.Bounds(0.5, 0.5, 0, 1, 1, 1);
+        var stair = java.util.List.of(lower, step);
+        double surfaceArea = stair.stream().flatMap(b -> TerrainLightSurfaces.exposed(b, stair).stream()).mapToDouble(TerrainLightSurfaces.Face::area).sum();
+        require(Math.abs(surfaceArea - 5.5) < 1e-9, "Stair shapes must remove only the internal shared surfaces");
+        var mesh = new CelestialMesh(60000);
+        for (var face : alone) face.light(mesh, 0.5, 1, 0.5, 3.4, 0.44, 0xFF2020);
+        valid(mesh);
+        boolean vertical = false;
+        for (int i = 0; i < mesh.size; i += 3) {
+            int p = i * 3;
+            if (Math.abs(mesh.positions[p + 1] - mesh.positions[p + 4]) > 0.01 || Math.abs(mesh.positions[p + 1] - mesh.positions[p + 7]) > 0.01) vertical = true;
+            require((mesh.colors[i] >> 16 & 255) > (mesh.colors[i] >> 8 & 255), "Sides must share the red accent");
+        }
+        require(vertical, "The submitted mesh must contain lit vertical triangles");
+        require(mesh.size <= 6 * 96, "A cube must keep the bounded per-face light budget");
+        mesh.clear();
+        for (var face : alone) face.light(mesh, 0.5, 1, 0.5, 3.4, 0.44, 0xFF2020, 0, 1);
+        int[] shimmer = java.util.Arrays.copyOf(mesh.colors, mesh.size);
+        mesh.clear();
+        for (var face : alone) face.light(mesh, 0.5, 1, 0.5, 3.4, 0.44, 0xFF2020, 8, 1);
+        valid(mesh);
+        require(!java.util.Arrays.equals(shimmer, java.util.Arrays.copyOf(mesh.colors, mesh.size)), "Light shimmer must change illumination without changing the surface geometry");
+        var tiny = new CelestialMesh(9);
+        for (var face : alone) face.light(tiny, 0.5, 1, 0.5, 3.4, 0.44, 0xFF2020);
+        valid(tiny);
+        require(tiny.size <= 9, "Surface light must stop cleanly when its mesh is full");
+        System.out.println("Terrain light passed: vertical sides, hidden faces, slabs, stairs and bounded meshes.");
+    }
+    private static void worldAtmosphere() {
+        var sky = new CelestialMesh(60000);
+        CelestialWorldGeometry.skyShell(sky); valid(sky);
+        require(sky.size == 3072, "The sky shell must stay in its fixed mesh budget");
+        for (int i = 0; i < sky.size; i++) {
+            int p = i * 3;
+            double radius = Math.sqrt(sky.positions[p] * sky.positions[p] + sky.positions[p + 1] * sky.positions[p + 1] + sky.positions[p + 2] * sky.positions[p + 2]);
+            require(Math.abs(radius - 32) < 0.0001, "Sky direction vertices must lie on a closed sphere");
+        }
+        sky.clear(); CelestialWorldGeometry.skyStars(sky, 10000, 1, 1, 0xFF2020); valid(sky);
+        require(sky.size > 40000 && sky.size <= 60000, "Maximum sky-star density must fit its allocation");
+        float[] stable = java.util.Arrays.copyOf(sky.positions, sky.size * 3);
+        sky.clear(); CelestialWorldGeometry.skyStars(sky, 10000, 1, 1, 0xFF2020);
+        require(java.util.Arrays.equals(stable, java.util.Arrays.copyOf(sky.positions, sky.size * 3)), "Stars must not rerandomize at a fixed time");
+        sky.clear(); CelestialWorldGeometry.skyStars(sky, 0, 0, 1, 0xFF2020);
+        require(sky.size == 0, "Zero star density must produce no sky stars");
+        var a = new CelestialMesh(24000); var b = new CelestialMesh(24000);
+        CelestialWorldGeometry.motes(a, 5.99, 65, -1000, 9, 1, 1, 0xFF2020);
+        CelestialWorldGeometry.motes(b, 6.01, 65, -1000, 9, 1, 1, 0xFF2020);
+        valid(a); valid(b); require(a.size > 0 && b.size > 0, "World starlight must render outside menus");
+        int matched = 0;
+        for (int i = 0; i < a.size; i += 48) for (int j = 0; j < b.size; j += 48) {
+            if (Math.abs(a.positions[i * 3] + 5.99 - b.positions[j * 3] - 6.01) < 0.0001
+                && Math.abs(a.positions[i * 3 + 1] - b.positions[j * 3 + 1]) < 0.0001
+                && Math.abs(a.positions[i * 3 + 2] - b.positions[j * 3 + 2]) < 0.0001) { matched++; break; }
+        }
+        require(matched > 20, "Moving across a grid boundary must retain world-anchored particle positions");
+        a.clear(); CelestialWorldGeometry.motes(a, 0, 0, 0, 0, 1, 0, 0xFF2020);
+        require(a.size == 0, "Zero intensity must hide world motes");
+        require(CelestialWorldGeometry.tint(0.4f, 255, 0.4f, 0) == 0.4f, "Zero fog amount must preserve the original scene");
+        require(CelestialWorldGeometry.tint(0.4f, 255, 0.4f, 1) > CelestialWorldGeometry.tint(0.4f, 0, 0.4f, 1), "Fog tint must follow the selected accent channel");
+        System.out.println("World atmosphere passed: closed sky sphere, stable stars, world-space parallax, color tint and geometry budgets.");
+    }
     private static double width(CelestialMesh mesh) {
         double max = 0; for (int i = 0; i < mesh.size; i++) max = Math.max(max, Math.abs(mesh.positions[i * 3])); return max * 2;
     }
@@ -79,7 +154,7 @@ public final class CelestialVisualChecks {
 
     private static void export(Path path) throws Exception {
         StringBuilder json = new StringBuilder("[");
-        var mesh = new CelestialMesh(18000);
+        var mesh = new CelestialMesh(60000);
         for (var style : CelestialGeometry.WingStyle.values()) {
             mesh.clear(); CelestialGeometry.wings(mesh, style, 0.7, 1, 0.93, 0.7, 0.8, 14, 0xA78BE0, 0.85);
             append(json, mesh, "wings", style.name());
@@ -90,6 +165,10 @@ public final class CelestialVisualChecks {
         }
         mesh.clear(); CelestialGeometry.atmosphere(mesh, 1600, 900, 5, 0, 0, 0.55, 0.65, 0xA78BE0);
         append(json, mesh, "atmosphere", "Starlight");
+        mesh.clear(); CelestialWorldGeometry.skyShell(mesh);
+        append(json, mesh, "sky", "Celestial sky");
+        mesh.clear(); CelestialWorldGeometry.skyStars(mesh, 5, 0.8, 0.85, 0xA78BE0);
+        append(json, mesh, "sky-stars", "Celestial stars");
         mesh.clear();
         for (int x = -4; x < 4; x++) for (int z = -4; z < 4; z++) {
             double y = x >= 1 && x <= 2 && z >= -1 && z <= 1 ? 0.5 : 0;

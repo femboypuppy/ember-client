@@ -39,17 +39,29 @@ public final class CelestialPreviewImage {
         card(g, 60, 1090, 1480, 270);
         Projection floor = (x, y, z) -> new double[]{1060 + (x + z * 0.43) * 47, 1230 + z * 0.36 * 47 - y * 47};
         mesh.clear();
+        var terrain = new java.util.ArrayList<TerrainLightSurfaces.Bounds>();
         for (int x = -4; x < 4; x++) for (int z = -4; z < 4; z++) {
-            double y = x >= 1 && x <= 2 && z >= -1 && z <= 1 ? 0.5 : 0;
-            int color = CelestialGeometry.color((x + z) % 2 == 0 ? 0x303139 : 0x26272F, 1, 0);
-            mesh.quad(x, y, z, x + 0.985, y, z, x + 0.985, y, z + 0.985, x, y, z + 0.985, color, color, color, color);
+            double top = x >= 0 && x <= 2 && z >= -1 && z <= 1 ? 0.5 : -0.5;
+            terrain.add(new TerrainLightSurfaces.Bounds(x, -1, z, x + 1, top, z + 1));
         }
-        draw(mesh, floor, false); mesh.clear();
-        for (int x = -4; x < 4; x++) for (int z = -4; z < 4; z++) {
-            double y = x >= 1 && x <= 2 && z >= -1 && z <= 1 ? 0.508 : 0.008;
-            CelestialGeometry.groundTile(mesh, x, y, z, 0.985, 0.985, 3.4, 0.44, ACCENT);
+        var faces = terrain.stream().flatMap(b -> TerrainLightSurfaces.exposed(b, terrain).stream())
+            .filter(f -> f.axis() == 1 ? f.sign() == 1 : f.sign() == -1)
+            .sorted(java.util.Comparator.comparingDouble(f -> -0.43 * f.center(0) + 0.36 * f.center(1) - f.center(2))).toList();
+        for (var face : faces) {
+            mesh.clear();
+            int color = CelestialGeometry.color(face.axis() == 1 ? 0x303139 : 0x202128, 1, 0);
+            double[][] p = new double[4][3];
+            for (int j = 0; j < 4; j++) {
+                p[j][face.axis()] = face.plane();
+                p[j][(face.axis() + 1) % 3] = j == 1 || j == 2 ? face.a1() : face.a0();
+                p[j][(face.axis() + 2) % 3] = j >= 2 ? face.b1() : face.b0();
+            }
+            mesh.quad(p[0][0], p[0][1], -p[0][2], p[1][0], p[1][1], -p[1][2],
+                p[2][0], p[2][1], -p[2][2], p[3][0], p[3][1], -p[3][2], color, color, color, color);
+            draw(mesh, floor, false); mesh.clear();
+            face.light(mesh, 0, 0, 0, 3.4, 0.44, ACCENT);
+            draw(mesh, floor, true);
         }
-        draw(mesh, floor, true);
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         text(g, "EMBER  /  CELESTIAL COLLECTION", 60, 46, 12, 0xB59CE5);
         text(g, "Light, motion & atmosphere.", 60, 89, 34, 0xF2EFF9);
@@ -69,7 +81,7 @@ public final class CelestialPreviewImage {
         }
         text(g, "ACCENT GROUND LIGHT", 90, 1136, 12, 0xB59CE5);
         text(g, "Color that reaches the world.", 90, 1176, 25, 0xF2EFF9);
-        text(g, "Additive illumination follows nearby ground and slab heights.", 91, 1204, 13, 0xA39CB4);
+        text(g, "Soft light wraps over ledges, sides, slabs and stair risers.", 91, 1204, 13, 0xA39CB4);
         text(g, "The same tint flows through the GUI, atmosphere and cosmetics.", 91, 1228, 13, 0xA39CB4);
         text(g, "Geometry preview, not a Minecraft screenshot. In-game effects also follow body pose, scene depth and elapsed animation time.", 62, 1400, 12, 0x7F778D);
         g.dispose();

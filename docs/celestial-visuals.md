@@ -23,11 +23,50 @@ Ground illumination uses an additive, depth-tested surface pass rather than
 replacing the block texture. Nearby collision and outline shapes are cached
 three times per ten ticks, with immediate refresh after larger movement or a
 world/radius change. Slabs and stairs receive light at their actual surface
-heights. A small height offset prevents z-fighting, shared per-vertex falloff
-keeps adjacent light tiles continuous, and unloaded chunks are skipped.
+heights. Exposed block sides, stair risers and nearby walls receive the same
+smooth accent light as the tops. Faces hidden inside adjoining blocks are
+removed, including partially covered faces next to slabs and stairs. A small
+outward offset prevents z-fighting, shared per-vertex falloff keeps adjacent
+surfaces continuous, and unloaded chunks are skipped.
 This is a local projected lighting effect: it does not change Minecraft's light
-levels, mob spawning, cast shadows, or light walls and entities like a full
+levels, mob spawning, cast shadows, or light entities like a full
 colored-light shader pack. It works without installing a shader pack.
+
+## World atmosphere and custom skyboxes
+
+In **Gear → Appearance → World atmosphere**, **World atmosphere** is enabled
+by default. This is a 3D world effect and stays visible with the menu closed
+or HUD hidden. The optional **Screen ambience while playing** control remains
+a separate, faint 2D overlay.
+
+- **Accent skybox:** choose **Nebula**, **Aurora**, or **Dusk**, with a separate
+  intensity control. The procedural sky changes color smoothly with Ember's
+  accent or the current album cover. Nebula uses layered clouds of light;
+  Aurora uses luminous curtains; Dusk gives a softer gradient. No downloaded
+  textures or shader pack are required.
+- **3D starlight:** distant, softly twinkling stars plus nearby light motes.
+  Motes are anchored to world-space cells and drift slowly. Walking produces
+  parallax rather than moving a screen overlay. They fade at the range limit
+  and stay hidden behind blocks.
+- **Accent fog:** subtly colors existing fog and adds distant atmospheric haze.
+  Adjust **Fog amount** independently; zero restores the original fog settings.
+  Nearby terrain remains clear and the render-distance cutoff is retained.
+- **Light shimmer:** slow brightness waves travel across the existing terrain
+  light, including exposed block sides. Zero gives steady lighting. **Drift
+  speed** controls sky animation, mote drift and the shimmer; zero freezes them.
+
+Sky and fog effects apply in dimensions with skylight and pause their overrides
+under water, lava, powder snow, blindness or darkness. Motes also work in other
+dimensions when the camera is in clear air. The existing Ambience module's
+explicit sky/fog color overrides take precedence over automatic color tinting.
+No Render's fog switch still controls whether fog is rendered. Shader packs or
+other mods that replace the sky/fog renderer may change the result; each effect
+can be disabled independently.
+
+The sky uses a direction-only sphere pinned to the far depth plane. It ignores
+camera translation and is occluded by scene depth at any view distance. The
+starfield uses the same sky-depth rule; motes use actual scene depth. These are
+local visual effects, not global light propagation or server-side particles.
 
 ## Wings
 
@@ -62,7 +101,8 @@ rotation and accent/custom color. World transitions clear old effects.
 ## Rendering and verification
 
 All geometry is procedural and capped: 18,000 vertices per wing mesh/menu
-atmosphere, 90,000 circle vertices per frame, and 60,000 terrain-light vertices.
+atmosphere, 90,000 circle vertices per frame, 60,000 terrain-light vertices,
+3,072 sky-shell vertices, 60,000 sky-star vertices and 24,000 mote vertices.
 Buffers are reused. World effects test against scene depth and do not write it;
 their pipelines own their blend state. No direct OpenGL state manipulation or
 framebuffer copying is used for these effects. Animation uses elapsed time and
@@ -70,10 +110,17 @@ exponential pose damping rather than FPS-dependent steps.
 
 `./gradlew checkVisuals` checks symmetry, folding, pulse endpoints, stable
 particles, colored terrain illumination, finite vertices, FPS independence and
-geometry budgets. `python scripts/preview_celestial.py` exports the production
+geometry budgets, exposed terrain faces and stable world-space stars.
+`python scripts/preview_celestial.py` exports the production
 meshes to `build/visual-preview/index.html`, an offline WebGL sheet with accent
 selection and wing rotation. Add `--screenshot` for an isolated headless Chromium
 capture. This sheet previews geometry, not a running Minecraft world.
+
+After exporting, `python scripts/check_world_atmosphere.py` compiles and renders
+the production sky/star shaders with the real exported meshes using ModernGL.
+It verifies color response, sky styles, motion, camera-translation invariance,
+zero intensity and terrain-depth occlusion, and writes
+`build/visual-preview/world-sky-preview.png`.
 
 `./gradlew checkMeshCapacity` exercises the production CPU mesh allocator with
 the reported startup-crash reservation, maximum effect sizes, independent vertex
