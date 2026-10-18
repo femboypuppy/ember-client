@@ -8,6 +8,7 @@ package meteordevelopment.meteorclient.mixin;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.world.Ambience;
 import net.minecraft.client.color.world.BiomeColors;
+import meteordevelopment.meteorclient.utils.render.EmberFoliage;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.BlockRenderView;
 import org.spongepowered.asm.mixin.Mixin;
@@ -17,6 +18,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(BiomeColors.class)
 public abstract class BiomeColorsMixin {
+    // Sodium's grass and foliage providers use these same biome resolvers.
+    @Inject(method = {"getGrassColor", "getFoliageColor", "getDryFoliageColor"}, at = @At("RETURN"), cancellable = true)
+    private static void emberBalanceFoliage(CallbackInfoReturnable<Integer> info) {
+        info.setReturnValue(EmberFoliage.color(info.getReturnValueI()));
+    }
+
     /**
      * @author Walaryne
      */

@@ -33,6 +33,8 @@ public final class EmberWeather {
     @PostInit public static void init(){MeteorClient.EVENT_BUS.subscribe(EmberWeather.class);}
     public static boolean active(){var c=Config.get();return c!=null&&c.customWeather.get()&&EmberWorldAtmosphere.openSky();}
 
+    public static void disturb(double x,double y,double z,double dx,double dz,double strength){if(active())SIMULATION.disturb(x,y,z,dx,dz,strength);}
+
     private static WeatherSimulation.Surface sample(double px,double pz) {
         int x=(int)Math.floor(px),z=(int)Math.floor(pz);
         long key=((long)x<<32)^(z&0xFFFFFFFFL);

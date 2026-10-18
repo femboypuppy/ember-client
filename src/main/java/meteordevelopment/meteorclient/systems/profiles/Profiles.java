@@ -39,6 +39,52 @@ public class Profiles extends System<Profiles> implements Iterable<Profile> {
         save();
     }
 
+    /** Register files already on disk. Never replace their contents with the current session. */
+    public void registerExisting(Profile profile) {
+        Profile previous=get(profile.name.get());
+        if(previous!=null)profiles.set(profiles.indexOf(previous),profile);
+        else profiles.add(profile);
+        save();
+    }
+
+    @Override
+    public void load(File folder) {
+        FOLDER.mkdirs();
+        super.load(folder);
+        discover();
+    }
+
+    public void discover() {
+        File[] folders = FOLDER.listFiles();
+        if (folders == null) return;
+        boolean changed = false;
+        for (File folder : folders) {
+            if (!folder.isDirectory() || folder.getName().startsWith(".") || get(folder.getName()) != null) continue;
+            Profile p = describe(folder);
+            if (p != null) { profiles.add(p); changed = true; }
+        }
+        if (changed) save();
+    }
+
+    public static Profile describe(File folder) {
+        File[] files = folder.listFiles();
+        if (files == null) return null;
+        Profile p = new Profile();
+        p.name.set(folder.getName());
+        boolean found = false;
+        for (File file : files) {
+            if (!file.isFile()) continue;
+            switch (file.getName()) {
+                case "appearance.nbt", "theme.nbt" -> { p.appearance.set(true); found = true; }
+                case "hud.nbt" -> { p.hud.set(true); found = true; }
+                case "modules.nbt" -> { p.modules.set(true); found = true; }
+                case "macros.nbt" -> { p.macros.set(true); found = true; }
+                default -> { if (file.getName().endsWith(".nbt") && !file.getName().equals("config.nbt")) { p.waypoints.set(true); found = true; } }
+            }
+        }
+        return found ? p : null;
+    }
+
     public void remove(Profile profile) {
         if (profiles.remove(profile)) profile.delete();
         save();
@@ -91,23 +137,6 @@ public class Profiles extends System<Profiles> implements Iterable<Profile> {
     @Override
     public Profiles fromTag(NbtCompound tag) {
         profiles = NbtUtils.listFromTag(tag.getListOrEmpty("profiles"), Profile::new);
-
-        for (File file : FOLDER.listFiles()) {
-            if (file.isDirectory() && get(file.getName()) == null) {
-                Profile p = new Profile();
-                p.name.set(file.getName());
-
-                boolean add = false;
-                for (File f : file.listFiles()) {
-                    if (f.getName().equals("hud.nbt")) p.hud.set(add = true);
-                    else if (f.getName().equals("macros.nbt")) p.macros.set(add = true);
-                    else if (f.getName().equals("modules.nbt")) p.modules.set(add = true);
-                    else if (f.getName().endsWith(".nbt")) p.waypoints.set(add = true);
-                }
-
-                if (add) add(p);
-            }
-        }
 
         return this;
     }

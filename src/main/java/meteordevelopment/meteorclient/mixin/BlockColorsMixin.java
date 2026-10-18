@@ -8,6 +8,7 @@ package meteordevelopment.meteorclient.mixin;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.world.Ambience;
 import net.minecraft.client.color.block.BlockColorProvider;
+import meteordevelopment.meteorclient.utils.render.EmberFoliage;
 import net.minecraft.client.color.block.BlockColors;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -53,6 +54,6 @@ public abstract class BlockColorsMixin {
             return ambience.foliageColor.get().getPacked();
         }
 
-        return original;
+        return EmberFoliage.color(original);
     }
 }

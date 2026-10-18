@@ -13,11 +13,13 @@ from PIL import Image, ImageDraw
 
 OUT = ROOT / "build/visual-preview"
 cases = {x["name"]: x for x in json.loads((OUT / "geometry.json").read_text()) if x["kind"] == "lighting"}
+foliage = next(x for x in json.loads((OUT / "geometry.json").read_text()) if x["kind"] == "foliage")
 game = next(p for p in (ROOT / ".gradle/loom-cache/minecraftMaven").rglob("*.jar") if not p.name.endswith("-sources.jar"))
 with ZipFile(game) as jar:
     fragment = jar.read("assets/minecraft/shaders/core/lightmap.fsh").decode()
     stone = Image.open(BytesIO(jar.read("assets/minecraft/textures/block/stone.png"))).convert("RGB")
     grass = Image.open(BytesIO(jar.read("assets/minecraft/textures/block/grass_block_top.png"))).convert("RGB")
+    leaves = Image.open(BytesIO(jar.read("assets/minecraft/textures/block/oak_leaves.png"))).convert("RGB")
 ctx = moderngl.create_standalone_context(require=330)
 program = ctx.program(vertex_shader="""#version 330
     out vec2 texCoord;
@@ -62,8 +64,8 @@ def luminance(rgb):
 assert luminance(balanced) > luminance(previous) * 1.03, "Balanced lighting must improve perceived brightness, not just the blue channel"
 
 
-def material(texture, case_name, biome=(1, 1, 1), nearby=False):
-    light = maps[case_name].getpixel((0, 15))[:3]
+def material(texture, case_name, biome=(1, 1, 1), nearby=False, light_override=None):
+    light = light_override or maps[case_name].getpixel((0, 15))[:3]
     case = cases[case_name]
     surface = case.get("surface", 0)
     additive = [(surface >> shift & 255) * case.get("groundAlpha", 0) if nearby else 0 for shift in (16, 8, 0)]
@@ -99,6 +101,27 @@ for col, name in enumerate(columns):
         draw.text((col * 300 + 12, row * 230 + 42), label, fill=(170, 175, 190))
         sheet.paste(material(texture, name, biome, nearby).resize((280, 190), Image.Resampling.NEAREST), (col * 300 + 10, row * 230 + 64))
 sheet.save(OUT / "ambient-material-preview.png")
+def rgb(value):
+    return tuple((value >> shift & 255) / 255 for shift in (16, 8, 0))
+
+def mean(texture):
+    values = pixels(texture)
+    return tuple(sum(p[i] for p in values)/len(values) for i in range(3))
+
+sheet = Image.new("RGB", (900, 480), (12, 13, 20))
+draw = ImageDraw.Draw(sheet)
+for row, texture in enumerate((grass, leaves)):
+    before = material(texture, "Balanced blue", rgb(foliage["original"]))
+    after = material(texture, "Balanced blue", rgb(foliage["balanced"]))
+    warm = material(texture, "Balanced blue", rgb(foliage["balanced"]), light_override=maps["Balanced blue"].getpixel((15,0))[:3])
+    a, b, c = mean(before), mean(after), mean(warm)
+    assert b[2]/max(1,b[1]) > a[2]/max(1,a[1])*1.5, "Balanced biome tint must remove the muddy green cast under blue skylight"
+    assert c[0] > c[2] and c[1] > c[2], "Balanced foliage must accept warm torch light rather than being painted blue"
+    for col, (label, image) in enumerate((("Original biome / blue sky",before),("Balanced biome / blue sky",after),("Balanced biome / torch",warm))):
+        draw.text((col*300+12,row*240+12),label,fill=(230,230,240))
+        sheet.paste(image.resize((280,190),Image.Resampling.NEAREST),(col*300+10,row*240+38))
+sheet.save(OUT / "foliage-lighting-preview.png")
+print("Foliage passed: actual grass and leaf textures accept blue skylight and warm torch light.")
 print("Vanilla lightmap GLSL passed: blue hue and visibility on real stone/grass textures, texture detail, adjustable darkness, independent torch color and no invented cave light.")
 print("GPU:", ctx.info["GL_RENDERER"])
 print("Preview:", OUT / "world-lightmap-preview.png")

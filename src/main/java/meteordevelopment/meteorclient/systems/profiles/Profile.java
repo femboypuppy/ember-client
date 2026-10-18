@@ -7,6 +7,8 @@ package meteordevelopment.meteorclient.systems.profiles;
 
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.config.Config;
+import meteordevelopment.meteorclient.gui.GuiThemes;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.macros.Macros;
 import meteordevelopment.meteorclient.systems.modules.Modules;
@@ -15,6 +17,7 @@ import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.misc.ISerializable;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
+import net.minecraft.nbt.NbtIo;
 import org.apache.commons.io.FileUtils;
 
 import java.io.File;
@@ -70,6 +73,10 @@ public class Profile implements ISerializable<Profile> {
         .build()
     );
 
+    public final Setting<Boolean> appearance = sgSave.add(new BoolSetting.Builder()
+        .name("appearance").description("Save the interface theme, atmosphere and visual preferences.")
+        .defaultValue(false).build());
+
     public Profile() {}
     public Profile(NbtElement tag) {
         fromTag((NbtCompound) tag);
@@ -79,6 +86,13 @@ public class Profile implements ISerializable<Profile> {
         File folder = getSafeFile();
         if (folder == null) return;
 
+        if (appearance.get()) {
+            try {
+                File visual = new File(folder, "appearance.nbt"), theme = new File(folder, "theme.nbt");
+                if (visual.isFile()) Config.get().applyAppearance(NbtIo.read(visual.toPath()));
+                if (theme.isFile()) GuiThemes.get().fromTag(NbtIo.read(theme.toPath()));
+            } catch (IOException e) { throw new IllegalStateException("Could not load appearance", e); }
+        }
         if (hud.get()) Hud.get().load(folder);
         if (macros.get()) Macros.get().load(folder);
         if (modules.get()) Modules.get().load(folder);
@@ -89,6 +103,13 @@ public class Profile implements ISerializable<Profile> {
         File folder = getSafeFile();
         if (folder == null) return;
 
+        if (appearance.get()) {
+            try {
+                folder.mkdirs();
+                ProfileTransfer.writeTag(new File(folder, "appearance.nbt").toPath(), Config.get().appearanceToTag());
+                ProfileTransfer.writeTag(new File(folder, "theme.nbt").toPath(), GuiThemes.get().toTag());
+            } catch (IOException e) { throw new IllegalStateException("Could not save appearance", e); }
+        }
         if (hud.get()) Hud.get().save(folder);
         if (macros.get()) Macros.get().save(folder);
         if (modules.get()) Modules.get().save(folder);

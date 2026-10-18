@@ -65,6 +65,18 @@ for i,kind in enumerate(weather):
     sheet.paste(image,(x,y+25));draw.text((x+12,y+7),kind.upper()+" / SOLID LEFT, WATER RIGHT",fill=(225,225,240))
 sheet.save(OUT / "weather-preview.png")
 
+weather = {item["name"]: vao(item["positions"], item["colors"]) for item in items if item["kind"].startswith("interaction-")}
+assert len(weather)==4, "Export the current interaction fixtures before running the GPU check"
+sheet=Image.new("RGB",(1280,770),(8,9,14));draw=ImageDraw.Draw(sheet)
+for i,kind in enumerate(weather):
+    image=render(kind)
+    assert ImageChops.difference(base,image).convert("RGB").getbbox(), f"{kind} interactions must be visible"
+    assert render(kind,depth=.01).tobytes()==occluded.tobytes(), f"{kind} effects must respect terrain depth"
+    x,y=i%2*640,i//2*385
+    sheet.paste(image,(x,y+25));draw.text((x+12,y+7),kind.upper()+" / ACCENT INTERACTION",fill=(225,225,240))
+sheet.save(OUT / "interaction-preview.png")
+print("Interaction GPU checks passed: footstep sparks, water wakes, place/break rings and terrain occlusion.")
+
 game=next(p for p in (ROOT/".gradle/loom-cache/minecraftMaven").rglob("*.jar") if not p.name.endswith("-sources.jar"))
 with ZipFile(game) as jar:native_fog=jar.read("assets/minecraft/shaders/include/fog.glsl").decode()
 fog=ctx.program(vertex_shader='''#version 330

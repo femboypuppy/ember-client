@@ -132,6 +132,40 @@ public final class CelestialWorldGeometry {
         }
     }
 
+    /** Sparse deterministic events. A previous slot is included when its trail crosses a boundary. */
+    public static void shootingStars(CelestialMesh mesh,double time,double frequency,double brightness,double trail,int rgb) {
+        if(time<0||frequency<=0||brightness<=0)return;
+        double interval=60/Math.clamp(frequency,1,20);
+        long current=(long)Math.floor(time/interval);
+        for(long slot=Math.max(0,current-1);slot<=current;slot++) {
+            long seed=slot*31+917;
+            double start=(slot+.2+random(seed)*.6)*interval,duration=.95+random(seed+1)*.7;
+            double t=(time-start)/duration;if(t<=0||t>=1)continue;
+            double a=random(seed+2)*TAU,elevation=.4+random(seed+3)*.4,h=Math.sqrt(1-elevation*elevation);
+            double nx=Math.cos(a)*h,ny=elevation,nz=Math.sin(a)*h;
+            double tx=-Math.sin(a)*.8+Math.cos(a)*elevation*.6,ty=-h*.6,tz=Math.cos(a)*.8+Math.sin(a)*elevation*.6;
+            double angle=(t-.5)*.5,length=.04+Math.clamp(trail,.1,1)*.24;
+            double opacity=Math.pow(Math.sin(t*Math.PI),.7)*Math.clamp(brightness,0,2);
+            double hx=(nx*Math.cos(angle)+tx*Math.sin(angle))*32,hy=(ny*Math.cos(angle)+ty*Math.sin(angle))*32,hz=(nz*Math.cos(angle)+tz*Math.sin(angle))*32;
+            for(int i=0;i<12;i++) {
+                double u=angle-length*i/12,v=angle-length*(i+1)/12;
+                double ax=(nx*Math.cos(u)+tx*Math.sin(u))*32,ay=(ny*Math.cos(u)+ty*Math.sin(u))*32,az=(nz*Math.cos(u)+tz*Math.sin(u))*32;
+                double bx=(nx*Math.cos(v)+tx*Math.sin(v))*32,by=(ny*Math.cos(v)+ty*Math.sin(v))*32,bz=(nz*Math.cos(v)+tz*Math.sin(v))*32;
+                double ux=ay*(bz-az)-az*(by-ay),uy=az*(bx-ax)-ax*(bz-az),uz=ax*(by-ay)-ay*(bx-ax);
+                double norm=Math.sqrt(ux*ux+uy*uy+uz*uz);if(norm<1e-8)continue;
+                ux/=norm;uy/=norm;uz/=norm;
+                for(int layer=0;layer<2;layer++) {
+                    double width=layer==0?.09:.025;
+                    int ca=CelestialGeometry.color(rgb,opacity*Math.pow(1-i/12.0,1.6)*(layer==0?.12:.85),.65);
+                    int cb=CelestialGeometry.color(rgb,opacity*Math.pow(1-(i+1)/12.0,1.6)*(layer==0?.12:.85),.45);
+                    mesh.quad(ax-ux*width,ay-uy*width,az-uz*width,ax+ux*width,ay+uy*width,az+uz*width,
+                        bx+ux*width,by+uy*width,bz+uz*width,bx-ux*width,by-uy*width,bz-uz*width,ca,ca,cb,cb);
+                }
+            }
+            star(mesh,hx,hy,hz,.085,opacity,rgb);
+        }
+    }
+
     /** Tint preserves scene brightness so an accent does not turn fog into a flat bright wall. */
     public static float tint(float original, int channel, float luminance, double amount) {
         float weight = (float) Math.clamp(amount * 0.65, 0, 0.65);

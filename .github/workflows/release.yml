@@ -47,6 +47,9 @@ jobs:
       - name: Check music bridge and artwork lifecycle
         run: python3 scripts/check_music_connection.py
 
+      - name: Check profile sharing
+        run: python3 scripts/check_profile_sharing.py
+
       - name: Check hand editor and mirror lifecycle
         run: python3 scripts/check_hand_editor.py
 

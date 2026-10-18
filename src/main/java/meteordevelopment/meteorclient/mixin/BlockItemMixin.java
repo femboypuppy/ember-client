@@ -33,6 +33,13 @@ public abstract class BlockItemMixin {
         }
     }
 
+    @Inject(method = "place(Lnet/minecraft/item/ItemPlacementContext;Lnet/minecraft/block/BlockState;)Z", at = @At("RETURN"))
+    private void emberAfterPlace(ItemPlacementContext context, BlockState state, CallbackInfoReturnable<Boolean> info) {
+        if (context.getWorld().isClient() && info.getReturnValueZ()
+            && context.getWorld().getBlockState(context.getBlockPos()).isOf(state.getBlock()))
+            MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.entity.player.BlockEffectEvent(context.getBlockPos().toImmutable(), true));
+    }
+
     @ModifyVariable(
         method = "place(Lnet/minecraft/item/ItemPlacementContext;)Lnet/minecraft/util/ActionResult;",
         ordinal = 1,

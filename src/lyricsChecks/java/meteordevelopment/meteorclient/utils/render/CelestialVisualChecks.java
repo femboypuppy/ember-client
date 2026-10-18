@@ -8,6 +8,7 @@ public final class CelestialVisualChecks {
     public static void main(String[] args) throws Exception {
         HandLayoutChecks.run();
         WeatherChecks.run();
+        InteractionVisualChecks.run();
         EspGeometryChecks.run();
         terrainSurfaces();
         worldAtmosphere();
@@ -195,6 +196,19 @@ public final class CelestialVisualChecks {
         append(json, mesh, "sky-stars", "Celestial stars");
         mesh.clear(); CelestialWorldGeometry.constellations(mesh, 5, .8, .8, 0xA78BE0, 8);
         append(json, mesh, "constellations", "Fading constellations");
+        for(double t=0;t<16;t+=.05) {
+            mesh.clear();CelestialWorldGeometry.shootingStars(mesh,t,4,.85,.65,0xA78BE0);
+            if(mesh.size>0){mesh.clear();CelestialWorldGeometry.shootingStars(mesh,t+.4,4,.85,.65,0xA78BE0);break;}
+        }
+        append(json,mesh,"shooting-stars","Shooting star");
+        for(var kind:InteractionEffects.Kind.values()) {
+            var effects=new InteractionEffects();effects.emit(kind,0,0,-4,.85,.7,1);
+            effects.tick(.1,true,true);effects.tick(.1,true,true);
+            mesh.clear();effects.build(mesh,0,1.3,0,.5,0x6898E8);
+            append(json,mesh,"interaction-"+kind.name(),kind.name());
+        }
+        json.append(",{\"kind\":\"foliage\",\"name\":\"Balanced foliage\",\"original\":8044369,\"balanced\":")
+            .append(CelestialLighting.foliage(8044369,.85)).append('}');
         for (var kind : WeatherSimulation.Kind.values()) {
             var weather = new WeatherSimulation();
             for (int i = 0; i < 500; i++) weather.tick(.05, 0, 2, 0, kind, .7, 16, .5, 35, 1, true,

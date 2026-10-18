@@ -434,6 +434,39 @@ public class Config extends System<Config> {
 
     public List<String> dontShowAgainPrompts = new ArrayList<>();
 
+    public final Setting<Boolean> shootingStars = sgVisual.add(new BoolSetting.Builder()
+        .name("shooting-stars").description("Occasional glowing meteors with fading trails.").defaultValue(true).build());
+    public final Setting<Double> meteorFrequency = sgVisual.add(new DoubleSetting.Builder()
+        .name("meteor-frequency").description("Shooting stars per minute.").defaultValue(4).range(1, 20).sliderRange(1, 20).build());
+    public final Setting<Double> meteorBrightness = sgVisual.add(new DoubleSetting.Builder()
+        .name("meteor-brightness").defaultValue(.75).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> meteorTrail = sgVisual.add(new DoubleSetting.Builder()
+        .name("meteor-trail").description("Length of the fading meteor tail.").defaultValue(.65).range(.1, 1).sliderRange(.1, 1).build());
+    public final Setting<Boolean> movementEffects = sgVisual.add(new BoolSetting.Builder()
+        .name("movement-effects").description("Footstep sparks, water wakes and nearby leaf/petal movement.").defaultValue(false).build());
+    public final Setting<Boolean> movementRipples = sgVisual.add(new BoolSetting.Builder()
+        .name("movement-water-ripples").defaultValue(true).build());
+    public final Setting<Double> movementAmount = sgVisual.add(new DoubleSetting.Builder()
+        .name("movement-effect-amount").defaultValue(.5).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> movementLifetime = sgVisual.add(new DoubleSetting.Builder()
+        .name("movement-effect-lifetime").defaultValue(.65).range(.2, 2).sliderRange(.2, 2).build());
+    public final Setting<Boolean> blockEffects = sgVisual.add(new BoolSetting.Builder()
+        .name("block-interaction-effects").description("Sparks and a soft ring after successful block placements and breaks.").defaultValue(false).build());
+    public final Setting<Boolean> blockPlaceEffects = sgVisual.add(new BoolSetting.Builder()
+        .name("block-place-effects").defaultValue(true).build());
+    public final Setting<Boolean> blockBreakEffects = sgVisual.add(new BoolSetting.Builder()
+        .name("block-break-effects").defaultValue(true).build());
+    public final Setting<Double> blockEffectAmount = sgVisual.add(new DoubleSetting.Builder()
+        .name("block-effect-amount").defaultValue(.55).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> blockEffectSize = sgVisual.add(new DoubleSetting.Builder()
+        .name("block-effect-size").defaultValue(.7).range(.2, 1.5).sliderRange(.2, 1.5).build());
+    public final Setting<Double> blockEffectLifetime = sgVisual.add(new DoubleSetting.Builder()
+        .name("block-effect-lifetime").defaultValue(.6).range(.2, 2).sliderRange(.2, 2).build());
+
+    public final Setting<Double> foliageBalance = sgVisual.add(new DoubleSetting.Builder()
+        .name("foliage-color-balance").description("Reduce green biome dye so grass and leaves respond cleanly to colored world light.")
+        .defaultValue(.85).range(0,1).sliderRange(0,1).build());
+
     public Config() {
         super("config");
     }
@@ -451,6 +484,24 @@ public class Config extends System<Config> {
         tag.put("dontShowAgainPrompts", listToTag(dontShowAgainPrompts));
 
         return tag;
+    }
+
+    /** A complete visual snapshot. Playback credentials and other local preferences stay local. */
+    public NbtCompound appearanceToTag() {
+        NbtCompound tag = new NbtCompound();
+        NbtList values = new NbtList();
+        for (Setting<?> setting : sgVisual) values.add(setting.toTag());
+        tag.put("values", values);
+        return tag;
+    }
+
+    public void applyAppearance(NbtCompound tag) {
+        for (NbtElement element : tag.getListOrEmpty("values")) {
+            if (!(element instanceof NbtCompound value)) continue;
+            Setting<?> setting = sgVisual.get(value.getString("name", ""));
+            if (setting != null) setting.fromTag(value);
+        }
+        settings.invalidate();
     }
 
     @Override

@@ -8,7 +8,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "build/ui-tools"))
 import moderngl
-from PIL import Image, ImageDraw, ImageStat
+from PIL import Image, ImageDraw, ImageStat, ImageChops
 
 SHADERS = ROOT / "src/main/resources/assets/ember-client/shaders"
 OUT = ROOT / "build/visual-preview"
@@ -37,10 +37,12 @@ def mesh(kind, program):
 
 shell, points = mesh("sky", sky), mesh("sky-stars", stars)
 links = mesh("constellations", stars)
+meteors = mesh("shooting-stars", stars)
 
 
 def render(accent=(.65, .54, .88), style=0, time=5, opacity=.85, depth=1, translation=0, starlight=True,
-           background=(.14, .18, .25), grass_edge=False, exposure=1, horizon=0, horizon_width=.1, pulse=1, constellations=False):
+           background=(.14, .18, .25), grass_edge=False, exposure=1, horizon=0, horizon_width=.1, pulse=1, constellations=False,
+           shooting=False, yaw=0, pitch=-.32):
     w, h = 720, 400
     target = ctx.texture((w, h), 4)
     zbuffer = ctx.depth_renderbuffer((w, h))
@@ -54,8 +56,9 @@ def render(accent=(.65, .54, .88), style=0, time=5, opacity=.85, depth=1, transl
     ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
     f, near, far = 1/math.tan(math.radians(70)/2), .1, 1024
     proj = (f/(w/h), 0, 0, 0, 0, f, 0, 0, 0, 0, (far+near)/(near-far), -1, 0, 0, 2*far*near/(near-far), 0)
-    c, s = math.cos(-.32), math.sin(-.32)
-    view = (1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, translation, translation, translation, 1)
+    c, s = math.cos(pitch), math.sin(pitch)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    view = (cy, s*sy, -c*sy, 0, 0, c, s, 0, sy, -s*cy, c*cy, 0, translation, translation, translation, 1)
     matrices = ctx.buffer(struct.pack("16f", *proj))
     matrices.bind_to_uniform_block(0)
     transforms = ctx.buffer(struct.pack("16f", *view))
@@ -69,6 +72,9 @@ def render(accent=(.65, .54, .88), style=0, time=5, opacity=.85, depth=1, transl
         points.render(moderngl.TRIANGLES)
         if constellations:
             links.render(moderngl.TRIANGLES)
+    if shooting:
+        ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE
+        meteors.render(moderngl.TRIANGLES)
     if grass_edge:
         # Alpha-covered terrain must be blended after the sky, with its own near depth.
         ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
@@ -117,6 +123,18 @@ for i, (style, accent, label) in enumerate(((0, (.65, .54, .88), "NEBULA / LAVEN
     sheet.paste(render(accent, style, horizon=.3 if i>=4 else 0, pulse=1.8 if i==5 else 1, constellations=i>=4), (x, y + 25))
     draw.text((x+14, y+7), label, fill=(220, 215, 235))
 sheet.save(OUT / "world-sky-preview.png")
+meteor_item = next(item for item in geometry if item["kind"] == "shooting-stars")
+assert meteor_item["colors"], "Export a visible meteor before checking the GPU pass"
+coordinates = meteor_item["positions"]
+center = [sum(coordinates[i::3]) / len(meteor_item["colors"]) for i in range(3)]
+yaw = math.atan2(center[0], -center[2])
+pitch = -math.atan2(center[1], math.hypot(center[0], center[2]))
+meteor_base = render(opacity=0, starlight=False, yaw=yaw, pitch=pitch)
+meteor_image = render(opacity=0, starlight=False, shooting=True, yaw=yaw, pitch=pitch)
+assert ImageChops.difference(meteor_base, meteor_image).convert("RGB").getbbox(), "Meteor trails must be visible through the production sky pipeline"
+assert render(opacity=0, starlight=False, shooting=True, depth=.01, yaw=yaw, pitch=pitch).tobytes() == render(opacity=0, starlight=False, depth=.01, yaw=yaw, pitch=pitch).tobytes(), "Meteors must stay behind mountains"
+meteor_image.save(OUT / "shooting-star-preview.png")
+print("Shooting-star GPU checks passed: visible glowing trail and terrain depth occlusion.")
 print("World sky GLSL passed: native projection, accent colors, motion, bass exposure, full sky coverage, low intensity, translucent grass edges and terrain depth occlusion.")
 print("GPU:", ctx.info["GL_RENDERER"])
 print("Preview:", OUT / "world-sky-preview.png")

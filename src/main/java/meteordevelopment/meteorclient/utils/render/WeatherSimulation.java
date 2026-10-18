@@ -25,6 +25,18 @@ public final class WeatherSimulation {
     public int count() { int count=0;for(Particle p:particles)if(p.active)count++;return count; }
     public void clear() { for(Particle p:particles)p.active=false;carry=0;positioned=false; }
 
+    public void disturb(double x,double y,double z,double dx,double dz,double amount) {
+        if(kind!=Kind.Leaves&&kind!=Kind.Petals&&kind!=Kind.Snow)return;
+        for(var p:particles) {
+            if(!p.active||p.landed)continue;
+            double rx=p.x-x,rz=p.z-z,d=Math.hypot(rx,rz);
+            if(d<.05||d>1.8||p.y<y-.2||p.y>y+2)continue;
+            double push=(1-d/1.8)*Math.clamp(amount,0,1)*Math.min(1,Math.hypot(dx,dz)*5);
+            p.vx=Math.clamp(p.vx+rx/d*push*1.6+dx*push*3,-6,6);
+            p.vz=Math.clamp(p.vz+rz/d*push*1.6+dz*push*3,-6,6);
+        }
+    }
+
     public void tick(double dt, double cx, double cy, double cz, Kind requested, double density, double radius,
                      double wind, double heading, double speed, boolean impacts, Sampler sampler) {
         if (requested!=kind || positioned && Math.sqrt(Math.pow(cx-lastX,2)+Math.pow(cy-lastY,2)+Math.pow(cz-lastZ,2))>radius*3) clear();

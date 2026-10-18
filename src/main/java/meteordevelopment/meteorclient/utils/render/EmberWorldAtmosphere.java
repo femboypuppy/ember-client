@@ -30,7 +30,7 @@ public final class EmberWorldAtmosphere {
     private static Renderer3D sky, stars, motes;
     private static long previous;
     private static Object world;
-    private static double time;
+    private static double time, meteorTime;
     private static double horizonEnvelope;
     private static long previousLightSample;
     private static double sampledLightReaction = 1;
@@ -124,11 +124,12 @@ public final class EmberWorldAtmosphere {
 
     private static void advance() {
         long now = System.nanoTime();
-        if (world != mc.world) { world = mc.world; previous = now; time = 0; horizonEnvelope = 0; }
+        if (world != mc.world) { world = mc.world; previous = now; time = 0; meteorTime = 0; horizonEnvelope = 0; }
         double dt = previous == 0 ? 0 : Math.clamp((now - previous) / 1e9, 0, 0.1); previous = now;
         var c = Config.get();
         if (!mc.isPaused()) {
             time += dt * c.ambienceSpeed.get();
+            meteorTime += dt;
             double target = c.horizonBass.get() ? MusicReactive.level() : 0;
             horizonEnvelope = EmberAnim.approach(horizonEnvelope, target, dt, target > horizonEnvelope ? .65 : 1.8);
         }
@@ -158,11 +159,13 @@ public final class EmberWorldAtmosphere {
                 (float) (1 + horizonEnvelope * c.horizonPulse.get() * .9)));
             submitSky(sky, true, uniform);
         }
-        if (c.worldStars.get()) {
+        if (c.worldStars.get() || c.shootingStars.get()) {
             STARS.clear();
-            if (c.constellations.get()) CelestialWorldGeometry.constellations(STARS, time, c.ambienceDensity.get(),
+            if (c.worldStars.get() && c.constellations.get()) CelestialWorldGeometry.constellations(STARS, time, c.ambienceDensity.get(),
                 intensity * c.constellationStrength.get(), rgb, c.constellationCount.get());
-            CelestialWorldGeometry.skyStars(STARS, time, c.ambienceDensity.get(), intensity, rgb);
+            if (c.worldStars.get()) CelestialWorldGeometry.skyStars(STARS, time, c.ambienceDensity.get(), intensity, rgb);
+            if (c.shootingStars.get()) CelestialWorldGeometry.shootingStars(STARS, meteorTime, c.meteorFrequency.get(),
+                c.meteorBrightness.get() * c.ambienceIntensity.get(), c.meteorTrail.get(), rgb);
             if (stars == null) stars = new Renderer3D(MeteorRenderPipelines.WORLD_COLORED_LINES_DEPTH, MeteorRenderPipelines.CELESTIAL_STARS);
             stars.begin(); CelestialRenderer.draw(STARS, stars, camera.x, 0, camera.z, 0, 0); submitSky(stars, false, null);
         }

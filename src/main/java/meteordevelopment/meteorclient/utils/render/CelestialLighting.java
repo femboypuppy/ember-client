@@ -39,6 +39,16 @@ public final class CelestialLighting {
             | (int) Math.round(relativeEnergy(g, max) * 255) << 8
             | (int) Math.round(relativeEnergy(b, max) * 255);
     }
+
+    /** Reduce green biome dye before the normal lightmap is applied; preserve texture contrast. */
+    public static int foliage(int original,double balance) {
+        if(original==-1||balance<=0)return original;
+        int r=original>>16&255,g=original>>8&255,b=original&255;
+        if(g<=r*1.05||g<=b*1.05)return original;
+        double amount=Math.clamp(balance,0,1),neutral=.2126*r+.7152*g+.0722*b;
+        return original&0xFF000000|(int)Math.round(r+(neutral-r)*amount)<<16
+            |(int)Math.round(g+(neutral-g)*amount)<<8|(int)Math.round(b+(neutral-b)*amount);
+    }
     private static double relativeEnergy(int channel, int maximum) {
         return maximum <= 0 ? 0 : Math.pow(Math.clamp(channel / (double) maximum, 0, 1), 2.2);
     }

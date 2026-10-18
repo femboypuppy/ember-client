@@ -197,6 +197,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = slider(r, y, "Daylight brightness", (ambience.daylightBrightness.get() - 0.2) / 1.4, percent(ambience.daylightBrightness.get()), v -> ambience.daylightBrightness.set(0.2 + v * 1.4), dt);
         y = slider(r, y, "World darkness", ambience.worldDarkness.get(), percent(ambience.worldDarkness.get()), ambience.worldDarkness::set, dt);
         y = slider(r, y, "Light color strength", ambience.worldLightTint.get(), percent(ambience.worldLightTint.get()), ambience.worldLightTint::set, dt);
+        y = slider(r, y, "Foliage color balance", ambience.foliageBalance.get(), percent(ambience.foliageBalance.get()), ambience.foliageBalance::set, dt);
         y = section(r, y, "STARS & HAZE", "Control distant starlight and nearby floating particles separately.");
         y = toggle(r, y, "Sky stars", "Distant stars in the world sky.", ambience.worldStars.get(), () -> ambience.worldStars.set(!ambience.worldStars.get()), dt);
         y = toggle(r, y, "Floating motes", "Nearby drifting starlight with depth and terrain occlusion.", ambience.worldMotes.get(), () -> ambience.worldMotes.set(!ambience.worldMotes.get()), dt);
@@ -205,6 +206,12 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         if (ambience.constellations.get()) {
             y = slider(r, y, "Constellation brightness", ambience.constellationStrength.get(), percent(ambience.constellationStrength.get()), ambience.constellationStrength::set, dt);
             y = slider(r, y, "Constellation groups", (ambience.constellationCount.get() - 1) / 7.0, ambience.constellationCount.get().toString(), v -> ambience.constellationCount.set(1 + (int) Math.round(v * 7)), dt);
+        }
+        y = toggle(r, y, "Shooting stars", "Occasional glowing streaks across the sky, behind terrain.", ambience.shootingStars.get(), () -> ambience.shootingStars.set(!ambience.shootingStars.get()), dt);
+        if (ambience.shootingStars.get()) {
+            y = slider(r, y, "Meteor frequency", (ambience.meteorFrequency.get() - 1) / 19, String.format("%.0f / min", ambience.meteorFrequency.get()), v -> ambience.meteorFrequency.set(1 + v * 19), dt);
+            y = slider(r, y, "Meteor brightness", ambience.meteorBrightness.get(), percent(ambience.meteorBrightness.get()), ambience.meteorBrightness::set, dt);
+            y = slider(r, y, "Meteor trail length", (ambience.meteorTrail.get() - .1) / .9, percent(ambience.meteorTrail.get()), v -> ambience.meteorTrail.set(.1 + v * .9), dt);
         }
         y = toggle(r, y, "Accent fog", "Tint distant haze while keeping nearby blocks readable.", ambience.accentFog.get(), () -> ambience.accentFog.set(!ambience.accentFog.get()), dt);
         y = slider(r, y, "Fog density", ambience.fogAmount.get(), percent(ambience.fogAmount.get()), ambience.fogAmount::set, dt);
@@ -232,6 +239,21 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             y = toggle(r, y, "Match weather to accent", "Off keeps natural rain, snow, autumn and petal colors.", ambience.weatherAccent.get(), () -> ambience.weatherAccent.set(!ambience.weatherAccent.get()), dt);
             if (ambience.weatherStyle.get() == meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind.Rain)
                 y = toggle(r, y, "Rain sound", "Quieter under nearby roofs and silent deep underground.", ambience.weatherSound.get(), () -> ambience.weatherSound.set(!ambience.weatherSound.get()), dt);
+        }
+        y = section(r, y, "MOVEMENT & INTERACTIONS", "Small accent effects that respond to your actions.");
+        y = toggle(r, y, "Movement effects", "Footstep sparks, surface water wakes, and nearby leaf/petal movement.", ambience.movementEffects.get(), () -> ambience.movementEffects.set(!ambience.movementEffects.get()), dt);
+        if (ambience.movementEffects.get()) {
+            y = slider(r, y, "Movement intensity", ambience.movementAmount.get(), percent(ambience.movementAmount.get()), ambience.movementAmount::set, dt);
+            y = slider(r, y, "Movement fade time", (ambience.movementLifetime.get() - .2) / 1.8, String.format("%.2fs", ambience.movementLifetime.get()), v -> ambience.movementLifetime.set(.2 + v * 1.8), dt);
+            y = toggle(r, y, "Water wakes", "Small expanding ripples while moving at the water surface.", ambience.movementRipples.get(), () -> ambience.movementRipples.set(!ambience.movementRipples.get()), dt);
+        }
+        y = toggle(r, y, "Block interaction effects", "Soft rings and sparks on successful placements and breaks.", ambience.blockEffects.get(), () -> ambience.blockEffects.set(!ambience.blockEffects.get()), dt);
+        if (ambience.blockEffects.get()) {
+            y = toggle(r, y, "Placement effects", "Show an accent pulse when a block is placed.", ambience.blockPlaceEffects.get(), () -> ambience.blockPlaceEffects.set(!ambience.blockPlaceEffects.get()), dt);
+            y = toggle(r, y, "Break effects", "Show sparks when a block is broken.", ambience.blockBreakEffects.get(), () -> ambience.blockBreakEffects.set(!ambience.blockBreakEffects.get()), dt);
+            y = slider(r, y, "Block effect intensity", ambience.blockEffectAmount.get(), percent(ambience.blockEffectAmount.get()), ambience.blockEffectAmount::set, dt);
+            y = slider(r, y, "Block effect size", (ambience.blockEffectSize.get() - .2) / 1.3, String.format("%.1f blocks", ambience.blockEffectSize.get()), v -> ambience.blockEffectSize.set(.2 + v * 1.3), dt);
+            y = slider(r, y, "Block effect fade time", (ambience.blockEffectLifetime.get() - .2) / 1.8, String.format("%.2fs", ambience.blockEffectLifetime.get()), v -> ambience.blockEffectLifetime.set(.2 + v * 1.8), dt);
         }
         y = section(r, y, "GROUND LIGHT", "Accent illumination on nearby terrain.");
         y = toggle(r, y, "Ground lighting", "Soft light on nearby ground, in the current accent color.", ambience.groundLight.get(), () -> ambience.groundLight.set(!ambience.groundLight.get()), dt);

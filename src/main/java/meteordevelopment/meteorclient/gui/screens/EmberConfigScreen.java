@@ -1,376 +1,590 @@
 package meteordevelopment.meteorclient.gui.screens;
 
+import static meteordevelopment.meteorclient.MeteorClient.mc;
+import static meteordevelopment.meteorclient.utils.Utils.*;
+
+import static org.lwjgl.glfw.GLFW.*;
+
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.WidgetScreen;
 import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
-import meteordevelopment.meteorclient.systems.profiles.Profile;
-import meteordevelopment.meteorclient.systems.profiles.Profiles;
+import meteordevelopment.meteorclient.systems.profiles.*;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
+
+import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
-import net.minecraft.client.gui.Click;
-import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.Util;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
-import static meteordevelopment.meteorclient.MeteorClient.mc;
-import static meteordevelopment.meteorclient.utils.Utils.getWindowHeight;
-import static meteordevelopment.meteorclient.utils.Utils.getWindowWidth;
-import static org.lwjgl.glfw.GLFW.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
+/** Saved snapshots and portable sharing, with explicit actions and clipped library rows. */
 public class EmberConfigScreen extends WidgetScreen {
-    private static final Color DANGER = new Color(222, 86, 86, 255);
-
-    // Refreshed from EmberPalette every frame, so this screen follows the selected theme.
-    private static Color PANEL_BG, HEADER_BG, DIVIDER, ROW_BG, INPUT_BG, LIST_BG, DISABLED, TEXT_WHITE, TEXT_DIM, ON_ACCENT;
-
-    static {
-        syncPalette();
+    private record Hit(double x, double y, double w, double h, Runnable action) {
+        boolean contains(double mx, double my) {
+            return mx >= x && mx < x + w && my >= y && my < y + h;
+        }
     }
 
-    private static final double PW = 420;
-    private static final double PH = 380;
-    private static final double PR = 10;
-    private static final double ROW_H = 34;
-
-    private double px, py;
-    private double mx, my;
-
-    private String name = "";
-    private boolean nameFocused = true;
-    private int scroll = 0;
-    private float fade = 0f;
-    private String status = "";
-    private long statusUntil = 0;
-    private String pendingDelete;
-    private long pendingDeleteUntil;
-
-    private final Map<Object, Float> hoverAnims = new HashMap<>();
+    private final List<Hit> hits = new ArrayList<>();
     private final EmberAnim.Clock clock = new EmberAnim.Clock();
+    private final Map<String, Float> animations = new HashMap<>();
+    private Profile selected;
+    private String name = "",
+            query = "",
+            status = "Save a snapshot, or import a shared config.",
+            armed = "";
+    private int field;
+    private boolean selectAll,
+            busy,
+            includeAppearance = true,
+            includeModules = true,
+            includeHud = true,
+            includeMacros,
+            includeWaypoints,
+            clipping;
+    private long armedUntil;
+    private double px,
+            py,
+            pw,
+            ph,
+            mx,
+            my,
+            scroll,
+            detailScroll,
+            listX,
+            listY,
+            listW,
+            listH,
+            clipTop,
+            clipBottom;
+    private float fade;
 
     public EmberConfigScreen(GuiTheme theme) {
         super(theme, "Configs");
     }
 
-    /**
-     * Shared with the module menu and the client settings, so all three are the same flat
-     * black and all three follow the appearance setting. This screen was still filling from
-     * the accent-tinted palette, which left it looking purple beside them.
-     */
-    private static void syncPalette() {
-        PANEL_BG = EmberUI.bg();
-        HEADER_BG = EmberUI.raised();
-        DIVIDER = EmberUI.DIVIDER;
-        ROW_BG = EmberUI.WELL;
-        INPUT_BG = EmberUI.WELL;
-        LIST_BG = new Color(EmberUI.WELL.r, EmberUI.WELL.g, EmberUI.WELL.b, 190);
-        DISABLED = EmberUI.WELL;
-        TEXT_WHITE = EmberUI.TEXT;
-        TEXT_DIM = EmberUI.TEXT_DIM;
-        // Dark text for use on top of accent-coloured buttons.
-        ON_ACCENT = new Color(10, 10, 13, 255);
-    }
-
     @Override
     public void initWidgets() {
         clear();
+        Profiles.get().discover();
     }
 
-    /** This branch hands onRenderBefore no mouse position, so track the cursor here. */
     @Override
-    public void mouseMoved(double mouseX, double mouseY) {
+    public void mouseMoved(double x, double y) {
         double s = mc.getWindow().getScaleFactor();
-        mx = mouseX * s;
-        my = mouseY * s;
-        super.mouseMoved(mouseX, mouseY);
-    }
-
-    private Color accent() {
-        return EmberPalette.accent();
-    }
-
-    private Color accentAlpha(int a) {
-        Color c = accent();
-        return new Color(c.r, c.g, c.b, Math.max(0, Math.min(255, a)));
-    }
-
-    /** Real-time easing: settles in about a fifth of a second regardless of frame rate. */
-    private float anim(Object key, float target, float dt) {
-        float cur = EmberAnim.approach(hoverAnims.getOrDefault(key, 0f), target, dt, 0.065);
-        hoverAnims.put(key, cur);
-        return cur;
+        mx = x * s;
+        my = y * s;
+        super.mouseMoved(x, y);
     }
 
     private List<Profile> profiles() {
-        return new ArrayList<>(Profiles.get().getAll());
+        return Profiles.get().getAll().stream()
+                .filter(
+                        p ->
+                                p.name.get()
+                                        .toLowerCase(Locale.ROOT)
+                                        .contains(query.toLowerCase(Locale.ROOT)))
+                .sorted(Comparator.comparing(p -> p.name.get().toLowerCase(Locale.ROOT)))
+                .toList();
     }
 
     @Override
-    protected void onRenderBefore(DrawContext drawContext, float delta) {
-        syncPalette();
+    protected void onRenderBefore(DrawContext context, float delta) {
         float dt = clock.tick();
-
-
-        fade = Math.min(1f, fade + dt / 0.25f);
-        float f = 1f - (1f - fade) * (1f - fade) * (1f - fade);
-
-        px = (getWindowWidth() - PW) / 2;
-        py = (getWindowHeight() - PH) / 2;
-
+        fade = EmberAnim.approach(fade, 1, dt, .09);
+        pw = Math.min(760, getWindowWidth() - 32);
+        ph = Math.min(510, getWindowHeight() - 32);
+        px = (getWindowWidth() - pw) / 2;
+        py = (getWindowHeight() - ph) / 2;
+        hits.clear();
         GuiRenderer r = new GuiRenderer();
         r.theme = theme;
-        r.begin(drawContext);
-
-        // Dim background in its own batch so it doesn't darken the glow.
+        r.begin(context);
         r.scissorStart(0, 0, getWindowWidth(), getWindowHeight());
-        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (150 * f)));
+        r.quad(0, 0, getWindowWidth(), getWindowHeight(), new Color(0, 0, 0, (int) (140 * fade)));
         r.scissorEnd();
-
-        // Shadow and lit edge, not an accent halo - the other screens dropped those.
-        EmberUI.shadow(r, px, py, PW, PH, f);
-        EmberUI.rim(r, px, py, PW, PH, EmberUI.RADIUS, f);
-        r.roundedRect(px, py, PW, PH, EmberUI.RADIUS, PANEL_BG);
-        EmberUI.gloss(r, px, py, PW, PH, EmberUI.RADIUS, f);
-
-        // Header
-        double hh = 40;
-        r.roundedRect(px, py, PW, hh + EmberUI.RADIUS, EmberUI.RADIUS, HEADER_BG);
-        r.quad(px, py + hh, PW, EmberUI.RADIUS, HEADER_BG);
-        r.quad(px, py + hh, PW, 1, DIVIDER);
-
-        // Close button
-        double cbX = px + PW - 32, cbY = py + 12;
-        boolean closeHover = mx >= cbX - 4 && mx < cbX + 20 && my >= cbY - 4 && my < cbY + 20;
-        float ca = anim("close", closeHover ? 1f : 0f, dt);
-        if (ca > 0.01f) r.roundedRect(cbX - 6, cbY - 5, 26, 26, 6, new Color(DANGER.r, DANGER.g, DANGER.b, (int) (60 * ca)));
-
-        // Name input
-        double inX = px + 16, inY = py + hh + 16;
-        double inW = PW - 32 - 96, inH = 30;
-        if (nameFocused) r.glow(inX, inY, inW, inH, 8, accentAlpha(120), false);
-        r.roundedRect(inX, inY, inW, inH, 7, INPUT_BG);
-
-        // Save button
-        double sbX = px + PW - 16 - 88, sbY = inY;
-        double sbW = 88, sbH = inH;
-        boolean saveHover = mx >= sbX && mx < sbX + sbW && my >= sbY && my < sbY + sbH;
-        float sa = anim("save", saveHover ? 1f : 0f, dt);
-        boolean canSave = !name.trim().isEmpty();
-
-        if (canSave && sa > 0.01f) r.glow(sbX, sbY, sbW, sbH, 12, accentAlpha((int) (130 * sa)), false);
-
-        Color sb = canSave
-            ? new Color(accent().r, accent().g, accent().b, (int) (200 + 55 * sa))
-            : DISABLED;
-        r.roundedRect(sbX, sbY, sbW, sbH, 7, sb);
-
-        // List
-        double listY = inY + inH + 14;
-        double listH = py + PH - 16 - listY;
-        r.roundedRect(px + 16, listY, PW - 32, listH, 8, LIST_BG);
-
-        List<Profile> list = profiles();
-        double rowY = listY + 6 - scroll;
-
+        EmberUI.shadow(r, px, py, pw, ph, fade);
+        EmberUI.rim(r, px, py, pw, ph, 13, fade);
+        r.roundedRect(px, py, pw, ph, 13, EmberUI.bg());
+        EmberUI.gloss(r, px, py, pw, ph, 13, fade);
+        text(r, "Config library", px + 22, py + 18, 1.1, EmberUI.TEXT, pw - 120);
+        text(
+                r,
+                "Your setup, ready to keep or share.",
+                px + 22,
+                py + 44,
+                .72,
+                EmberUI.TEXT_DIM,
+                pw - 100);
+        button(r, px + pw - 58, py + 16, 36, 30, "X", this::close, false);
+        double toolW = (pw - 68) / 4;
+        button(
+                r,
+                px + 22,
+                py + 78,
+                toolW,
+                32,
+                "New snapshot",
+                () -> {
+                    selected = null;
+                    name = "";
+                    field = 1;
+                    armed = "";
+                    detailScroll = 0;
+                },
+                false);
+        button(r, px + 30 + toolW, py + 78, toolW, 32, "Import file", () -> dialog(false), false);
+        button(r, px + 38 + toolW * 2, py + 78, toolW, 32, "Paste share code", this::paste, false);
+        button(
+                r,
+                px + 46 + toolW * 3,
+                py + 78,
+                toolW,
+                32,
+                "Open folder",
+                () -> Util.getOperatingSystem().open(Profiles.FOLDER),
+                false);
+        listX = px + 22;
+        listY = py + 164;
+        listW = Math.floor((pw - 54) * .41);
+        listH = ph - 218;
+        double dx = listX + listW + 18, dw = px + pw - 22 - dx;
+        input(r, listX, py + 124, listW, 30, query, "Search configs...", 2);
+        var list = profiles();
+        scroll = Math.clamp(scroll, 0, Math.max(0, list.size() * 62 - listH));
+        r.roundedRect(listX, listY, listW, listH, 9, new Color(0, 0, 0, 28));
+        clipping = true;
+        clipTop = listY;
+        clipBottom = listY + listH;
+        r.scissorStart(listX, listY, listW, listH);
+        double rowY = listY - scroll;
         for (Profile p : list) {
-            if (rowY + ROW_H > listY && rowY < listY + listH) {
-                boolean rowHover = mx >= px + 22 && mx < px + PW - 22 && my >= rowY && my < rowY + ROW_H
-                    && my >= listY && my < listY + listH;
-                float ra = anim("row_" + p.name.get(), rowHover ? 1f : 0f, dt);
-
-                r.roundedRect(px + 22, rowY, PW - 44, ROW_H - 4, 7,
-                    new Color(
-                        (int) MathHelper.lerp(ra * 0.25f, ROW_BG.r, accent().r),
-                        (int) MathHelper.lerp(ra * 0.25f, ROW_BG.g, accent().g),
-                        (int) MathHelper.lerp(ra * 0.25f, ROW_BG.b, accent().b), 235));
-
-                // Load button
-                double lbX = px + PW - 44 - 130, lbY = rowY + 5;
-                boolean lbHover = mx >= lbX && mx < lbX + 62 && my >= lbY && my < lbY + ROW_H - 14;
-                float la = anim("load_" + p.name.get(), lbHover ? 1f : 0f, dt);
-                r.roundedRect(lbX, lbY, 62, ROW_H - 14, 6,
-                    new Color(accent().r, accent().g, accent().b, (int) (150 + 90 * la)));
-
-                // Delete button - the first click turns it into "Sure?"
-                boolean armed = isArmed(p);
-                double dbX = px + PW - 44 - 60, dbY = rowY + 5;
-                boolean dbHover = mx >= dbX && mx < dbX + 54 && my >= dbY && my < dbY + ROW_H - 14;
-                float da = anim("del_" + p.name.get(), dbHover || armed ? 1f : 0f, dt);
-                r.roundedRect(dbX, dbY, 54, ROW_H - 14, 6,
-                    new Color(DANGER.r, DANGER.g, DANGER.b, armed ? 255 : (int) (90 + 110 * da)));
+            if (rowY + 56 > listY && rowY < listY + listH) {
+                double y = rowY;
+                float a =
+                        EmberAnim.approach(
+                                animations.getOrDefault(p.name.get(), 0f),
+                                selected == p ? 1 : 0,
+                                dt,
+                                .07);
+                animations.put(p.name.get(), a);
+                r.roundedRect(
+                        listX,
+                        y,
+                        listW - 3,
+                        56,
+                        8,
+                        a > .01 ? EmberUI.accent((int) (35 + 45 * a)) : EmberUI.raised());
+                text(r, p.name.get(), listX + 13, y + 9, .85, EmberUI.TEXT, listW - 28);
+                text(r, sections(p), listX + 13, y + 32, .65, EmberUI.TEXT_DIM, listW - 28);
+                hit(listX, y, listW, 56, () -> select(p));
             }
-            rowY += ROW_H;
+            rowY += 62;
         }
-
+        if (list.isEmpty())
+            text(
+                    r,
+                    query.isBlank() ? "No saved configs yet" : "No matching configs",
+                    listX + 12,
+                    listY + 18,
+                    .8,
+                    EmberUI.TEXT_DIM,
+                    listW - 24);
+        r.scissorEnd();
+        clipTop = py + 122;
+        clipBottom = py + ph - 48;
+        r.scissorStart(dx, clipTop, dw, clipBottom - clipTop);
+        detailScroll =
+                Math.clamp(
+                        detailScroll,
+                        0,
+                        Math.max(0, (selected == null ? 258 : 337) - (clipBottom - clipTop)));
+        double dy = py - detailScroll;
+        text(
+                r,
+                selected == null ? "CREATE A SNAPSHOT" : "SAVED CONFIG",
+                dx,
+                dy + 126,
+                .65,
+                EmberUI.TEXT_DIM,
+                dw);
+        input(r, dx, dy + 150, dw, 34, name, "Give your config a name...", 1);
+        text(r, "Include in this snapshot", dx, dy + 199, .78, EmberUI.TEXT, dw);
+        double cw = (dw - 8) / 2;
+        chip(
+                r,
+                dx,
+                dy + 227,
+                cw,
+                "Appearance",
+                includeAppearance,
+                () -> includeAppearance = !includeAppearance);
+        chip(
+                r,
+                dx + cw + 8,
+                dy + 227,
+                cw,
+                "Modules",
+                includeModules,
+                () -> includeModules = !includeModules);
+        chip(r, dx, dy + 264, cw, "HUD layout", includeHud, () -> includeHud = !includeHud);
+        chip(
+                r,
+                dx + cw + 8,
+                dy + 264,
+                cw,
+                "Macros",
+                includeMacros,
+                () -> includeMacros = !includeMacros);
+        chip(
+                r,
+                dx,
+                dy + 301,
+                cw,
+                "Waypoints",
+                includeWaypoints,
+                () -> includeWaypoints = !includeWaypoints);
+        button(
+                r,
+                dx,
+                dy + 345,
+                dw,
+                34,
+                armed("save") ? "Click again to replace" : "Save current setup",
+                this::saveSnapshot,
+                true);
+        if (selected != null) {
+            double bw = (dw - 16) / 3;
+            button(r, dx, dy + 389, bw, 32, "Load", this::load, true);
+            button(r, dx + bw + 8, dy + 389, bw, 32, "Export file", () -> dialog(true), false);
+            button(r, dx + (bw + 8) * 2, dy + 389, bw, 32, "Copy code", this::copy, false);
+            button(
+                    r,
+                    dx,
+                    dy + 431,
+                    dw,
+                    28,
+                    armed("delete") ? "Click again to delete" : "Delete saved config",
+                    this::delete,
+                    false);
+        }
+        r.scissorEnd();
+        clipping = false;
+        r.quad(px + 22, py + ph - 40, pw - 44, 1, EmberUI.DIVIDER);
+        text(
+                r,
+                busy ? "Working..." : status,
+                px + 22,
+                py + ph - 27,
+                .68,
+                EmberUI.TEXT_DIM,
+                pw - 44);
         r.end();
+    }
 
-        // --- Text ---
-        theme.textRenderer().begin(theme.scale(1.1));
-        theme.textRenderer().render("Configs", px + 18, py + (hh - theme.textHeight()) / 2, TEXT_WHITE, false);
-        theme.textRenderer().end();
+    private String sections(Profile p) {
+        List<String> v = new ArrayList<>();
+        if (p.appearance.get()) v.add("Appearance");
+        if (p.modules.get()) v.add("Modules");
+        if (p.hud.get()) v.add("HUD");
+        if (p.macros.get()) v.add("Macros");
+        if (p.waypoints.get()) v.add("Waypoints");
+        return String.join(" \u00b7 ", v);
+    }
 
-        theme.textRenderer().begin(theme.scale(1.0));
-        theme.textRenderer().render("X", cbX + 4, cbY + 4,
-            closeHover ? new Color(255, 140, 140, 255) : TEXT_DIM, false);
-        theme.textRenderer().end();
+    private void select(Profile p) {
+        selected = p;
+        name = p.name.get();
+        field = 0;
+        armed = "";
+        detailScroll = 0;
+        includeAppearance = p.appearance.get();
+        includeModules = p.modules.get();
+        includeHud = p.hud.get();
+        includeMacros = p.macros.get();
+        includeWaypoints = p.waypoints.get();
+        status = "Load or share the saved snapshot. Saving updates it from your current setup.";
+    }
 
-        theme.textRenderer().begin(theme.scale(0.95));
-        String shown = name.isEmpty() && !nameFocused ? "Config name..." : name + (nameFocused ? "|" : "");
-        theme.textRenderer().render(shown, inX + 10, inY + (inH - theme.textHeight()) / 2,
-            name.isEmpty() && !nameFocused ? TEXT_DIM : TEXT_WHITE, false);
+    private void text(
+            GuiRenderer r,
+            String value,
+            double x,
+            double y,
+            double scale,
+            Color color,
+            double max) {
+        r.post(
+                () -> {
+                    var tr = theme.textRenderer();
+                    tr.begin(theme.scale(scale));
+                    String shown = value;
+                    while (!shown.isEmpty() && tr.getWidth(shown) > max)
+                        shown = shown.substring(0, shown.offsetByCodePoints(shown.length(), -1));
+                    tr.render(shown, x, y, color, false);
+                    tr.end();
+                });
+    }
 
-        double saveTw = theme.textWidth("Save");
-        theme.textRenderer().render("Save", sbX + (sbW - saveTw) / 2, sbY + (sbH - theme.textHeight()) / 2,
-            canSave ? ON_ACCENT : TEXT_DIM, false);
-        theme.textRenderer().end();
-
-        theme.textRenderer().begin(theme.scale(0.9));
-        if (list.isEmpty()) {
-            String empty = "No configs saved yet";
-            theme.textRenderer().render(empty, px + (PW - theme.textWidth(empty)) / 2,
-                listY + listH / 2 - theme.textHeight() / 2, TEXT_DIM, false);
+    private void hit(double x, double y, double w, double h, Runnable action) {
+        if (clipping) {
+            double bottom = Math.min(y + h, clipBottom);
+            y = Math.max(y, clipTop);
+            h = bottom - y;
         }
+        if (h > 0) hits.add(new Hit(x, y, w, h, action));
+    }
 
-        rowY = listY + 6 - scroll;
-        for (Profile p : list) {
-            if (rowY + ROW_H > listY && rowY < listY + listH) {
-                theme.textRenderer().render(p.name.get(), px + 32,
-                    rowY + (ROW_H - 4 - theme.textHeight()) / 2, TEXT_WHITE, false);
+    private void button(
+            GuiRenderer r,
+            double x,
+            double y,
+            double w,
+            double h,
+            String title,
+            Runnable action,
+            boolean primary) {
+        boolean hover = new Hit(x, y, w, h, action).contains(mx, my);
+        r.roundedRect(x, y, w, h, 7, primary ? EmberUI.accent(hover ? 135 : 95) : EmberUI.raised());
+        if (hover) EmberUI.hoverFill(r, x, y, w, h, 1);
+        text(r, title, x + 10, y + 8, .73, EmberUI.TEXT, w - 20);
+        hit(
+                x,
+                y,
+                w,
+                h,
+                () -> {
+                    if (!busy) {
+                        field = 0;
+                        selectAll = false;
+                        action.run();
+                    }
+                });
+    }
 
-                double lbX = px + PW - 44 - 130;
-                double ltw = theme.textWidth("Load");
-                theme.textRenderer().render("Load", lbX + (62 - ltw) / 2,
-                    rowY + (ROW_H - 4 - theme.textHeight()) / 2, ON_ACCENT, false);
+    private void chip(
+            GuiRenderer r,
+            double x,
+            double y,
+            double w,
+            String title,
+            boolean checked,
+            Runnable action) {
+        button(r, x, y, w, 30, "    " + title, action, checked);
+        r.roundedRect(x + 10, y + 10, 10, 10, 3, checked ? EmberUI.accent(255) : EmberUI.TEXT_DIM);
+        r.roundedRect(x + 12, y + 12, 6, 6, 2, checked ? EmberUI.TEXT : EmberUI.raised());
+    }
 
-                double dbX = px + PW - 44 - 60;
-                String delLabel = isArmed(p) ? "Sure?" : "Del";
-                double dtw = theme.textWidth(delLabel);
-                theme.textRenderer().render(delLabel, dbX + (54 - dtw) / 2,
-                    rowY + (ROW_H - 4 - theme.textHeight()) / 2, TEXT_WHITE, false);
-            }
-            rowY += ROW_H;
+    private void input(
+            GuiRenderer r,
+            double x,
+            double y,
+            double w,
+            double h,
+            String value,
+            String placeholder,
+            int id) {
+        r.roundedRect(x, y, w, h, 7, field == id ? EmberUI.accent(40) : EmberUI.WELL);
+        text(
+                r,
+                value.isEmpty() ? placeholder : value + (field == id ? "|" : ""),
+                x + 10,
+                y + 8,
+                .76,
+                value.isEmpty() ? EmberUI.TEXT_DIM : EmberUI.TEXT,
+                w - 20);
+        hit(
+                x,
+                y,
+                w,
+                h,
+                () -> {
+                    field = id;
+                    selectAll = false;
+                    armed = "";
+                });
+    }
+
+    private boolean armed(String action) {
+        return armed.equals(action) && System.currentTimeMillis() < armedUntil;
+    }
+
+    private void saveSnapshot() {
+        if (name.isBlank()) {
+            status = "Enter a name first.";
+            field = 1;
+            return;
         }
-        theme.textRenderer().end();
-
-        if (!status.isEmpty() && System.currentTimeMillis() < statusUntil) {
-            theme.textRenderer().begin(theme.scale(0.9));
-            theme.textRenderer().render(status, px + 18, py + PH + 8, accent(), false);
-            theme.textRenderer().end();
+        if (!(includeAppearance
+                || includeModules
+                || includeHud
+                || includeMacros
+                || includeWaypoints)) {
+            status = "Select at least one section.";
+            return;
         }
+        String clean = ProfileArchive.cleanName(name);
+        Profile p = Profiles.get().get(clean);
+        if (p != null && !armed("save")) {
+            armed = "save";
+            armedUntil = System.currentTimeMillis() + 4000;
+            return;
+        }
+        try {
+            p = p == null ? new Profile() : new Profile(p.toTag());
+            p.name.set(clean);
+            p.appearance.set(includeAppearance);
+            p.modules.set(includeModules);
+            p.hud.set(includeHud);
+            p.macros.set(includeMacros);
+            p.waypoints.set(includeWaypoints);
+            ProfileTransfer.saveSnapshot(p);
+            Profiles.get().registerExisting(p);
+            select(p);
+            status = "Saved " + clean;
+            armed = "";
+        } catch (Exception e) {
+            error(e);
+        }
+    }
+
+    private void load() {
+        try {
+            selected.load();
+            status = "Loaded " + selected.name.get();
+        } catch (Exception e) {
+            error(e);
+        }
+    }
+
+    private void delete() {
+        if (!armed("delete")) {
+            armed = "delete";
+            armedUntil = System.currentTimeMillis() + 4000;
+            return;
+        }
+        Profiles.get().remove(selected);
+        selected = null;
+        name = "";
+        armed = "";
+        status = "Config deleted.";
+    }
+
+    private void copy() {
+        try {
+            mc.keyboard.setClipboard(
+                    "ember:1:"
+                            + Base64.getEncoder().encodeToString(ProfileTransfer.export(selected)));
+            status = "Share code copied. The recipient can use Paste share code.";
+        } catch (Exception e) {
+            error(e);
+        }
+    }
+
+    private void paste() {
+        try {
+            String code = mc.keyboard.getClipboard().strip();
+            if (!code.startsWith("ember:1:") || code.length() > ProfileArchive.LIMIT * 2)
+                throw new IllegalArgumentException("Copy an Ember share code first");
+            importBytes(Base64.getDecoder().decode(code.substring(8)));
+        } catch (Exception e) {
+            error(e);
+        }
+    }
+
+    private void importBytes(byte[] bytes) throws Exception {
+        Profile p = ProfileTransfer.importBytes(bytes);
+        query = "";
+        select(p);
+        status = "Imported " + p.name.get() + ". Click Load to apply it.";
+    }
+
+    private void dialog(boolean exporting) {
+        Profile source = selected;
+        busy = true;
+        CompletableFuture.supplyAsync(
+                        () -> {
+                            try (var stack = MemoryStack.stackPush()) {
+                                var filters = stack.mallocPointer(1);
+                                filters.put(stack.UTF8("*.ember")).flip();
+                                return exporting
+                                        ? TinyFileDialogs.tinyfd_saveFileDialog(
+                                                "Export Ember config",
+                                                ProfileArchive.cleanName(source.name.get())
+                                                        + ".ember",
+                                                filters,
+                                                "Ember config")
+                                        : TinyFileDialogs.tinyfd_openFileDialog(
+                                                "Import Ember config",
+                                                null,
+                                                filters,
+                                                "Ember config",
+                                                false);
+                            }
+                        })
+                .whenComplete(
+                        (path, failure) ->
+                                mc.execute(
+                                        () -> {
+                                            busy = false;
+                                            if (failure != null) {
+                                                error(failure);
+                                                return;
+                                            }
+                                            if (path == null) return;
+                                            try {
+                                                Path file = Path.of(path);
+                                                if (exporting) {
+                                                    if (!path.toLowerCase(Locale.ROOT)
+                                                            .endsWith(".ember"))
+                                                        file = Path.of(path + ".ember");
+                                                    Files.write(
+                                                            file, ProfileTransfer.export(source));
+                                                    status = "Exported " + file.getFileName();
+                                                } else {
+                                                    if (Files.size(file) > ProfileArchive.LIMIT)
+                                                        throw new IllegalArgumentException(
+                                                                "Config is too large");
+                                                    importBytes(Files.readAllBytes(file));
+                                                }
+                                            } catch (Exception e) {
+                                                error(e);
+                                            }
+                                        }));
+    }
+
+    private void error(Throwable e) {
+        status = e.getMessage() == null ? "Could not read or save this config." : e.getMessage();
     }
 
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {
+        if (click.button() != GLFW_MOUSE_BUTTON_LEFT) return super.mouseClicked(click, doubled);
         double s = mc.getWindow().getScaleFactor();
-        double cx = click.x() * s, cy = click.y() * s;
-
-        // Any click disarms a pending delete; only a second click on the same "Sure?" deletes.
-        String armed = System.currentTimeMillis() < pendingDeleteUntil ? pendingDelete : null;
-        pendingDelete = null;
-
-        double hh = 40;
-
-        // Close
-        double cbX = px + PW - 32, cbY = py + 12;
-        if (cx >= cbX - 6 && cx < cbX + 20 && cy >= cbY - 5 && cy < cbY + 21) {
-            close();
-            return true;
-        }
-
-        // Name input
-        double inX = px + 16, inY = py + hh + 16;
-        double inW = PW - 32 - 96, inH = 30;
-        nameFocused = cx >= inX && cx < inX + inW && cy >= inY && cy < inY + inH;
-
-        // Save
-        double sbX = px + PW - 16 - 88, sbY = inY;
-        if (cx >= sbX && cx < sbX + 88 && cy >= sbY && cy < sbY + inH) {
-            saveConfig();
-            return true;
-        }
-
-        // Rows
-        double listY = inY + inH + 14;
-        double listH = py + PH - 16 - listY;
-        double rowY = listY + 6 - scroll;
-
-        for (Profile p : profiles()) {
-            if (cy >= rowY && cy < rowY + ROW_H && cy >= listY && cy < listY + listH) {
-                double lbX = px + PW - 44 - 130;
-                if (cx >= lbX && cx < lbX + 62) {
-                    p.load();
-                    setStatus("Loaded " + p.name.get());
-                    return true;
-                }
-
-                double dbX = px + PW - 44 - 60;
-                if (cx >= dbX && cx < dbX + 54) {
-                    if (p.name.get().equals(armed)) {
-                        Profiles.get().remove(p);
-                        setStatus("Deleted " + p.name.get());
-                    } else {
-                        pendingDelete = p.name.get();
-                        pendingDeleteUntil = System.currentTimeMillis() + 3000;
-                        setStatus("Click Sure? to delete " + p.name.get());
-                    }
-                    return true;
-                }
-
-                name = p.name.get();
-                nameFocused = false;
+        for (Hit hit : hits)
+            if (hit.contains(click.x() * s, click.y() * s)) {
+                hit.action.run();
                 return true;
             }
-            rowY += ROW_H;
-        }
-
+        field = 0;
         return super.mouseClicked(click, doubled);
     }
 
-    private void saveConfig() {
-        String n = name.trim();
-        if (n.isEmpty()) return;
-
-        Profile existing = Profiles.get().get(n);
-        Profile p = existing != null ? existing : new Profile();
-
-        p.name.set(n);
-        p.hud.set(true);
-        p.macros.set(true);
-        p.modules.set(true);
-        p.waypoints.set(true);
-
-        if (existing != null) {
-            p.save();
-            Profiles.get().save();
-        } else {
-            Profiles.get().add(p);
-        }
-
-        setStatus("Saved " + n);
-    }
-
-    private boolean isArmed(Profile p) {
-        return p.name.get().equals(pendingDelete) && System.currentTimeMillis() < pendingDeleteUntil;
-    }
-
-    private void setStatus(String s) {
-        status = s;
-        statusUntil = System.currentTimeMillis() + 2500;
-    }
-
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double h, double v) {
-        scroll -= (int) (v * 24);
-        scroll = Math.max(0, scroll);
-
-        int max = (int) Math.max(0, profiles().size() * ROW_H - (PH - 150));
-        scroll = Math.min(scroll, max);
+    public boolean mouseScrolled(double x, double y, double h, double v) {
+        double s = mc.getWindow().getScaleFactor();
+        if (new Hit(listX, listY, listW, listH, () -> {}).contains(x * s, y * s))
+            scroll = Math.max(0, scroll - v * 36);
+        else if (x * s > listX + listW && y * s > py + 122 && y * s < py + ph - 48)
+            detailScroll = Math.max(0, detailScroll - v * 30);
         return true;
     }
 
@@ -380,39 +594,59 @@ public class EmberConfigScreen extends WidgetScreen {
             close();
             return true;
         }
-
-        if (nameFocused) {
-            if (input.key() == GLFW_KEY_BACKSPACE && !name.isEmpty()) {
-                name = name.substring(0, name.length() - 1);
-                return true;
-            }
-            if (input.key() == GLFW_KEY_ENTER || input.key() == GLFW_KEY_KP_ENTER) {
-                saveConfig();
-                return true;
-            }
+        if (field == 0) return super.keyPressed(input);
+        String value = field == 1 ? name : query;
+        boolean control = (input.modifiers() & GLFW_MOD_CONTROL) != 0;
+        if (control && input.key() == GLFW_KEY_A) {
+            selectAll = true;
             return true;
         }
-
-        return super.keyPressed(input);
-    }
-
-    @Override
-    public void close() {
-        // Go back to the ClickGUI this was opened from instead of closing to the game.
-        if (parent != null) mc.setScreen(parent);
-        else super.close();
+        if (control && input.key() == GLFW_KEY_V) {
+            String pasted = mc.keyboard.getClipboard().replaceAll("[^\\p{L}\\p{N} _-]", "");
+            value = selectAll ? pasted : value + pasted;
+            selectAll = false;
+        } else if (input.key() == GLFW_KEY_BACKSPACE) {
+            value =
+                    selectAll
+                            ? ""
+                            : value.isEmpty()
+                                    ? ""
+                                    : value.substring(
+                                            0, value.offsetByCodePoints(value.length(), -1));
+            selectAll = false;
+        } else if (input.key() == GLFW_KEY_ENTER || input.key() == GLFW_KEY_KP_ENTER) {
+            if (field == 1) saveSnapshot();
+            return true;
+        }
+        if (field == 1) name = value.substring(0, Math.min(value.length(), 32));
+        else {
+            query = value.substring(0, Math.min(value.length(), 64));
+            scroll = 0;
+        }
+        return true;
     }
 
     @Override
     public boolean charTyped(CharInput input) {
-        if (nameFocused) {
-            char c = (char) input.codepoint();
-            // Keep it a usable folder name
-            if (Character.isLetterOrDigit(c) || c == '_' || c == '-' || c == ' ') {
-                if (name.length() < 32) name += c;
+        if (field == 0) return super.charTyped(input);
+        armed = "";
+        int cp = input.codepoint();
+        if (Character.isLetterOrDigit(cp) || cp == ' ' || cp == '_' || cp == '-') {
+            String value = selectAll ? "" : field == 1 ? name : query;
+            selectAll = false;
+            if (value.length() < (field == 1 ? 32 : 64)) value += Character.toString(cp);
+            if (field == 1) name = value;
+            else {
+                query = value;
+                scroll = 0;
             }
-            return true;
         }
-        return super.charTyped(input);
+        return true;
+    }
+
+    @Override
+    public void close() {
+        if (parent != null) mc.setScreen(parent);
+        else super.close();
     }
 }

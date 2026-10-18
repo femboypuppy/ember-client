@@ -134,6 +134,11 @@ public abstract class ClientPlayerInteractionManagerMixin implements IClientPlay
         if (MeteorClient.EVENT_BUS.post(BreakBlockEvent.get(blockPos)).isCancelled()) info.setReturnValue(false);
     }
 
+    @Inject(method = "breakBlock", at = @At("RETURN"))
+    private void emberAfterBreak(BlockPos blockPos, CallbackInfoReturnable<Boolean> info) {
+        if (info.getReturnValueZ()) MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.entity.player.BlockEffectEvent(blockPos.toImmutable(), false));
+    }
+
     @Inject(method = "interactItem", at = @At("HEAD"), cancellable = true)
     private void onInteractItem(PlayerEntity player, Hand hand, CallbackInfoReturnable<ActionResult> info) {
         InteractItemEvent event = MeteorClient.EVENT_BUS.post(InteractItemEvent.get(hand));

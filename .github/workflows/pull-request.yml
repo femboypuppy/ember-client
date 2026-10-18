@@ -33,7 +33,11 @@ jobs:
         run: python3 scripts/check_atmosphere_fog.py
 
       - name: Build
+        # Profile import must not overwrite the shared snapshot with local settings.
         run: ./gradlew build
+
+      - name: Check profile sharing
+        run: python3 scripts/check_profile_sharing.py
 
       - name: Check music bridge and artwork lifecycle
         run: python3 scripts/check_music_connection.py
