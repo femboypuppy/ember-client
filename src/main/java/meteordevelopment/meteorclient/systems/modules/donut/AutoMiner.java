@@ -374,7 +374,8 @@ public class AutoMiner extends Module {
     public AutoMiner() {
         super(Categories.Donut, "auto-miner", "Digs a tunnel for you like a player would, around lava, water and caves, to find bases under the deepslate. Stops when you get hurt.");
         // Rides through Auto Relog's relogs. It is never saved as on (see toTag), so a restart doesn't start it.
-        runInMainMenu = true;    }
+        runInMainMenu = true;
+    }
 
     @Override
     public NbtCompound toTag() {
