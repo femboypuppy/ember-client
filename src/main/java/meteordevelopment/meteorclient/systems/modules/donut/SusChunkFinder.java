@@ -68,6 +68,7 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -730,9 +731,19 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> tracerRange = sgRender.add(new IntSetting.Builder()
         .name("tracer-range")
         .description("Only draw tracers to chunks within this many blocks.")
-        .defaultValue(4096)
+        .defaultValue(1024)
         .range(64, 100000)
         .sliderRange(256, 20000)
+        .visible(tracers::get)
+        .build()
+    );
+
+    private final Setting<Integer> maxTracers = sgRender.add(new IntSetting.Builder()
+        .name("max-tracers")
+        .description("At most this many tracers, to the nearest chunks, so a busy area doesn't fill the screen with lines.")
+        .defaultValue(12)
+        .range(1, 256)
+        .sliderRange(1, 64)
         .visible(tracers::get)
         .build()
     );
@@ -1827,7 +1838,12 @@ public class SusChunkFinder extends Module {
             if (blanks < 3) Arrays.fill(blank, false);
             else blankLook = look.toString();
             this.hiddenSections = blanks < 3 ? 0 : blanks;
-            this.floorY = hiddenSections > 0 ? 0 : minY;
+
+            // The fill reaches up to Y 15, so the section at Y 0 is the server's deepslate too, not terrain.
+            int zero = (0 - minY) >> 4;
+            boolean zeroHidden = hiddenSections > 0 && zero >= 0 && zero < sections.length && isBlank(sections[zero]);
+            if (zeroHidden) blank[zero] = true;
+            this.floorY = hiddenSections == 0 ? minY : zeroHidden ? 16 : 0;
 
             Arrays.fill(kelpBottom, Integer.MAX_VALUE);
             Arrays.fill(kelpTop, Integer.MIN_VALUE);
@@ -1836,11 +1852,8 @@ public class SusChunkFinder extends Module {
             Arrays.fill(bambooTop, Integer.MIN_VALUE);
         }
 
-        /** Empty, or one block throughout. Checks the palette, not the blocks, so it is cheap. */
         boolean isBlank(ChunkSection section) {
-            if (section == null || section.isEmpty()) return true;
-            BlockState first = section.getBlockState(0, 0, 0);
-            return !section.hasAny(state -> state != first);
+            return DeepslateHiding.isBlank(section);
         }
 
         boolean inHeight(int y) {
@@ -3178,20 +3191,28 @@ public class SusChunkFinder extends Module {
         };
     }
 
-    /** Lines from the crosshair to each chunk's center dot, so a find stays easy to get back to. */
+    /** Lines from the crosshair to the nearest chunks' center dots, so a find stays easy to get back to. */
     private void drawTracers(Render3DEvent event, List<FlaggedChunk> visible) {
-        double range = tracerRange.get();
+        double range = (double) tracerRange.get() * tracerRange.get();
         double px = mc.player.getX(), pz = mc.player.getZ();
 
+        List<FlaggedChunk> near = new ArrayList<>();
         for (FlaggedChunk fc : visible) {
-            double cx = (fc.chunkX << 4) + 8.0, cz = (fc.chunkZ << 4) + 8.0;
-            double dx = cx - px, dz = cz - pz;
-            if (dx * dx + dz * dz > range * range) continue;
-
-            Color tone = dotColor(fc);
-            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, cx, dotY(fc), cz,
-                tone != null ? tone : tracerColor.get());
+            if (distanceSq(fc, px, pz) <= range) near.add(fc);
         }
+        if (near.size() > maxTracers.get()) near.sort(Comparator.comparingDouble(fc -> distanceSq(fc, px, pz)));
+
+        for (int i = 0; i < near.size() && i < maxTracers.get(); i++) {
+            FlaggedChunk fc = near.get(i);
+            Color tone = dotColor(fc);
+            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z,
+                (fc.chunkX << 4) + 8.0, dotY(fc), (fc.chunkZ << 4) + 8.0, tone != null ? tone : tracerColor.get());
+        }
+    }
+
+    private static double distanceSq(FlaggedChunk fc, double x, double z) {
+        double dx = (fc.chunkX << 4) + 8.0 - x, dz = (fc.chunkZ << 4) + 8.0 - z;
+        return dx * dx + dz * dz;
     }
 
     private void drawChunk(Render3DEvent event, FlaggedChunk fc, double y) {

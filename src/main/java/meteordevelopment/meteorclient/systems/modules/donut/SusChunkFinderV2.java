@@ -40,6 +40,7 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.network.packet.s2c.play.GameJoinS2CPacket;
 import net.minecraft.network.packet.s2c.play.SimulationDistanceS2CPacket;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.state.property.Properties;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
@@ -53,6 +54,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -200,10 +202,39 @@ public class SusChunkFinderV2 extends Module {
         .build()
     );
 
+    private final Setting<Integer> renderRange = sgRender.add(new IntSetting.Builder()
+        .name("render-range")
+        .description("Only draw zones whose center is within this many blocks. Zones further away stay saved.")
+        .defaultValue(512)
+        .range(64, 8192)
+        .sliderRange(128, 4096)
+        .build()
+    );
+
     private final Setting<Boolean> tracers = sgRender.add(new BoolSetting.Builder()
         .name("tracers")
-        .description("Line from your crosshair to each zone's center.")
+        .description("Line from your crosshair to the nearest zones' centers.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> tracerRange = sgRender.add(new IntSetting.Builder()
+        .name("tracer-range")
+        .description("Only draw tracers to zones within this many blocks.")
+        .defaultValue(384)
+        .range(32, 8192)
+        .sliderRange(64, 2048)
+        .visible(tracers::get)
+        .build()
+    );
+
+    private final Setting<Integer> maxTracers = sgRender.add(new IntSetting.Builder()
+        .name("max-tracers")
+        .description("At most this many tracers, to the nearest zones.")
+        .defaultValue(4)
+        .range(1, 64)
+        .sliderRange(1, 16)
+        .visible(tracers::get)
         .build()
     );
 
@@ -255,6 +286,7 @@ public class SusChunkFinderV2 extends Module {
     private final LongSet arrived = new LongOpenHashSet();
     private boolean selfDirty;
     private int tickTimer, statsTimer;
+    private RegistryKey<World> lastDimension;
     private String place = "";
     private FindsStorage.Context context = new FindsStorage.Context("", "");
     private List<Zone> saved = List.of();
@@ -301,6 +333,9 @@ public class SusChunkFinderV2 extends Module {
     @Override
     public void onActivate() {
         if (mc.world == null) return;
+        lastDimension = mc.world.getRegistryKey();
+        // Zones only exist in the overworld. Elsewhere the overworld's measurements are kept for the way back.
+        if (lastDimension != World.OVERWORLD) return;
         context = FindsStorage.context();
         selectPlace(context.world() + "|" + context.dimension());
 
@@ -379,7 +414,9 @@ public class SusChunkFinderV2 extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.player == null || mc.world == null || mc.world.getRegistryKey() != World.OVERWORLD) return;
+        if (mc.player == null || mc.world == null) return;
+        if (mc.world.getRegistryKey() != lastDimension) onActivate();
+        if (mc.world.getRegistryKey() != World.OVERWORLD) return;
 
         // Chunks you keep loaded yourself, so your own AFK spot or dig site never turns into a zone.
         if (++tickTimer >= 20) {
@@ -823,13 +860,24 @@ public class SusChunkFinderV2 extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (mc.player == null) return;
+        if (mc.player == null || mc.world == null) return;
         float dt = clock.tick();
+        if (mc.world.getRegistryKey() != World.OVERWORLD) {
+            hovered = null;
+            return;
+        }
         planeY = followPlayerY.get() ? Math.floor(mc.player.getY()) : renderY.get();
         List<Zone> live = zones;
 
-        List<Zone> shown = new ArrayList<>(live);
+        // Zones past render-range aren't drawn, pointed at or opened: they stay saved and counted.
+        double px = mc.player.getX(), pz = mc.player.getZ();
+        double range = (double) renderRange.get() * renderRange.get();
+        List<Zone> shown = new ArrayList<>();
+        for (Zone zone : live) {
+            if (distanceSq(zone, px, pz) <= range) shown.add(zone);
+        }
         for (Zone zone : saved) {
+            if (distanceSq(zone, px, pz) > range) continue;
             boolean covered = false;
             for (Zone l : live) {
                 if (Math.abs(l.centerX - zone.centerX) <= l.radius && Math.abs(l.centerZ - zone.centerZ) <= l.radius) {
@@ -863,6 +911,29 @@ public class SusChunkFinderV2 extends Module {
         shellAnim = EmberAnim.approach(shellAnim, best != null ? 1f : 0f, dt, 0.08);
 
         for (Zone zone : shown) drawZone(event, zone, planeY, zone == best);
+        if (tracers.get()) drawTracers(event, shown, px, pz);
+    }
+
+    private static double distanceSq(Zone zone, double x, double z) {
+        double dx = zone.centerX * 16.0 + 8 - x, dz = zone.centerZ * 16.0 + 8 - z;
+        return dx * dx + dz * dz;
+    }
+
+    /** Lines to the nearest few zones only, so a busy area doesn't fill the screen with them. */
+    private void drawTracers(Render3DEvent event, List<Zone> shown, double px, double pz) {
+        double range = (double) tracerRange.get() * tracerRange.get();
+        List<Zone> near = new ArrayList<>();
+        for (Zone zone : shown) {
+            if (distanceSq(zone, px, pz) <= range) near.add(zone);
+        }
+        near.sort(Comparator.comparingDouble(zone -> distanceSq(zone, px, pz)));
+
+        Color line = centerColor.get();
+        for (int i = 0; i < near.size() && i < maxTracers.get(); i++) {
+            Zone zone = near.get(i);
+            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z,
+                zone.centerX * 16.0 + 8, planeY + DOT_HEIGHT, zone.centerZ * 16.0 + 8, line);
+        }
     }
 
     private void drawZone(Render3DEvent event, Zone zone, double y, boolean target) {
@@ -891,11 +962,7 @@ public class SusChunkFinderV2 extends Module {
         double cx = zone.centerX * 16.0, cz = zone.centerZ * 16.0;
         event.renderer.box(cx, y, cz, cx + 16, y, cz + 16, new Color(line.r, line.g, line.b, 60), line, ShapeMode.Both, 0);
 
-        double dotY = y + DOT_HEIGHT;
-        if (centerDot.get()) drawDot(event, cx + 8, dotY, cz + 8, line, target ? shellAnim : 0);
-        if (tracers.get()) {
-            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, cx + 8, dotY, cz + 8, line);
-        }
+        if (centerDot.get()) drawDot(event, cx + 8, y + DOT_HEIGHT, cz + 8, line, target ? shellAnim : 0);
     }
 
     /** Same marker as the sus chunk finder: a small cube in a diamond shell that opens up while looked at. */
