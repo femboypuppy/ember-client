@@ -50,6 +50,9 @@ jobs:
       - name: Check profile sharing
         run: python3 scripts/check_profile_sharing.py
 
+      - name: Check startup menu
+        run: python3 scripts/check_start_menu.py
+
       - name: Check hand editor and mirror lifecycle
         run: python3 scripts/check_hand_editor.py
 

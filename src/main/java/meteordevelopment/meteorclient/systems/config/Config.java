@@ -13,6 +13,7 @@ import meteordevelopment.meteorclient.systems.System;
 import meteordevelopment.meteorclient.systems.Systems;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.CelestialLighting;
+import meteordevelopment.meteorclient.utils.render.StartMenuLayout;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -466,6 +467,15 @@ public class Config extends System<Config> {
     public final Setting<Double> foliageBalance = sgVisual.add(new DoubleSetting.Builder()
         .name("foliage-color-balance").description("Reduce green biome dye so grass and leaves respond cleanly to colored world light.")
         .defaultValue(.85).range(0,1).sliderRange(0,1).build());
+
+    public final Setting<StartMenuLayout.Style> startMenu = sgVisual.add(new EnumSetting.Builder<StartMenuLayout.Style>()
+        .name("start-menu-style").description("Choose Ember's lock screen or the classic Minecraft title screen.")
+        .defaultValue(StartMenuLayout.Style.LockScreen).build());
+    public final Setting<StartMenuLayout.Wallpaper> startWallpaper = sgVisual.add(new EnumSetting.Builder<StartMenuLayout.Wallpaper>()
+        .name("start-menu-wallpaper").description("Offline wallpaper for Ember's title screen and out-of-world menus.")
+        .defaultValue(StartMenuLayout.Wallpaper.Chrome).build());
+    public final Setting<Boolean> startClock24 = sgVisual.add(new BoolSetting.Builder()
+        .name("start-menu-24-hour-clock").defaultValue(true).build());
 
     public Config() {
         super("config");

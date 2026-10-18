@@ -66,21 +66,11 @@ public final class FontUtils {
         }
     }
 
-    /**
-     * Core logic: interpret font data from a ByteBuffer.
-     * NOTE: This preserves your original 5-byte header check exactly.
-     */
+    /** Read both TrueType and OpenType system fonts, including local SF Pro faces. */
     private static @Nullable FontInfo getFontInfo(ByteBuffer buffer) {
-        if (buffer.remaining() < 5) return null;
-
-        // Preserve existing check: 00 01 00 00 00
-        if (
-            buffer.get(0) != 0 ||
-                buffer.get(1) != 1 ||
-                buffer.get(2) != 0 ||
-                buffer.get(3) != 0 ||
-                buffer.get(4) != 0
-        ) return null;
+        if (buffer.remaining() < 12) return null;
+        int signature = buffer.duplicate().order(java.nio.ByteOrder.BIG_ENDIAN).getInt();
+        if (signature != 0x00010000 && signature != 0x4F54544F && signature != 0x74727565) return null;
 
         STBTTFontinfo fontInfo = STBTTFontinfo.create();
         if (!STBTruetype.stbtt_InitFont(fontInfo, buffer)) return null;
@@ -139,7 +129,9 @@ public final class FontUtils {
     public static void loadSystem(List<FontFamily> fontList, File dir) {
         if (!dir.exists() || !dir.isDirectory()) return;
 
-        File[] files = dir.listFiles((file) -> (file.isFile() && file.getName().endsWith(".ttf") || file.isDirectory()));
+        File[] files = dir.listFiles(file -> file.isDirectory() || file.isFile()
+            && (file.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".ttf")
+                || file.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".otf")));
         if (files == null) return;
 
         for (File file : files) {

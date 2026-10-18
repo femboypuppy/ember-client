@@ -151,23 +151,27 @@ public class ConfigMenuCheck {
   System.out.println("Config menu passed: save, clipboard share/import, duplicate preservation, clipped controls and small-window scrolling.");
  }
 }'''
-with tempfile.TemporaryDirectory(prefix="ember-profile-check-") as temp:
-    temp = Path(temp)
-    sources = temp / "src"
-    for name, body in stubs.items():
-        file = sources / name
-        file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(body, encoding="utf-8")
-    for name in ["Profile", "Profiles", "ProfileArchive", "ProfileTransfer"]:
-        file = sources / (P+f"systems/profiles/{name}.java")
-        file.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ROOT / "src/main/java" / (P+f"systems/profiles/{name}.java"), file)
-    (sources / "ProfileSharingCheck.java").write_text(harness, encoding="utf-8")
-    (sources / "ConfigMenuCheck.java").write_text(menu_harness, encoding="utf-8")
-    screen = sources / (P+"gui/screens/EmberConfigScreen.java")
-    shutil.copyfile(ROOT / "src/main/java" / (P+"gui/screens/EmberConfigScreen.java"),screen)
-    out = temp / "classes"
-    subprocess.run([str(JAVA / "javac"), "-encoding", "UTF-8", "-d", str(out), *map(str, sources.rglob("*.java"))], check=True)
-    for mode, palette in [("produce", "blue"), ("consume", "yellow")]:
-        subprocess.run([str(JAVA / "java"), "-cp", str(out), f"-Dtest.folder={temp / mode}", f"-Dpalette={palette}", "ProfileSharingCheck", mode, str(temp / "shared.ember")], check=True)
-    subprocess.run([str(JAVA / "java"), "-cp", str(out), f"-Dtest.folder={temp / 'menu'}", "-Dpalette=blue", "ConfigMenuCheck",str(ROOT / "build/visual-preview/config-menu.json"),str(ROOT / "build/visual-preview/config-menu-small.json")],check=True)
+def main():
+    with tempfile.TemporaryDirectory(prefix="ember-profile-check-") as temp:
+        temp = Path(temp)
+        sources = temp / "src"
+        for name, body in stubs.items():
+            file = sources / name
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(body, encoding="utf-8")
+        for name in ["Profile", "Profiles", "ProfileArchive", "ProfileTransfer"]:
+            file = sources / (P+f"systems/profiles/{name}.java")
+            file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / "src/main/java" / (P+f"systems/profiles/{name}.java"), file)
+        (sources / "ProfileSharingCheck.java").write_text(harness, encoding="utf-8")
+        (sources / "ConfigMenuCheck.java").write_text(menu_harness, encoding="utf-8")
+        screen = sources / (P+"gui/screens/EmberConfigScreen.java")
+        shutil.copyfile(ROOT / "src/main/java" / (P+"gui/screens/EmberConfigScreen.java"),screen)
+        out = temp / "classes"
+        subprocess.run([str(JAVA / "javac"), "-encoding", "UTF-8", "-d", str(out), *map(str, sources.rglob("*.java"))], check=True)
+        for mode, palette in [("produce", "blue"), ("consume", "yellow")]:
+            subprocess.run([str(JAVA / "java"), "-cp", str(out), f"-Dtest.folder={temp / mode}", f"-Dpalette={palette}", "ProfileSharingCheck", mode, str(temp / "shared.ember")], check=True)
+        subprocess.run([str(JAVA / "java"), "-cp", str(out), f"-Dtest.folder={temp / 'menu'}", "-Dpalette=blue", "ConfigMenuCheck",str(ROOT / "build/visual-preview/config-menu.json"),str(ROOT / "build/visual-preview/config-menu-small.json")],check=True)
+
+if __name__ == "__main__":
+    main()

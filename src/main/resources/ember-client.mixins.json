@@ -197,6 +197,7 @@
     "TextureTransformMixin",
     "OverlayTextureAccessor",
     "TitleScreenMixin",
+    "EmberMenuBackgroundMixin",
     "TooltipComponentMixin",
     "TooltipDisplayComponentMixin",
     "TransformationMixin",

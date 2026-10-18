@@ -39,6 +39,9 @@ jobs:
       - name: Check profile sharing
         run: python3 scripts/check_profile_sharing.py
 
+      - name: Check startup menu
+        run: python3 scripts/check_start_menu.py
+
       - name: Check music bridge and artwork lifecycle
         run: python3 scripts/check_music_connection.py
 

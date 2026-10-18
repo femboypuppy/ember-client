@@ -18,6 +18,7 @@ import meteordevelopment.meteorclient.utils.misc.MusicLyricsService;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.EmberAppearance;
 import meteordevelopment.meteorclient.utils.render.CelestialLighting;
+import meteordevelopment.meteorclient.utils.render.StartMenuLayout;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import net.minecraft.client.gui.Click;
@@ -132,6 +133,15 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     }
 
     private double appearance(GuiRenderer r, double y, double dt) {
+        y = section(r, y, "START MENU", "A clock-first lock screen, or the classic Minecraft menu.");
+        double menuW = contentW / 2;
+        for (var style : StartMenuLayout.Style.values()) action(r, contentX + style.ordinal() * menuW, y, menuW - 5, 34,
+            style.toString(), () -> Config.get().startMenu.set(style), Config.get().startMenu.get() == style, dt);
+        y += 46;
+        for (var wallpaper : StartMenuLayout.Wallpaper.values()) action(r, contentX + wallpaper.ordinal() * menuW, y, menuW - 5, 34,
+            wallpaper.name() + " wallpaper", () -> Config.get().startWallpaper.set(wallpaper), Config.get().startWallpaper.get() == wallpaper, dt);
+        y += 46;
+        y = toggle(r, y, "24-hour menu clock", "Use a 24-hour clock on the startup screen.", Config.get().startClock24.get(), () -> Config.get().startClock24.set(!Config.get().startClock24.get()), dt);
         y = section(r, y, "SURFACE STYLE", "Choose the material used across menus and HUD.");
         EmberAppearance[] options = EmberAppearance.values();
         double gap = 8, cardW = (contentW - gap * (options.length - 1)) / options.length;
