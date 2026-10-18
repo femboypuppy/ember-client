@@ -115,7 +115,6 @@ public final class EmberTitleScreen extends Screen {
             if (panelFade < .99) {
                 Color clockColor = alpha(WHITE, openFade * (1 - panelFade));
                 label(date, w / 2.0, frame.clockY() - 26 * u, 20 * u, clockColor, true, w - 32);
-                label(time, w / 2.0, frame.clockY(), frame.clockHeight(), clockColor, true, w - 32);
             }
             if (reveal > .02) {
                 var dock = frame.dock();
@@ -189,6 +188,13 @@ public final class EmberTitleScreen extends Screen {
                                 new StartMenuLayout.Rect(w * .56, h - 34 * u, w * .43, 30 * u),
                                 () -> Util.getOperatingSystem().open(wallpaper.url)));
             r.end();
+            if (panelFade < .99)
+                EmberClockText.draw(
+                        time,
+                        w / 2.0,
+                        frame.clockY(),
+                        frame.clockHeight(),
+                        alpha(WHITE, openFade * (1 - panelFade)));
             renderLabels(context);
         } finally {
             Utils.scaledProjection();

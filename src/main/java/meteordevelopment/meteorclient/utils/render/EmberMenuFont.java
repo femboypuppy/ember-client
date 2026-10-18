@@ -1,6 +1,7 @@
 package meteordevelopment.meteorclient.utils.render;
 
 import meteordevelopment.meteorclient.renderer.Fonts;
+import meteordevelopment.meteorclient.renderer.text.BuiltinFontFace;
 import meteordevelopment.meteorclient.renderer.text.CustomTextRenderer;
 import meteordevelopment.meteorclient.renderer.text.FontFace;
 import meteordevelopment.meteorclient.renderer.text.FontInfo;
@@ -11,6 +12,9 @@ import java.io.IOException;
 public final class EmberMenuFont {
     private static CustomTextRenderer renderer;
     private static FontFace activeFace;
+    private static final FontFace BOLD_FALLBACK =
+            new BuiltinFontFace(
+                    new FontInfo("Inter Display", FontInfo.Type.Bold), "Inter Display Bold");
 
     private EmberMenuFont() {}
 
@@ -23,6 +27,21 @@ public final class EmberMenuFont {
             }
         }
         return Fonts.DEFAULT_FONT;
+    }
+
+    public static FontFace boldFace() {
+        for (String name : new String[] {"SF Pro Display", "SF Pro"}) {
+            var family = Fonts.getFamily(name);
+            if (family != null) {
+                var bold = family.get(FontInfo.Type.Bold);
+                if (bold != null) return bold;
+            }
+        }
+        return BOLD_FALLBACK;
+    }
+
+    static FontFace boldFallback() {
+        return BOLD_FALLBACK;
     }
 
     public static CustomTextRenderer renderer() {

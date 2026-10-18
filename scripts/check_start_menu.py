@@ -29,19 +29,24 @@ public class Utils{public static int width=1600,height=900,projection;public sta
 stubs[P+'utils/render/color/Color.java']='''package meteordevelopment.meteorclient.utils.render.color;public class Color{public int r,g,b,a;public Color(int r,int g,int b,int a){this.r=r;this.g=g;this.b=b;this.a=a;}public int r(){return r;}public int g(){return g;}public int b(){return b;}public int a(){return a;}}'''
 stubs[P+'utils/render/EmberAnim.java']='''package meteordevelopment.meteorclient.utils.render;public class EmberAnim{public static class Clock{public float tick(){return 1f/60;}}public static double approach(double a,double b,double dt,double tau){double v=a+(b-a)*(1-Math.exp(-dt/tau));return Math.abs(v-b)<.01?b:v;}}'''
 stubs[P+'utils/render/EmberGlass.java']='package meteordevelopment.meteorclient.utils.render;public class EmberGlass{public static int captures;public static void ensureCaptured(){captures++;}}'
-stubs[P+'renderer/Renderer2D.java']='''package meteordevelopment.meteorclient.renderer;import meteordevelopment.meteorclient.utils.render.color.Color;public class Renderer2D{public static final Renderer2D TEXTURE=new Renderer2D();public void begin(){}public void texQuad(double x,double y,double w,double h,Color c){if(w<=0||h<=0)throw new AssertionError("Invalid wallpaper size");}public void render(Object view,Object sampler){}}'''
+stubs[P+'renderer/Renderer2D.java']='''package meteordevelopment.meteorclient.renderer;import meteordevelopment.meteorclient.utils.render.color.Color;public class Renderer2D{public static final Renderer2D TEXTURE=new Renderer2D();double x,y;public void begin(){}public void texQuad(double x,double y,double w,double h,Color c){this.x=x;this.y=y;if(w<=0||h<=0)throw new AssertionError("Invalid texture size");}public void render(Object view,Object sampler){if(view instanceof Texture&&(x!=Math.rint(x)||y!=Math.rint(y)))throw new AssertionError("Clock must be aligned to physical pixels");}}'''
 stubs[P+'systems/hud/HudRenderer.java']='''package meteordevelopment.meteorclient.systems.hud;
 import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;import meteordevelopment.meteorclient.utils.render.color.Color;
 public class HudRenderer {public static final HudRenderer INSTANCE=new HudRenderer();public void begin(Object c){}public void end(){}public double textHeight(boolean shadow,double scale){return 18*scale*(Hud.get().hasCustomFont()?scale:1);}public double textWidth(String text,boolean shadow,double scale){return text.codePointCount(0,text.length())*textHeight(false,scale)/2;}public void text(String text,double x,double y,Color c,boolean shadow,double scale){double height=textHeight(false,scale);if(text.matches("[0-9]+:[0-9]+.*")&&(height<40||height>400))throw new AssertionError("Clock must fit the viewport");GuiRenderer.text(text,x,y,c,height/18);}}
 '''
 stubs[P+'systems/hud/Hud.java']='package meteordevelopment.meteorclient.systems.hud;public class Hud{static final Hud INSTANCE=new Hud();public static Hud get(){return INSTANCE;}public boolean custom=true;public boolean hasCustomFont(){return custom;}}'
-stubs[P+'renderer/text/FontInfo.java']='package meteordevelopment.meteorclient.renderer.text;public class FontInfo{public enum Type{Regular}}'
-stubs[P+'renderer/text/FontFace.java']='package meteordevelopment.meteorclient.renderer.text;public class FontFace{}'
-stubs[P+'renderer/text/FontFamily.java']='package meteordevelopment.meteorclient.renderer.text;public class FontFamily{public final FontFace face=new FontFace();public FontFace get(FontInfo.Type type){return face;}}'
+stubs[P+'renderer/text/FontInfo.java']='package meteordevelopment.meteorclient.renderer.text;public record FontInfo(String family,Type type){public enum Type{Regular,Bold}}'
+stubs[P+'renderer/text/FontFace.java']='package meteordevelopment.meteorclient.renderer.text;public class FontFace{public java.nio.ByteBuffer readToDirectByteBuffer()throws java.io.IOException{throw new java.io.IOException("Unreadable local font");}}'
+stubs[P+'renderer/text/BuiltinFontFace.java']='package meteordevelopment.meteorclient.renderer.text;public class BuiltinFontFace extends FontFace{final String name;public BuiltinFontFace(FontInfo info,String name){this.name=name;}public java.nio.ByteBuffer readToDirectByteBuffer()throws java.io.IOException{return java.nio.ByteBuffer.wrap(java.nio.file.Files.readAllBytes(java.nio.file.Path.of(System.getProperty("test.fonts"),name+".ttf")));}}'
+stubs[P+'renderer/text/FontFamily.java']='package meteordevelopment.meteorclient.renderer.text;public class FontFamily{public final FontFace face=new FontFace(),bold=new FontFace();public FontFace get(FontInfo.Type type){return type==FontInfo.Type.Bold?bold:face;}}'
 stubs[P+'renderer/Fonts.java']='package meteordevelopment.meteorclient.renderer;import meteordevelopment.meteorclient.renderer.text.*;public class Fonts{public static final FontFace DEFAULT_FONT=new FontFace();public static CustomTextRenderer RENDERER;public static final java.util.Map<String,FontFamily> families=new java.util.HashMap<>();public static FontFamily getFamily(String name){return families.get(name);}}'
 stubs[P+'renderer/text/CustomTextRenderer.java']='''package meteordevelopment.meteorclient.renderer.text;import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;import meteordevelopment.meteorclient.utils.render.color.Color;
 public class CustomTextRenderer{public static int created,destroyed;double scale;boolean building;public CustomTextRenderer(FontFace face)throws java.io.IOException{created++;}public void begin(double s){if(building)throw new AssertionError("Nested font batch");scale=s;building=true;}public double getWidth(String text){return text.codePointCount(0,text.length())*9*scale;}public void render(String text,double x,double y,Color c,boolean shadow){if(shadow)throw new AssertionError("Menu type must have no heavy shadow");if(text.matches("[0-9]+:[0-9]+.*")&&18*scale>150)throw new AssertionError("Oversized clock");GuiRenderer.text(text,x,y,c,scale);}public void end(){building=false;}public void destroy(){destroyed++;}}
 '''
+stubs['com/mojang/blaze3d/textures/TextureFormat.java']='package com.mojang.blaze3d.textures;public enum TextureFormat{RGBA8}'
+stubs['com/mojang/blaze3d/textures/FilterMode.java']='package com.mojang.blaze3d.textures;public enum FilterMode{LINEAR}'
+stubs['org/lwjgl/BufferUtils.java']='package org.lwjgl;public class BufferUtils{public static java.nio.ByteBuffer createByteBuffer(int size){return java.nio.ByteBuffer.allocateDirect(size);}}'
+stubs[P+'renderer/Texture.java']='''package meteordevelopment.meteorclient.renderer;import com.mojang.blaze3d.textures.*;public class Texture{public static int created,closed;public final int w,h;public Texture(int w,int h,TextureFormat f,FilterMode min,FilterMode mag){this.w=w;this.h=h;created++;}public void upload(java.nio.ByteBuffer bytes){if(bytes.remaining()!=w*h*4)throw new AssertionError("Invalid RGBA upload");}public void close(){closed++;}public Object getGlTextureView(){return this;}public Object getSampler(){return this;}}'''
 stubs['net/minecraft/text/Text.java']='package net.minecraft.text;public record Text(String value){public static Text literal(String s){return new Text(s);}}'
 stubs['net/minecraft/client/gui/screen/Screen.java']='''package net.minecraft.client.gui.screen;import net.minecraft.text.Text;import net.minecraft.client.gui.*;import net.minecraft.client.input.*;
 public class Screen{public Screen parent;public Screen(Text t){}public void render(DrawContext c,int x,int y,float d){}public void renderBackground(DrawContext c,int x,int y,float d){}public boolean shouldCloseOnEsc(){return true;}public boolean shouldPause(){return true;}public boolean mouseClicked(Click c,boolean d){return false;}public boolean keyPressed(KeyInput k){return false;}public boolean keyReleased(KeyInput k){return false;}public void close(){}}
@@ -102,8 +107,35 @@ public class StartMenuChecks {
   require(Config.get().saves>=2,"Preferences are saved");
   require(EmberMenuFont.preferredFace()==meteordevelopment.meteorclient.renderer.Fonts.DEFAULT_FONT,"Missing SF Pro uses bundled Inter");
   var sf=new meteordevelopment.meteorclient.renderer.text.FontFamily();meteordevelopment.meteorclient.renderer.Fonts.families.put("SF Pro Display",sf);require(EmberMenuFont.preferredFace()==sf.face,"Installed SF Pro Display must be preferred");EmberMenuFont.renderer();EmberMenuFont.renderer();require(meteordevelopment.meteorclient.renderer.text.CustomTextRenderer.created==2,"Cache the menu font across frames");require(meteordevelopment.meteorclient.renderer.text.CustomTextRenderer.destroyed==1,"Release the old font when changing faces");
+  require(EmberMenuFont.boldFace()==sf.bold,"Clock uses the installed bold weight, independently of the regular menu font");
   for(boolean custom:new boolean[]{true,false}){meteordevelopment.meteorclient.systems.hud.Hud.get().custom=custom;Utils.width=1280;Utils.height=720;var clockMenu=new EmberTitleScreen(true);draw(clockMenu,30);}
   System.out.println("Start menu passed: first-click isolation, Enter repeat, real dock actions, child return, 1x/2x/3x input, keyboard navigation, classic mode, in-world guard, offline assets and responsive cover.");
+ }
+}'''
+
+CLOCK_HARNESS=r'''package meteordevelopment.meteorclient.utils.render;
+import java.awt.Font;import java.awt.image.BufferedImage;import java.nio.file.*;import javax.imageio.ImageIO;import meteordevelopment.meteorclient.renderer.Texture;import meteordevelopment.meteorclient.utils.render.color.Color;
+public class ClockFontChecks{
+ static void require(boolean value,String message){if(!value)throw new AssertionError(message);}
+ static long ink(BufferedImage image){long sum=0;for(int y=0;y<image.getHeight();y++)for(int x=0;x<image.getWidth();x++)sum+=image.getRGB(x,y)>>>24;return sum;}
+ public static void main(String[] args)throws Exception{
+  Path fonts=Path.of(System.getProperty("test.fonts")),out=Path.of(args[0]);
+  Font bold=Font.createFont(Font.TRUETYPE_FONT,fonts.resolve("Inter Display Bold.ttf").toFile()),regular=Font.createFont(Font.TRUETYPE_FONT,fonts.resolve("Inter.ttf").toFile());
+  require(bold.getFontName().contains("Bold"),"Ship a real bold face");
+  for(int size:new int[]{32,48,88,160,220}){
+   BufferedImage image=EmberClockText.rasterize(bold,"08:42 PM",size),thin=EmberClockText.rasterize(regular,"08:42 PM",size);
+   require(image.getHeight()==size+4,"Rasterize at the requested pixel size");require(ink(image)>ink(thin)*1.15,"Bold must have visibly heavier strokes");
+   int partial=0,minX=image.getWidth(),minY=image.getHeight(),maxX=0,maxY=0;
+   for(int y=0;y<image.getHeight();y++)for(int x=0;x<image.getWidth();x++){int alpha=image.getRGB(x,y)>>>24;if(alpha>0){minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);}if(alpha>0&&alpha<255)partial++;}
+   require(partial>size,"Antialiased edges must exist at every size");require(minX>0&&minY>0&&maxX<image.getWidth()-1&&maxY<image.getHeight()-1,"No clipping at the texture edges");
+   ImageIO.write(image,"png",out.resolve("bold-clock-"+size+".png").toFile());
+  }
+  Color white=new Color(255,255,255,255);EmberClockText.draw("08:42",640.25,100.7,220,white);int allocated=Texture.created;
+  for(int frame=0;frame<10000;frame++)EmberClockText.draw(new String("08:42"),640,100,220,white);
+  require(Texture.created==allocated,"Repeated frames must reuse the cached texture");
+  EmberClockText.draw("08:43",640,100,220,white);EmberClockText.draw("08:43",640,100,88,white);
+  require(Texture.created==allocated+2&&Texture.created-Texture.closed==1,"Text/size updates replace and close the old texture");
+  System.out.println("Bold clock passed: real bold weight, native 32/48/88/160/220px rasterization, antialiasing, clipping, 10,000 cached frames and texture replacement.");
  }
 }'''
 
@@ -111,14 +143,17 @@ with tempfile.TemporaryDirectory(prefix='ember-start-menu-') as temp:
     temp=Path(temp);sources=temp/'src';out=temp/'classes'
     for name,body in stubs.items():
         path=sources/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body,encoding='utf-8')
-    for name in ['gui/screens/EmberTitleScreen','utils/render/StartMenuLayout','utils/render/EmberMenuWallpaper','utils/render/EmberMenuFont']:
+    for name in ['gui/screens/EmberTitleScreen','utils/render/StartMenuLayout','utils/render/EmberMenuWallpaper','utils/render/EmberMenuFont','utils/render/EmberClockText']:
         path=sources/(P+name+'.java');path.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/'src/main/java'/(P+name+'.java'),path)
     (sources/'StartMenuChecks.java').write_text(HARNESS,encoding='utf-8')
+    (sources/'ClockFontChecks.java').write_text(CLOCK_HARNESS,encoding='utf-8')
     result=subprocess.run([str(JAVA/'javac'),'-encoding','UTF-8','-d',str(out),*map(str,sources.rglob('*.java'))],capture_output=True,text=True)
     if result.returncode:
         print(result.stderr)
         raise SystemExit(result.returncode)
-    subprocess.run([str(JAVA/'java'),'-cp',str(out),'StartMenuChecks',str(ROOT/'build/start-menu')],check=True)
+    java=[str(JAVA/'java'),'-Djava.awt.headless=true',f'-Dtest.fonts={ROOT / "src/main/resources/assets/ember-client/fonts"}','-cp',str(out)]
+    subprocess.run([*java,'StartMenuChecks',str(ROOT/'build/start-menu')],check=True)
+    subprocess.run([*java,'meteordevelopment.meteorclient.utils.render.ClockFontChecks',str(ROOT/'build/start-menu')],check=True)
 for name in ['chrome','midnight']:
     image=ROOT/f'src/main/resources/assets/ember-client/textures/menu/{name}.png'
     assert image.read_bytes()[:8]==b'\x89PNG\r\n\x1a\n',f'Missing bundled wallpaper: {name}'
