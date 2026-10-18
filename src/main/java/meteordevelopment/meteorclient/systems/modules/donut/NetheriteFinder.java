@@ -306,7 +306,7 @@ public class NetheriteFinder extends Module {
     private void addDebris(BlockPos pos) {
         if (realDebris.size() < 400 && !realDebris.contains(pos)) {
             MeteorClient.LOG.info("[Ember Netherite] Real debris at {} (seed says {})", pos.toShortString(),
-                seedSet && largeIndex >= 0 && explained(seedValue, List.of(pos), largeIndex, smallIndex) > 0 ? "yes" : "no");
+                seedSet && largeIndex >= 0 && explained(seedValue, List.of(pos), largeIndex + indexShift, smallIndex + indexShift) > 0 ? "yes" : "no");
         }
         if (realDebris.size() < 400 && realDebris.add(pos) && debrisState != DEBRIS_SEARCHING) {
             // New evidence: look again, unless the seed was already proven.
@@ -319,8 +319,8 @@ public class NetheriteFinder extends Module {
         Long found = foundSeed;
         if (found != null) {
             foundSeed = null;
-            MeteorClient.LOG.info("[Ember Netherite] Seed corrected from the debris you've seen: {}", found);
-            EmberNotificationsHud.push("Netherite finder", "Seed fixed from the debris you've seen: " + found, EmberNotificationsHud.GOOD);
+            MeteorClient.LOG.info("[Ember Netherite] Seed corrected: {}", found);
+            EmberNotificationsHud.push("Netherite finder", "Seed fixed: " + found, EmberNotificationsHud.GOOD);
             seed.set(String.valueOf(found));
             return;
         }
@@ -329,11 +329,16 @@ public class NetheriteFinder extends Module {
             MeteorClient.LOG.info("[Ember Netherite] No seed with these low 48 bits explains the {} debris seen: ore placement isn't from the seed here", realDebris.size());
             EmberNotificationsHud.push("Netherite finder", "This server's debris doesn't follow the world seed", EmberNotificationsHud.BAD);
         }
-        if (seedState != SEED_GOOD || debrisState != DEBRIS_UNKNOWN || realDebris.size() < NEED_DEBRIS) return;
+        if (seedState != SEED_GOOD || debrisState != DEBRIS_UNKNOWN) return;
+        // No debris in view (DonutSMP's anti-xray hides every block of it): prove the seed from magma veins.
+        if (realDebris.size() < 3) {
+            checkVeins();
+            return;
+        }
 
         List<BlockPos> seen = List.copyOf(realDebris);
         checkedCount = seen.size();
-        explainedCount = explained(seedValue, seen, largeIndex, smallIndex);
+        explainedCount = explained(seedValue, seen, largeIndex + indexShift, smallIndex + indexShift);
         if (explainedCount >= NEED_DEBRIS && explainedCount * 10 >= checkedCount * 6) {
             debrisState = DEBRIS_GOOD;
             MeteorClient.LOG.info("[Ember Netherite] Seed {} confirmed: {} of {} debris seen sit where it says", seedValue, explainedCount, checkedCount);
@@ -346,7 +351,7 @@ public class NetheriteFinder extends Module {
         debrisState = DEBRIS_SEARCHING;
         searchFailed = false;
         long low = seedValue & 0xFFFF_FFFF_FFFFL;
-        int large = largeIndex, small = smallIndex;
+        int large = largeIndex + indexShift, small = smallIndex + indexShift;
         EmberNotificationsHud.push("Netherite finder", "Debris doesn't match yet: fixing the seed from what you've seen", EmberNotificationsHud.WARN);
         worker.submit(() -> {
             int need = Math.max(NEED_DEBRIS, (int) Math.ceil(seen.size() * 0.6));
@@ -359,6 +364,146 @@ public class NetheriteFinder extends Module {
             }
             searchFailed = true;
         });
+    }
+
+    // Magma veins: placed by the same seeded random as the debris, in every nether biome, and never hidden by
+    // anti-xray. Four per chunk, size 33, Y 27-36, replacing netherrack.
+
+    private static int magmaIndex = -1;
+    private long veinCheckAt;
+    /** Index shift found by the vein search: a server on another version can list the features differently. */
+    private static int indexShift;
+
+    private static final byte V_UNKNOWN = 0, V_NETHERRACK = 1, V_MAGMA = 2, V_OTHER = 3;
+    private static final int VEIN_Y0 = 18, VEIN_Y1 = 46;
+
+    private void checkVeins() {
+        if (magmaIndex < 0 || ticks - veinCheckAt < 100) return;
+        veinCheckAt = ticks;
+
+        // Chunks near you with plenty of magma in the vein band, read into plain arrays for the worker.
+        ChunkPos here = mc.player.getChunkPos();
+        List<long[]> picked = new ArrayList<>();
+        Long2ObjectOpenHashMap<byte[]> blocks = new Long2ObjectOpenHashMap<>();
+        for (int dx = -6; dx <= 6 && picked.size() < 8; dx++) {
+            for (int dz = -6; dz <= 6 && picked.size() < 8; dz++) {
+                if (!(mc.world.getChunk(here.x + dx, here.z + dz, ChunkStatus.FULL, false) instanceof WorldChunk chunk)) continue;
+                long key = chunk.getPos().toLong();
+                if (ticks - arrived.getOrDefault(key, ticks) < 60) continue;
+                byte[] column = snapshot(chunk);
+                int magma = 0;
+                for (byte b : column) if (b == V_MAGMA) magma++;
+                blocks.put(key, column);
+                if (magma >= 12) picked.add(new long[] {chunk.getPos().x, chunk.getPos().z});
+            }
+        }
+        // Veins reach a few blocks into the next chunk, so read the ring around the picked ones too.
+        for (long[] c : picked) {
+            for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
+                long key = ChunkPos.toLong((int) c[0] + dx, (int) c[1] + dz);
+                if (blocks.containsKey(key)) continue;
+                if (mc.world.getChunk((int) c[0] + dx, (int) c[1] + dz, ChunkStatus.FULL, false) instanceof WorldChunk chunk) blocks.put(key, snapshot(chunk));
+            }
+        }
+        if (picked.size() < 6) return;
+
+        long current = seedValue;
+        int[] score = veinScore(current, picked, blocks, magmaIndex + indexShift);
+        MeteorClient.LOG.info("[Ember Netherite] Magma veins in {} chunks: seed {} puts {} of {} vein centers on magma", picked.size(), current, score[0], score[0] + score[1]);
+        if (veinMatch(score)) {
+            debrisState = DEBRIS_GOOD;
+            EmberNotificationsHud.push("Netherite finder", "Seed confirmed by the magma veins around you", EmberNotificationsHud.GOOD);
+            return;
+        }
+
+        debrisState = DEBRIS_SEARCHING;
+        searchFailed = false;
+        long low = current & 0xFFFF_FFFF_FFFFL;
+        int baseMagma = magmaIndex;
+        EmberNotificationsHud.push("Netherite finder", "Fixing the seed from the magma veins around you...", EmberNotificationsHud.WARN);
+        worker.submit(() -> {
+            long start = System.currentTimeMillis();
+            for (int shift : new int[] {0, -1, 1, -2, 2, -3, 3}) {
+                for (long hi = 0; hi < 65536; hi++) {
+                    long candidate = low | (hi << 48);
+                    if (veinMatch(veinScore(candidate, picked, blocks, baseMagma + shift))) {
+                        MeteorClient.LOG.info("[Ember Netherite] Vein search: seed {} with index shift {} after {} ms", candidate, shift, System.currentTimeMillis() - start);
+                        indexShift = shift;
+                        foundSeed = candidate;
+                        return;
+                    }
+                }
+            }
+            MeteorClient.LOG.info("[Ember Netherite] Vein search: no seed with these low 48 bits fits the magma veins ({} ms)", System.currentTimeMillis() - start);
+            searchFailed = true;
+        });
+    }
+
+    private static boolean veinMatch(int[] score) {
+        // The right seed put every vein center on magma in testing; a lucky wrong one stays far below 90%.
+        return score[0] >= 60 && score[0] * 10 >= (score[0] + score[1]) * 9;
+    }
+
+    private static byte[] snapshot(WorldChunk chunk) {
+        byte[] out = new byte[16 * 16 * (VEIN_Y1 - VEIN_Y0 + 1)];
+        BlockPos.Mutable pos = new BlockPos.Mutable();
+        int x0 = chunk.getPos().getStartX(), z0 = chunk.getPos().getStartZ(), i = 0;
+        for (int y = VEIN_Y0; y <= VEIN_Y1; y++) {
+            for (int x = 0; x < 16; x++) {
+                for (int z = 0; z < 16; z++) {
+                    BlockState state = chunk.getBlockState(pos.set(x0 + x, y, z0 + z));
+                    out[i++] = state.isOf(Blocks.MAGMA_BLOCK) ? V_MAGMA : state.isOf(Blocks.NETHERRACK) ? V_NETHERRACK : V_OTHER;
+                }
+            }
+        }
+        return out;
+    }
+
+    private static byte at(Long2ObjectOpenHashMap<byte[]> blocks, int x, int y, int z) {
+        if (y < VEIN_Y0 || y > VEIN_Y1) return V_UNKNOWN;
+        byte[] column = blocks.get(ChunkPos.toLong(x >> 4, z >> 4));
+        if (column == null) return V_UNKNOWN;
+        return column[((y - VEIN_Y0) * 16 + (x & 15)) * 16 + (z & 15)];
+    }
+
+    /**
+     * Where this seed's magma veins run through the picked chunks, checked against what is there: OreFeature's
+     * draws in the game's order (square, height, angle, the two end heights, then one size per sphere).
+     *
+     * @return {vein centers on magma, vein centers on netherrack}
+     */
+    private static int[] veinScore(long worldSeed, List<long[]> chunks, Long2ObjectOpenHashMap<byte[]> blocks, int index) {
+        ChunkRandom random = new ChunkRandom(new Xoroshiro128PlusPlusRandom(0));
+        int hits = 0, misses = 0;
+        for (long[] c : chunks) {
+            int cx = (int) c[0], cz = (int) c[1];
+            long population = random.setPopulationSeed(worldSeed, cx << 4, cz << 4);
+            random.setDecoratorSeed(population, index, STEP);
+            int chunkHits = 0, chunkMisses = 0;
+            for (int copy = 0; copy < 4; copy++) {
+                int x = random.nextInt(16) + (cx << 4);
+                int z = random.nextInt(16) + (cz << 4);
+                int y = MathHelper.nextBetween(random, 27, 36);
+                float f = random.nextFloat() * (float) Math.PI;
+                float g = 33 / 8.0F;
+                double sx = x + Math.sin(f) * g, ex = x - Math.sin(f) * g, sz = z + Math.cos(f) * g, ez = z - Math.cos(f) * g;
+                double sy = y + random.nextInt(3) - 2, ey = y + random.nextInt(3) - 2;
+                for (int k = 0; k < 33; k++) {
+                    float t = (float) k / 33;
+                    double size = random.nextDouble() * 33 / 16.0;
+                    double radius = ((MathHelper.sin((float) Math.PI * t) + 1.0F) * size + 1.0) / 2.0;
+                    if (radius < 0.7) continue;
+                    byte b = at(blocks, MathHelper.floor(MathHelper.lerp(t, sx, ex)), MathHelper.floor(MathHelper.lerp(t, sy, ey)), MathHelper.floor(MathHelper.lerp(t, sz, ez)));
+                    if (b == V_MAGMA) chunkHits++;
+                    else if (b == V_NETHERRACK) chunkMisses++;
+                }
+            }
+            hits += chunkHits;
+            misses += chunkMisses;
+            // A wrong seed misses in the first chunk already: stop early, it keeps the search fast.
+            if (hits == 0 && misses > 15) return new int[] {0, misses};
+        }
+        return new int[] {hits, misses};
     }
 
     /** How many of the debris positions this seed generates. */
@@ -399,7 +544,7 @@ public class NetheriteFinder extends Module {
      * @return x, y, z of every spot, before the terrain decides which ones actually took
      */
     static int[] predict(long worldSeed, int chunkX, int chunkZ) {
-        return predict(worldSeed, chunkX, chunkZ, largeIndex, smallIndex);
+        return predict(worldSeed, chunkX, chunkZ, largeIndex + indexShift, smallIndex + indexShift);
     }
 
     static int[] predict(long worldSeed, int chunkX, int chunkZ, int large, int small) {
@@ -448,7 +593,8 @@ public class NetheriteFinder extends Module {
             PlacedFeatureIndexer.IndexedFeatures step = steps.get(STEP);
             largeIndex = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacedFeatures.ORE_ANCIENT_DEBRIS_LARGE).value());
             smallIndex = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacedFeatures.ORE_DEBRIS_SMALL).value());
-            MeteorClient.LOG.info("[Ember Netherite] Debris features at decoration step {}: large {}, small {}", STEP, largeIndex, smallIndex);
+            magmaIndex = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacedFeatures.ORE_MAGMA).value());
+            MeteorClient.LOG.info("[Ember Netherite] Features at decoration step {}: debris large {}, small {}; magma {}", STEP, largeIndex, smallIndex, magmaIndex);
             return largeIndex >= 0 && smallIndex >= 0;
         } catch (Throwable t) {
             error = "couldn't read the game's world generation";
