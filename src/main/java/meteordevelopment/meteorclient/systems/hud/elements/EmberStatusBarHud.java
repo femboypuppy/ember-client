@@ -15,6 +15,7 @@ import meteordevelopment.meteorclient.utils.render.EmberStrip;
 import meteordevelopment.meteorclient.utils.render.EmberAppearance;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.EmberLogo;
+import meteordevelopment.meteorclient.utils.render.EmberRainStatus;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import net.minecraft.util.Identifier;
@@ -55,6 +56,7 @@ public class EmberStatusBarHud extends HudElement {
         .visible(EmberAppearance::liquid)
         .build());
     private float glassIntro;
+    private float rainReveal;
     private double glassWidth;
     private double logoTime;
     private final Setting<Boolean> animateLogo = sgGeneral.add(new BoolSetting.Builder()
@@ -196,6 +198,8 @@ public class EmberStatusBarHud extends HudElement {
         if (showClock.get()) {
             segments.add(new EmberStrip.Segment(EmberIcons.Glyph.CLOCK, LocalTime.now().format(CLOCK)));
         }
+        if (EmberRainStatus.indicatorVisible())
+            segments.add(new EmberStrip.Segment(EmberIcons.Glyph.RAIN, EmberRainStatus.ending() ? "Easing" : "Rain"));
 
         // Every figure eases toward its reading, so the bar counts rather than flickers.
         if (showPing.get()) {
@@ -301,6 +305,18 @@ public class EmberStatusBarHud extends HudElement {
         } else cx -= gap;
 
         double lyricHeight = h;
+        rainReveal = EmberAnim.approach(rainReveal, EmberRainStatus.indicatorVisible() ? 1 : 0, dt,
+            motion == 0 ? 0 : .1 / motion);
+        if (rainReveal > .01) {
+            double fade = rainReveal * glassIntro;
+            double ry = by - (1 - rainReveal) * 4 * s;
+            cx += gap;
+            EmberStrip.panel(renderer, cx, ry, h, h, radius, fade);
+            double icon = 15 * s;
+            EmberIcons.draw(renderer, EmberIcons.Glyph.RAIN, cx + (h - icon) / 2, ry + (h - icon) / 2,
+                icon, new Color(accent.r, accent.g, accent.b, (int) (255 * fade)), EmberStrip.background());
+            cx += h;
+        }
         if (meteordevelopment.meteorclient.systems.config.Config.get().lyricsEnabled.get()) {
             var lyrics = meteordevelopment.meteorclient.utils.render.LyricsPill.render(renderer, cx + gap, by, h, s, glassIntro,
                 mc.getWindow().getFramebufferWidth() - cx - gap - 10 * s);

@@ -42,6 +42,9 @@ jobs:
       - name: Check startup menu
         run: python3 scripts/check_start_menu.py
 
+      - name: Check rain status and settings categories
+        run: python3 scripts/check_rain_status.py
+
       - name: Check music bridge and artwork lifecycle
         run: python3 scripts/check_music_connection.py
 

@@ -49,6 +49,8 @@ public final class EmberIcons {
         WARNING,
         /** A notification bell. */
         BELL,
+        /** A cloud with falling raindrops. */
+        RAIN,
         /** Draws nothing and takes no room. */
         NONE
     }
@@ -76,6 +78,7 @@ public final class EmberIcons {
             case INFO -> info(r, x, y, size, color, bg);
             case WARNING -> warning(r, x, y, size, color, bg);
             case BELL -> bell(r, x, y, size, color);
+            case RAIN -> rain(r, x, y, size, color);
             case NONE -> {
             }
         }
@@ -222,5 +225,16 @@ public final class EmberIcons {
         r.roundedQuad(x + s * 0.20, y + s * 0.36, s * 0.60, s * 0.36, s * 0.08, c);
         r.roundedQuad(x + s * 0.08, y + s * 0.62, s * 0.84, s * 0.14, s * 0.07, c);
         circle(r, x + s * 0.40, y + s * 0.80, s * 0.20, c);
+    }
+
+    private static void rain(HudRenderer r, double x, double y, double s, Color c) {
+        circle(r, x + s * .12, y + s * .22, s * .38, c);
+        circle(r, x + s * .34, y + s * .08, s * .48, c);
+        circle(r, x + s * .63, y + s * .24, s * .29, c);
+        r.roundedQuad(x + s * .15, y + s * .36, s * .72, s * .23, s * .1, c);
+        for (int i = 0; i < 3; i++) {
+            double dx = x + (.29 + i * .22) * s;
+            stroke(r, dx, y + s * .69, dx - s * .07, y + s * .89, s * .065, c);
+        }
     }
 }

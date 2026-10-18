@@ -1,6 +1,6 @@
 # Atmosphere and bass reaction
 
-Open **Gear → Appearance**. Atmosphere controls are grouped into **World atmosphere**, **World lighting**, **Stars & haze**, and **Bass reaction**.
+Open **Gear**. Atmosphere controls have separate **Atmosphere**, **World lighting**, **Stars & meteors**, **Weather**, and **Bass reaction** pages.
 
 ## Lighting
 

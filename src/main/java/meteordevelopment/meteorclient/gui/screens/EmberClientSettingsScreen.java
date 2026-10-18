@@ -42,6 +42,13 @@ import static org.lwjgl.glfw.GLFW.*;
 public class EmberClientSettingsScreen extends WidgetScreen {
     public enum Page {
         Appearance("Appearance", "Surfaces, accent colors and glass"),
+        StartMenu("Start menu", "Wallpaper, clock and menu style"),
+        Atmosphere("Atmosphere", "Menu ambience, sky and horizon glow"),
+        Stars("Stars & meteors", "Stars, motes, constellations and shooting stars"),
+        Lighting("World lighting", "Daylight, foliage color and ground glow"),
+        Weather("Weather", "Rain alerts, local weather, wind and fog"),
+        Effects("Effects", "Movement, water wakes, placements and block breaks"),
+        Bass("Bass reaction", "Spotify bass and visual reactions"),
         Typography("Typography", "Choose a readable font for Ember"),
         Widgets("HUD widgets", "Choose what appears in your game"),
         Music("Music & lyrics", "Players, vocals and synchronization");
@@ -56,9 +63,12 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     private final Map<String, Float> animations = new HashMap<>();
     private final Map<Setting<String>, Double> fieldPositions = new HashMap<>();
     private final EmberAnim.Clock clock = new EmberAnim.Clock();
+    private final GuiRenderer renderer = new GuiRenderer();
     private Page page;
     private double px, py, pw, ph, mx, my, contentX, contentY, contentW, viewportH;
     private double scroll, scrollTarget, contentHeight, pageFade = 1;
+    private double navScroll, navScrollTarget, navTop, navViewportH;
+    private double lastNavViewportH = -1;
     private String dragging;
     private Setting<String> editing;
     private String editBuffer = "";
@@ -76,6 +86,13 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         if (page == next) return;
         commitField(); dragging = null; confirmReset = false;
         page = next; scroll = scrollTarget = contentHeight = 0; pageFade = 0;
+        revealCategory();
+    }
+
+    private void revealCategory() {
+        double top = page.ordinal() * 40;
+        if (top < navScrollTarget) navScrollTarget = top;
+        if (top + 36 > navScrollTarget + navViewportH) navScrollTarget = top + 36 - navViewportH;
     }
 
     @Override protected void onRenderBefore(DrawContext graphics, float delta) {
@@ -84,11 +101,15 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         pw = Math.min(760, getWindowWidth() - 32); ph = Math.min(600, getWindowHeight() - 32);
         px = (getWindowWidth() - pw) / 2.0; py = (getWindowHeight() - ph) / 2.0;
         contentX = px + NAV + 24; contentY = py + 104; contentW = pw - NAV - 48; viewportH = ph - 132;
+        navTop = py + 94; navViewportH = Math.max(1, ph - 156);
+        if (lastNavViewportH != navViewportH) { revealCategory(); lastNavViewportH = navViewportH; }
+        navScrollTarget = Math.clamp(navScrollTarget, 0, Math.max(0, Page.values().length * 40 - navViewportH));
+        navScroll = EmberAnim.approach(navScroll, navScrollTarget, dt, .065);
         scrollTarget = Math.clamp(scrollTarget, 0, Math.max(0, contentHeight - viewportH));
         scroll = EmberAnim.approach(scroll, scrollTarget, dt, 0.065);
         hits.clear(); fieldPositions.clear();
         meteordevelopment.meteorclient.utils.render.EmberAtmosphere.background(graphics, theme, getWindowWidth(), getWindowHeight(), mx, my, openFade, 145);
-        GuiRenderer r = new GuiRenderer(); r.theme = theme; r.begin(graphics);
+        GuiRenderer r = renderer; r.theme = theme; r.begin(graphics);
         EmberUI.shadow(r, px, py, pw, ph, (float) openFade);
         EmberUI.rim(r, px, py, pw, ph, 14, (float) openFade);
         r.roundedRect(px, py, pw, ph, 14, EmberUI.bg());
@@ -96,14 +117,22 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         r.roundedRect(px + 9, py + 9, NAV - 10, ph - 18, 9, EmberUI.raised());
         label(r, "EMBER", px + 24, py + 26, 1.04, EmberUI.TEXT, NAV - 40);
         label(r, "CLIENT SETTINGS", px + 24, py + 51, 0.58, EmberUI.TEXT_DIM, NAV - 40);
-        double ny = py + 100;
+        r.scissorStart(px + 16, navTop, NAV - 24, navViewportH);
+        double ny = navTop - navScroll;
         for (Page option : Page.values()) {
             boolean selected = page == option;
-            double hover = anim("nav-" + option, selected || hovered(px + 17, ny, NAV - 26, 42) ? 1 : 0, dt);
-            if (hover > 0.01) r.roundedRect(px + 17, ny, NAV - 26, 42, 7, accent((int) ((selected ? 44 : 20) * hover)));
-            if (selected) r.roundedRect(px + 17, ny + 12, 3, 18, 1.5, EmberPalette.accent());
-            label(r, option.title, px + 29, ny + 12, 0.81, selected ? EmberUI.TEXT : EmberUI.TEXT_DIM, NAV - 45);
-            hits.add(new Hit(px + 17, ny, NAV - 26, 42, () -> selectPage(option))); ny += 48;
+            double hover = anim("nav-" + option, selected || hovered(px + 17, ny, NAV - 26, 36) ? 1 : 0, dt);
+            if (hover > 0.01) r.roundedRect(px + 17, ny, NAV - 26, 36, 7, accent((int) ((selected ? 44 : 20) * hover)));
+            if (selected) r.roundedRect(px + 17, ny + 10, 3, 16, 1.5, EmberPalette.accent());
+            label(r, option.title, px + 29, ny + 9, 0.78, selected ? EmberUI.TEXT : EmberUI.TEXT_DIM, NAV - 45);
+            if (ny >= navTop && ny + 36 <= navTop + navViewportH)
+                hits.add(new Hit(px + 17, ny, NAV - 26, 36, () -> selectPage(option)));
+            ny += 40;
+        }
+        r.scissorEnd();
+        if (Page.values().length * 40 > navViewportH) {
+            double thumb = Math.max(18, navViewportH * navViewportH / (Page.values().length * 40));
+            r.roundedRect(px + NAV - 9, navTop + (navViewportH - thumb) * navScroll / Math.max(1, Page.values().length * 40 - navViewportH), 2, thumb, 1, accent(100));
         }
         label(r, "Changes save automatically", px + 24, py + ph - 45, 0.53, EmberUI.TEXT_DIM, NAV - 36);
         label(r, page.title, contentX, py + 24, 1.2, EmberUI.TEXT, contentW - 30);
@@ -115,6 +144,13 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         double start = contentY - scroll + (1 - pageFade) * 6;
         double end = switch (page) {
             case Appearance -> appearance(r, start, dt);
+            case StartMenu -> startMenu(r, start, dt);
+            case Atmosphere -> atmosphere(r, start, dt);
+            case Stars -> stars(r, start, dt);
+            case Lighting -> lighting(r, start, dt);
+            case Weather -> weather(r, start, dt);
+            case Effects -> effects(r, start, dt);
+            case Bass -> bass(r, start, dt);
             case Typography -> typography(r, start, dt);
             case Widgets -> widgets(r, start, dt);
             case Music -> music(r, start, dt);
@@ -133,15 +169,6 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     }
 
     private double appearance(GuiRenderer r, double y, double dt) {
-        y = section(r, y, "START MENU", "A clock-first lock screen, or the classic Minecraft menu.");
-        double menuW = contentW / 2;
-        for (var style : StartMenuLayout.Style.values()) action(r, contentX + style.ordinal() * menuW, y, menuW - 5, 34,
-            style.toString(), () -> Config.get().startMenu.set(style), Config.get().startMenu.get() == style, dt);
-        y += 46;
-        for (var wallpaper : StartMenuLayout.Wallpaper.values()) action(r, contentX + wallpaper.ordinal() * menuW, y, menuW - 5, 34,
-            wallpaper.name() + " wallpaper", () -> Config.get().startWallpaper.set(wallpaper), Config.get().startWallpaper.get() == wallpaper, dt);
-        y += 46;
-        y = toggle(r, y, "24-hour menu clock", "Use a 24-hour clock on the startup screen.", Config.get().startClock24.get(), () -> Config.get().startClock24.set(!Config.get().startClock24.get()), dt);
         y = section(r, y, "SURFACE STYLE", "Choose the material used across menus and HUD.");
         EmberAppearance[] options = EmberAppearance.values();
         double gap = 8, cardW = (contentW - gap * (options.length - 1)) / options.length;
@@ -173,8 +200,36 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = toggle(r, y, "Match song artwork", "Use the cover's dominant color across the whole client.", Config.get().songAccent.get(),
             () -> Config.get().songAccent.set(!Config.get().songAccent.get()), dt);
         y += 12;
-        y = section(r, y, "ATMOSPHERE", "Celestial light and stars follow your accent or song artwork.");
+        y += 12;
+        if (EmberAppearance.frosted()) {
+            y = section(r, y, "GLASS DETAILS", "Fine-tune the surface against your game background.");
+            Config c = Config.get();
+            y = slider(r, y, "Opacity", c.glass.get(), percent(c.glass.get()), c.glass::set, dt);
+            y = slider(r, y, "Blur", c.glassBlur.get(), percent(c.glassBlur.get()), c.glassBlur::set, dt);
+            y = slider(r, y, "Refraction", c.glassLiquid.get(), percent(c.glassLiquid.get()), c.glassLiquid::set, dt);
+            y = slider(r, y, "Lightness", c.glassTint.get(), percent(c.glassTint.get()), c.glassTint::set, dt);
+            y = toggle(r, y, "Accent tint", "Blend your accent color into the glass.", c.glassAccent.get(), () -> c.glassAccent.set(!c.glassAccent.get()), dt);
+            if (EmberAppearance.liquid()) y = slider(r, y, "Animation speed", c.liquidMotion.get() / 2, percent(c.liquidMotion.get()), v -> c.liquidMotion.set(v * 2), dt);
+        }
+        return y;
+    }
+
+    private double startMenu(GuiRenderer r, double y, double dt) {
+        y = section(r, y, "START MENU", "A clock-first lock screen, or the classic Minecraft menu.");
+        double menuW = contentW / 2;
+        for (var style : StartMenuLayout.Style.values()) action(r, contentX + style.ordinal() * menuW, y, menuW - 5, 34,
+            style.toString(), () -> Config.get().startMenu.set(style), Config.get().startMenu.get() == style, dt);
+        y += 46;
+        for (var wallpaper : StartMenuLayout.Wallpaper.values()) action(r, contentX + wallpaper.ordinal() * menuW, y, menuW - 5, 34,
+            wallpaper.name() + " wallpaper", () -> Config.get().startWallpaper.set(wallpaper), Config.get().startWallpaper.get() == wallpaper, dt);
+        y += 46;
+        y = toggle(r, y, "24-hour menu clock", "Use a 24-hour clock on the startup screen.", Config.get().startClock24.get(), () -> Config.get().startClock24.set(!Config.get().startClock24.get()), dt);
+        return y;
+    }
+
+    private double atmosphere(GuiRenderer r, double y, double dt) {
         Config ambience = Config.get();
+        y = section(r, y, "ATMOSPHERE", "Celestial light and stars follow your accent or song artwork.");
         y = toggle(r, y, "Atmospheric ambience", "A subtle aurora and drifting starlight behind the menu.", ambience.ambience.get(), () -> ambience.ambience.set(!ambience.ambience.get()), dt);
         y = slider(r, y, "Intensity", ambience.ambienceIntensity.get(), percent(ambience.ambienceIntensity.get()), ambience.ambienceIntensity::set, dt);
         y = slider(r, y, "Star density", ambience.ambienceDensity.get(), percent(ambience.ambienceDensity.get()), ambience.ambienceDensity::set, dt);
@@ -193,22 +248,15 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         if (ambience.horizonGlow.get()) {
             y = slider(r, y, "Horizon brightness", ambience.horizonStrength.get(), percent(ambience.horizonStrength.get()), ambience.horizonStrength::set, dt);
             y = slider(r, y, "Horizon band width", (ambience.horizonWidth.get() - .025) / .275, String.format("%.0f°", Math.toDegrees(Math.atan(ambience.horizonWidth.get()))), v -> ambience.horizonWidth.set(.025 + v * .275), dt);
-            y = toggle(r, y, "Slow Spotify pulses", "Requires React to Spotify below. Smooth pulses only affect the horizon band.", ambience.horizonBass.get(), () -> ambience.horizonBass.set(!ambience.horizonBass.get()), dt);
+            y = toggle(r, y, "Slow Spotify pulses", "Enable React to Spotify in Bass reaction. Smooth pulses only affect the horizon band.", ambience.horizonBass.get(), () -> ambience.horizonBass.set(!ambience.horizonBass.get()), dt);
             y = slider(r, y, "Horizon pulse strength", ambience.horizonPulse.get(), percent(ambience.horizonPulse.get()), ambience.horizonPulse::set, dt);
         }
-        y = section(r, y, "WORLD LIGHTING", "Balanced keeps terrain readable; Cinematic deepens the shadows.");
-        double presetW = contentW / 3;
-        action(r, contentX, y, presetW - 5, 34, "Vanilla", () -> lightingPreset(0), false, dt);
-        action(r, contentX + presetW, y, presetW - 5, 34, "Balanced", () -> lightingPreset(1), false, dt);
-        action(r, contentX + presetW * 2, y, presetW - 5, 34, "Cinematic", () -> lightingPreset(2), false, dt);
-        y += 46;
-        y = toggle(r, y, "Match world lighting", "Accent-colored daylight on blocks and entities, including during daytime.", ambience.worldLighting.get(), () -> ambience.worldLighting.set(!ambience.worldLighting.get()), dt);
-        y = slider(r, y, "Vanilla light mix", ambience.vanillaLightMix.get(), percent(ambience.vanillaLightMix.get()), ambience.vanillaLightMix::set, dt);
-        y = slider(r, y, "Daylight brightness", (ambience.daylightBrightness.get() - 0.2) / 1.4, percent(ambience.daylightBrightness.get()), v -> ambience.daylightBrightness.set(0.2 + v * 1.4), dt);
-        y = slider(r, y, "World darkness", ambience.worldDarkness.get(), percent(ambience.worldDarkness.get()), ambience.worldDarkness::set, dt);
-        y = slider(r, y, "Light color strength", ambience.worldLightTint.get(), percent(ambience.worldLightTint.get()), ambience.worldLightTint::set, dt);
-        y = slider(r, y, "Foliage color balance", ambience.foliageBalance.get(), percent(ambience.foliageBalance.get()), ambience.foliageBalance::set, dt);
-        y = section(r, y, "STARS & HAZE", "Control distant starlight and nearby floating particles separately.");
+        return y;
+    }
+
+    private double stars(GuiRenderer r, double y, double dt) {
+        Config ambience = Config.get();
+        y = section(r, y, "STARS & MOTES", "Control distant starlight and nearby floating particles separately.");
         y = toggle(r, y, "Sky stars", "Distant stars in the world sky.", ambience.worldStars.get(), () -> ambience.worldStars.set(!ambience.worldStars.get()), dt);
         y = toggle(r, y, "Floating motes", "Nearby drifting starlight with depth and terrain occlusion.", ambience.worldMotes.get(), () -> ambience.worldMotes.set(!ambience.worldMotes.get()), dt);
         y = slider(r, y, "Star brightness", ambience.starBrightness.get() / 2, percent(ambience.starBrightness.get()), v -> ambience.starBrightness.set(v * 2), dt);
@@ -223,13 +271,38 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             y = slider(r, y, "Meteor brightness", ambience.meteorBrightness.get(), percent(ambience.meteorBrightness.get()), ambience.meteorBrightness::set, dt);
             y = slider(r, y, "Meteor trail length", (ambience.meteorTrail.get() - .1) / .9, percent(ambience.meteorTrail.get()), v -> ambience.meteorTrail.set(.1 + v * .9), dt);
         }
-        y = toggle(r, y, "Accent fog", "Tint distant haze while keeping nearby blocks readable.", ambience.accentFog.get(), () -> ambience.accentFog.set(!ambience.accentFog.get()), dt);
-        y = slider(r, y, "Fog density", ambience.fogAmount.get(), percent(ambience.fogAmount.get()), ambience.fogAmount::set, dt);
-        y = slider(r, y, "Fog start", ambience.fogStart.get() / 512, String.format("%.0f blocks", ambience.fogStart.get()), v -> {
-            ambience.fogStart.set(v * 512);
-            if (ambience.fogEnd.get() < ambience.fogStart.get() + 8) ambience.fogEnd.set(ambience.fogStart.get() + 8);
-        }, dt);
-        y = slider(r, y, "Fog end", (ambience.fogEnd.get() - 16) / 1008, String.format("%.0f blocks", ambience.fogEnd.get()), v -> ambience.fogEnd.set(Math.max(ambience.fogStart.get() + 8, 16 + v * 1008)), dt);
+        return y;
+    }
+
+    private double lighting(GuiRenderer r, double y, double dt) {
+        Config ambience = Config.get();
+        y = section(r, y, "WORLD LIGHTING", "Balanced keeps terrain readable; Cinematic deepens the shadows.");
+        double presetW = contentW / 3;
+        action(r, contentX, y, presetW - 5, 34, "Vanilla", () -> lightingPreset(0), false, dt);
+        action(r, contentX + presetW, y, presetW - 5, 34, "Balanced", () -> lightingPreset(1), false, dt);
+        action(r, contentX + presetW * 2, y, presetW - 5, 34, "Cinematic", () -> lightingPreset(2), false, dt);
+        y += 46;
+        y = toggle(r, y, "Match world lighting", "Accent-colored daylight on blocks and entities, including during daytime.", ambience.worldLighting.get(), () -> ambience.worldLighting.set(!ambience.worldLighting.get()), dt);
+        y = slider(r, y, "Vanilla light mix", ambience.vanillaLightMix.get(), percent(ambience.vanillaLightMix.get()), ambience.vanillaLightMix::set, dt);
+        y = slider(r, y, "Daylight brightness", (ambience.daylightBrightness.get() - 0.2) / 1.4, percent(ambience.daylightBrightness.get()), v -> ambience.daylightBrightness.set(0.2 + v * 1.4), dt);
+        y = slider(r, y, "World darkness", ambience.worldDarkness.get(), percent(ambience.worldDarkness.get()), ambience.worldDarkness::set, dt);
+        y = slider(r, y, "Light color strength", ambience.worldLightTint.get(), percent(ambience.worldLightTint.get()), ambience.worldLightTint::set, dt);
+        y = slider(r, y, "Foliage color balance", ambience.foliageBalance.get(), percent(ambience.foliageBalance.get()), ambience.foliageBalance::set, dt);
+        y = section(r, y, "GROUND LIGHT", "Accent illumination on nearby terrain.");
+        y = toggle(r, y, "Ground lighting", "Soft light on nearby ground, in the current accent color.", ambience.groundLight.get(), () -> ambience.groundLight.set(!ambience.groundLight.get()), dt);
+        y = slider(r, y, "Light brightness", ambience.groundLightIntensity.get(), percent(ambience.groundLightIntensity.get()), ambience.groundLightIntensity::set, dt);
+        y = slider(r, y, "Light radius", (ambience.groundLightRadius.get() - 1.5) / 5.5, String.format("%.1f blocks", ambience.groundLightRadius.get()), v -> ambience.groundLightRadius.set(1.5 + v * 5.5), dt);
+        y = slider(r, y, "Light shimmer", ambience.lightShimmer.get(), percent(ambience.lightShimmer.get()), ambience.lightShimmer::set, dt);
+        return y;
+    }
+
+    private double weather(GuiRenderer r, double y, double dt) {
+        Config ambience = Config.get();
+        y = section(r, y, "RAIN STATUS", "Follows server weather or your selected local rain effect.");
+        y = toggle(r, y, "Rain notifications", "Notify when rain starts, eases off, and stops.", ambience.rainNotifications.get(), () -> ambience.rainNotifications.set(!ambience.rainNotifications.get()), dt);
+        if (ambience.rainNotifications.get())
+            y = toggle(r, y, "Rain ending notification", "Notify as the rain starts fading out. No countdown prediction.", ambience.rainEndingNotification.get(), () -> ambience.rainEndingNotification.set(!ambience.rainEndingNotification.get()), dt);
+        y = toggle(r, y, "Rain status icon", "A small status-bar badge, visible only while rain is active or fading.", ambience.rainStatusIcon.get(), () -> ambience.rainStatusIcon.set(!ambience.rainStatusIcon.get()), dt);
         y = section(r, y, "CUSTOM WEATHER", "Local visual weather, independent of server weather and biome.");
         y = toggle(r, y, "Custom weather", "Wind, roof shelter, splashes and surface impacts. No permanent world changes.", ambience.customWeather.get(), () -> ambience.customWeather.set(!ambience.customWeather.get()), dt);
         if (ambience.customWeather.get()) {
@@ -250,6 +323,19 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             if (ambience.weatherStyle.get() == meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind.Rain)
                 y = toggle(r, y, "Rain sound", "Quieter under nearby roofs and silent deep underground.", ambience.weatherSound.get(), () -> ambience.weatherSound.set(!ambience.weatherSound.get()), dt);
         }
+        y = section(r, y, "FOG & HAZE", "Set nearby clarity and distant haze independently of render distance.");
+        y = toggle(r, y, "Accent fog", "Tint distant haze while keeping nearby blocks readable.", ambience.accentFog.get(), () -> ambience.accentFog.set(!ambience.accentFog.get()), dt);
+        y = slider(r, y, "Fog density", ambience.fogAmount.get(), percent(ambience.fogAmount.get()), ambience.fogAmount::set, dt);
+        y = slider(r, y, "Fog start", ambience.fogStart.get() / 512, String.format("%.0f blocks", ambience.fogStart.get()), v -> {
+            ambience.fogStart.set(v * 512);
+            if (ambience.fogEnd.get() < ambience.fogStart.get() + 8) ambience.fogEnd.set(ambience.fogStart.get() + 8);
+        }, dt);
+        y = slider(r, y, "Fog end", (ambience.fogEnd.get() - 16) / 1008, String.format("%.0f blocks", ambience.fogEnd.get()), v -> ambience.fogEnd.set(Math.max(ambience.fogStart.get() + 8, 16 + v * 1008)), dt);
+        return y;
+    }
+
+    private double effects(GuiRenderer r, double y, double dt) {
+        Config ambience = Config.get();
         y = section(r, y, "MOVEMENT & INTERACTIONS", "Small accent effects that respond to your actions.");
         y = toggle(r, y, "Movement effects", "Footstep sparks, surface water wakes, and nearby leaf/petal movement.", ambience.movementEffects.get(), () -> ambience.movementEffects.set(!ambience.movementEffects.get()), dt);
         if (ambience.movementEffects.get()) {
@@ -265,11 +351,11 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             y = slider(r, y, "Block effect size", (ambience.blockEffectSize.get() - .2) / 1.3, String.format("%.1f blocks", ambience.blockEffectSize.get()), v -> ambience.blockEffectSize.set(.2 + v * 1.3), dt);
             y = slider(r, y, "Block effect fade time", (ambience.blockEffectLifetime.get() - .2) / 1.8, String.format("%.2fs", ambience.blockEffectLifetime.get()), v -> ambience.blockEffectLifetime.set(.2 + v * 1.8), dt);
         }
-        y = section(r, y, "GROUND LIGHT", "Accent illumination on nearby terrain.");
-        y = toggle(r, y, "Ground lighting", "Soft light on nearby ground, in the current accent color.", ambience.groundLight.get(), () -> ambience.groundLight.set(!ambience.groundLight.get()), dt);
-        y = slider(r, y, "Light brightness", ambience.groundLightIntensity.get(), percent(ambience.groundLightIntensity.get()), ambience.groundLightIntensity::set, dt);
-        y = slider(r, y, "Light radius", (ambience.groundLightRadius.get() - 1.5) / 5.5, String.format("%.1f blocks", ambience.groundLightRadius.get()), v -> ambience.groundLightRadius.set(1.5 + v * 5.5), dt);
-        y = slider(r, y, "Light shimmer", ambience.lightShimmer.get(), percent(ambience.lightShimmer.get()), ambience.lightShimmer::set, dt);
+        return y;
+    }
+
+    private double bass(GuiRenderer r, double y, double dt) {
+        Config ambience = Config.get();
         y = section(r, y, "BASS REACTION", meteordevelopment.meteorclient.utils.misc.MusicReactive.status());
         y = toggle(r, y, "React to Spotify", "Spotify desktop audio only. Minecraft and other apps are excluded.", ambience.musicReactive.get(), () -> ambience.musicReactive.set(!ambience.musicReactive.get()), dt);
         if (ambience.musicReactive.get()) {
@@ -289,17 +375,6 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             y = toggle(r, y, "React world lighting", "Apply bass to daylight. Requires Match world lighting.", ambience.bassLighting.get(), () -> ambience.bassLighting.set(!ambience.bassLighting.get()), dt);
             y = toggle(r, y, "React ground light", "Apply bass to colored light on nearby terrain.", ambience.bassGround.get(), () -> ambience.bassGround.set(!ambience.bassGround.get()), dt);
             y = toggle(r, y, "React starlight", "Gently pulse stars and motes on bass hits.", ambience.bassStars.get(), () -> ambience.bassStars.set(!ambience.bassStars.get()), dt);
-        }
-        y += 12;
-        if (EmberAppearance.frosted()) {
-            y = section(r, y, "GLASS DETAILS", "Fine-tune the surface against your game background.");
-            Config c = Config.get();
-            y = slider(r, y, "Opacity", c.glass.get(), percent(c.glass.get()), c.glass::set, dt);
-            y = slider(r, y, "Blur", c.glassBlur.get(), percent(c.glassBlur.get()), c.glassBlur::set, dt);
-            y = slider(r, y, "Refraction", c.glassLiquid.get(), percent(c.glassLiquid.get()), c.glassLiquid::set, dt);
-            y = slider(r, y, "Lightness", c.glassTint.get(), percent(c.glassTint.get()), c.glassTint::set, dt);
-            y = toggle(r, y, "Accent tint", "Blend your accent color into the glass.", c.glassAccent.get(), () -> c.glassAccent.set(!c.glassAccent.get()), dt);
-            if (EmberAppearance.liquid()) y = slider(r, y, "Animation speed", c.liquidMotion.get() / 2, percent(c.liquidMotion.get()), v -> c.liquidMotion.set(v * 2), dt);
         }
         return y;
     }
@@ -506,6 +581,10 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     @Override public boolean mouseReleased(Click click) { dragging = null; return super.mouseReleased(click); }
     @Override public boolean mouseScrolled(double x, double y, double horizontal, double vertical) {
         double sx = x * mc.getWindow().getScaleFactor(), sy = y * mc.getWindow().getScaleFactor();
+        if (sx >= px + 12 && sx < px + NAV && sy >= navTop && sy < navTop + navViewportH) {
+            navScrollTarget = Math.clamp(navScrollTarget - vertical * 40, 0, Math.max(0, Page.values().length * 40 - navViewportH));
+            return true;
+        }
         if (sx >= contentX && sx < px + pw && sy >= contentY && sy < contentY + viewportH) {
             commitField(); dragging = null; scrollTarget = Math.clamp(scrollTarget - vertical * 44, 0, Math.max(0, contentHeight - viewportH));
         }
@@ -513,6 +592,11 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     }
     @Override public boolean keyPressed(KeyInput input) {
         int key = input.key();
+        if (key == GLFW_KEY_TAB && (input.modifiers() & (GLFW_MOD_CONTROL | GLFW_MOD_SUPER)) != 0) {
+            int direction = (input.modifiers() & GLFW_MOD_SHIFT) != 0 ? -1 : 1;
+            selectPage(Page.values()[Math.floorMod(page.ordinal() + direction, Page.values().length)]);
+            return true;
+        }
         if (editing != null) {
             boolean ctrl = (input.modifiers() & (GLFW_MOD_CONTROL | GLFW_MOD_SUPER)) != 0;
             if (key == GLFW_KEY_ESCAPE) { editing = null; editBuffer = ""; selectAll = false; }

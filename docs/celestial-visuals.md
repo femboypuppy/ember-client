@@ -6,7 +6,7 @@ with the current cover, or choose a manual accent in **Appearance**.
 
 ## Atmosphere and colored ground light
 
-Open **Gear → Appearance → Atmosphere**. Menu ambience is enabled by default:
+Open **Gear → Atmosphere**. Menu ambience is enabled by default:
 two diffuse aurora fields, slow ribbons, softly twinkling stars, sparse
 constellations and gently damped pointer parallax. The background is flushed
 before glass and controls so stars cannot cover menu labels. Adjust intensity,
@@ -34,7 +34,7 @@ colored-light shader pack. It works without installing a shader pack.
 
 ## World atmosphere and custom skyboxes
 
-In **Gear → Appearance → World atmosphere**, **World atmosphere** is enabled
+In **Gear → Atmosphere → World atmosphere**, **World atmosphere** is enabled
 by default. This is a 3D world effect and stays visible with the menu closed
 or HUD hidden. The optional **Screen ambience while playing** control remains
 a separate, faint 2D overlay.

@@ -1,6 +1,6 @@
 # Horizon, constellations and local weather
 
-Open **Gear → Appearance**. **Atmospheric ambience** and **World atmosphere** are the master switches.
+Open **Gear → Weather** for local precipitation, wind, impacts, fog and rain status. **Atmospheric ambience** and **World atmosphere** under **Gear → Atmosphere** are the master switches for local visual weather.
 
 **Horizon glow** adds a soft accent-colored band behind mountains. Enable **Accent skybox**, then adjust its brightness and width. **Slow Spotify pulses** requires **React to Spotify** in Bass Reaction. Its slower attack and release keep the horizon from flashing on every beat. Weather does not react to music.
 
@@ -18,6 +18,6 @@ The simulation reuses a **512-particle pool**, permits at most **96 simultaneous
 
 **Shooting stars** adds occasional short meteors with fading accent-colored trails. It works independently of the stationary star toggle. Frequency defaults to four per minute, with brightness and trail length controls. Meteors use the sky's existing depth-tested pass and disappear behind terrain.
 
-**Movement effects** and **Block interaction effects** are off by default, under **Appearance → Movement & interactions**. Movement adds small footstep sparks and optional surface water wakes, and pushes nearby airborne leaves, petals, and snow. Flying, riding, standing still, and teleporting do not create trails. Block effects trigger after successful local placement/break operations, with separate toggles, size, intensity, and fade controls. These effects share a fixed 128-event pool; block births are capped at six per tick and geometry at 60,000 vertices.
+**Movement effects** and **Block interaction effects** are off by default, under **Gear → Effects**. Movement adds small footstep sparks and optional surface water wakes, and pushes nearby airborne leaves, petals, and snow. Flying, riding, standing still, and teleporting do not create trails. Block effects trigger after successful local placement/break operations, with separate toggles, size, intensity, and fade controls. These effects share a fixed 128-event pool; block births are capped at six per tick and geometry at 60,000 vertices.
 
 **Foliage color balance** reduces green biome dye before the normal lightmap is applied. Grass and leaves can then accept blue daylight and warm torch light without being painted a fixed accent color. Zero restores the original biome tint. The shared biome resolvers cover Minecraft and Sodium; constant spruce and birch colors are handled too. Changing this setting or switching the lighting mode refreshes terrain once after a brief debounce. Changing accent colors or Spotify colors never requests terrain rebuilds.

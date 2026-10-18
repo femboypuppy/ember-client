@@ -150,6 +150,12 @@ public class Config extends System<Config> {
         .name("atmosphere-fog-end").description("Distance where haze reaches its selected opacity. Stays visible at high render distances.").defaultValue(224).range(16, 1024).sliderRange(32, 512).build());
     public final Setting<Boolean> customWeather = sgVisual.add(new BoolSetting.Builder()
         .name("custom-atmospheric-weather").description("Local visual weather independent of server weather and biome, with roof and surface collisions.").defaultValue(false).build());
+    public final Setting<Boolean> rainNotifications = sgVisual.add(new BoolSetting.Builder()
+        .name("rain-notifications").description("Notify when rain starts, eases off, and stops.").defaultValue(true).build());
+    public final Setting<Boolean> rainEndingNotification = sgVisual.add(new BoolSetting.Builder()
+        .name("rain-ending-notification").description("Notify when the server starts fading the rain out; no remaining-time prediction.").defaultValue(true).build());
+    public final Setting<Boolean> rainStatusIcon = sgVisual.add(new BoolSetting.Builder()
+        .name("rain-status-icon").description("Show a rain badge in the top status bar until the rain has completely faded.").defaultValue(true).build());
     public final Setting<meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind> weatherStyle = sgVisual.add(new EnumSetting.Builder<meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind>()
         .name("atmospheric-weather-style").defaultValue(meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind.Rain).build());
     public final Setting<Double> weatherDensity = sgVisual.add(new DoubleSetting.Builder()
