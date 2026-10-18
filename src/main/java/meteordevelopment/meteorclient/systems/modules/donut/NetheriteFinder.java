@@ -76,7 +76,7 @@ public class NetheriteFinder extends Module {
 
     private final Setting<Boolean> needMatch = sgGeneral.add(new BoolSetting.Builder()
         .name("only-if-seed-matches")
-        .description("Only show debris once the seed check has confirmed the seed against this server's bedrock.")
+        .description("Only show debris once the seed is proven: the nether's bedrock matches it and so does real debris you've seen (2-3 pieces, mined or in the open).")
         .defaultValue(true)
         .build()
     );
@@ -109,6 +109,23 @@ public class NetheriteFinder extends Module {
     private static final int MAX_TRACERS = 6;
     private static final int SEED_UNKNOWN = 0, SEED_GOOD = 1, SEED_BAD = 2;
 
+    /**
+     * The bedrock only fixes the low 48 bits of the seed (it uses the old Java random), debris uses all 64. So the
+     * seed is only trusted once real debris sits where it says, and the top 16 bits get searched if it doesn't.
+     */
+    private static final int DEBRIS_UNKNOWN = 0, DEBRIS_GOOD = 1, DEBRIS_SEARCHING = 2, DEBRIS_RANDOM = 3;
+    private static final int NEED_DEBRIS = 2;
+    /** Real debris: open to air (anti-xray shows those as they are) or revealed by a block update. */
+    private final java.util.Set<BlockPos> realDebris = new java.util.LinkedHashSet<>();
+    private int debrisState = DEBRIS_UNKNOWN, explainedCount, checkedCount;
+    private volatile Long foundSeed;
+    private volatile boolean searchFailed;
+    private final java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "Ember-NetheriteFinder");
+        thread.setDaemon(true);
+        return thread;
+    });
+
     private final Long2ObjectOpenHashMap<int[]> predicted = new Long2ObjectOpenHashMap<>();
     private final List<BlockPos> shownPredicted = new ArrayList<>(), shownFound = new ArrayList<>();
     private long seedValue;
@@ -127,6 +144,7 @@ public class NetheriteFinder extends Module {
 
     @Override
     public void onActivate() {
+        realDebris.clear();
         reset();
     }
 
@@ -137,6 +155,9 @@ public class NetheriteFinder extends Module {
         bedrockChecked.clear();
         bedrockMatch = bedrockTotal = 0;
         seedState = SEED_UNKNOWN;
+        debrisState = DEBRIS_UNKNOWN;
+        explainedCount = checkedCount = 0;
+        searchFailed = false;
         error = null;
 
         // Chunks already loaded count as arrived now.
@@ -169,7 +190,8 @@ public class NetheriteFinder extends Module {
         if (!indexesReady()) return;
 
         checkSeed();
-        if (needMatch.get() && seedState != SEED_GOOD) return;
+        checkDebris();
+        if (needMatch.get() && (seedState != SEED_GOOD || debrisState != DEBRIS_GOOD)) return;
 
         ChunkPos here = mc.player.getChunkPos();
         int r = range.get();
@@ -200,6 +222,123 @@ public class NetheriteFinder extends Module {
         if (mc.world == null) return;
         if (arrived.size() > 50_000) arrived.clear();
         arrived.put(event.chunk().getPos().toLong(), ticks);
+        if (mc.world.getRegistryKey() == World.NETHER) collectDebris(event.chunk());
+    }
+
+    /** Debris the server revealed: someone dug next to it, or you did. */
+    @EventHandler
+    private void onBlockUpdate(meteordevelopment.meteorclient.events.world.BlockUpdateEvent event) {
+        if (mc.world == null || mc.world.getRegistryKey() != World.NETHER) return;
+        BlockPos pos = event.pos.toImmutable();
+        if (event.newState.isOf(Blocks.ANCIENT_DEBRIS) || event.oldState.isOf(Blocks.ANCIENT_DEBRIS)) addDebris(pos);
+        // A block mined next to debris leaves it open to air, so it's real and shows as it is.
+        if (event.newState.isAir()) {
+            for (Direction side : Direction.values()) {
+                if (mc.world.getBlockState(pos.offset(side)).isOf(Blocks.ANCIENT_DEBRIS)) addDebris(pos.offset(side));
+            }
+        }
+    }
+
+    /**
+     * Visible debris in a chunk. Only pieces open to air count: anti-xray sends those as they are, while a buried
+     * one could be one of its fakes.
+     */
+    private void collectDebris(WorldChunk chunk) {
+        var sections = chunk.getSectionArray();
+        int x0 = chunk.getPos().getStartX(), z0 = chunk.getPos().getStartZ();
+        BlockPos.Mutable pos = new BlockPos.Mutable();
+        for (int i = 0; i < sections.length && i < 8; i++) {
+            var section = sections[i];
+            if (section == null || section.isEmpty() || !section.hasAny(s -> s.isOf(Blocks.ANCIENT_DEBRIS))) continue;
+            int y0 = chunk.getBottomY() + (i << 4);
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    for (int z = 0; z < 16; z++) {
+                        if (!section.getBlockState(x, y, z).isOf(Blocks.ANCIENT_DEBRIS)) continue;
+                        pos.set(x0 + x, y0 + y, z0 + z);
+                        if (exposed(pos)) addDebris(pos.toImmutable());
+                    }
+                }
+            }
+        }
+    }
+
+    private void addDebris(BlockPos pos) {
+        if (realDebris.size() < 400 && realDebris.add(pos) && debrisState != DEBRIS_SEARCHING) {
+            // New evidence: look again, unless the seed was already proven.
+            if (debrisState != DEBRIS_GOOD) debrisState = DEBRIS_UNKNOWN;
+        }
+    }
+
+    /** Whether the seed puts the debris you've seen where it is, and if not, which top 16 bits would. */
+    private void checkDebris() {
+        Long found = foundSeed;
+        if (found != null) {
+            foundSeed = null;
+            MeteorClient.LOG.info("[Ember Netherite] Seed corrected from the debris you've seen: {}", found);
+            EmberNotificationsHud.push("Netherite finder", "Seed fixed from the debris you've seen: " + found, EmberNotificationsHud.GOOD);
+            seed.set(String.valueOf(found));
+            return;
+        }
+        if (searchFailed && debrisState == DEBRIS_SEARCHING) {
+            debrisState = DEBRIS_RANDOM;
+            MeteorClient.LOG.info("[Ember Netherite] No seed with these low 48 bits explains the {} debris seen: ore placement isn't from the seed here", realDebris.size());
+            EmberNotificationsHud.push("Netherite finder", "This server's debris doesn't follow the world seed", EmberNotificationsHud.BAD);
+        }
+        if (seedState != SEED_GOOD || debrisState != DEBRIS_UNKNOWN || realDebris.size() < NEED_DEBRIS) return;
+
+        List<BlockPos> seen = List.copyOf(realDebris);
+        checkedCount = seen.size();
+        explainedCount = explained(seedValue, seen, largeIndex, smallIndex);
+        if (explainedCount >= NEED_DEBRIS && explainedCount * 10 >= checkedCount * 6) {
+            debrisState = DEBRIS_GOOD;
+            MeteorClient.LOG.info("[Ember Netherite] Seed {} confirmed: {} of {} debris seen sit where it says", seedValue, explainedCount, checkedCount);
+            EmberNotificationsHud.push("Netherite finder", "Seed confirmed by " + explainedCount + " real debris", EmberNotificationsHud.GOOD);
+            return;
+        }
+        if (seen.size() < 3) return;
+
+        // The low 48 bits are right (the bedrock matched), so only 65,536 seeds are left to try.
+        debrisState = DEBRIS_SEARCHING;
+        searchFailed = false;
+        long low = seedValue & 0xFFFF_FFFF_FFFFL;
+        int large = largeIndex, small = smallIndex;
+        EmberNotificationsHud.push("Netherite finder", "Debris doesn't match yet: fixing the seed from what you've seen", EmberNotificationsHud.WARN);
+        worker.submit(() -> {
+            int need = Math.max(NEED_DEBRIS, (int) Math.ceil(seen.size() * 0.6));
+            for (long hi = 0; hi < 65536; hi++) {
+                long candidate = low | (hi << 48);
+                if (explained(candidate, seen, large, small) >= need) {
+                    foundSeed = candidate;
+                    return;
+                }
+            }
+            searchFailed = true;
+        });
+    }
+
+    /** How many of the debris positions this seed generates. */
+    private static int explained(long worldSeed, List<BlockPos> debris, int large, int small) {
+        int hits = 0;
+        for (BlockPos d : debris) {
+            int cx = d.getX() >> 4, cz = d.getZ() >> 4;
+            int lx = d.getX() & 15, lz = d.getZ() & 15;
+            // A piece can land up to 2 blocks into the next chunk.
+            int x0 = lx <= 2 ? -1 : 0, x1 = lx >= 13 ? 1 : 0, z0 = lz <= 2 ? -1 : 0, z1 = lz >= 13 ? 1 : 0;
+            search:
+            for (int dx = x0; dx <= x1; dx++) {
+                for (int dz = z0; dz <= z1; dz++) {
+                    int[] spots = predict(worldSeed, cx + dx, cz + dz, large, small);
+                    for (int i = 0; i < spots.length; i += 3) {
+                        if (spots[i] == d.getX() && spots[i + 1] == d.getY() && spots[i + 2] == d.getZ()) {
+                            hits++;
+                            break search;
+                        }
+                    }
+                }
+            }
+        }
+        return hits;
     }
 
     private boolean exposed(BlockPos pos) {
@@ -216,19 +355,23 @@ public class NetheriteFinder extends Module {
      * @return x, y, z of every spot, before the terrain decides which ones actually took
      */
     static int[] predict(long worldSeed, int chunkX, int chunkZ) {
+        return predict(worldSeed, chunkX, chunkZ, largeIndex, smallIndex);
+    }
+
+    static int[] predict(long worldSeed, int chunkX, int chunkZ, int large, int small) {
         ChunkRandom random = new ChunkRandom(new Xoroshiro128PlusPlusRandom(0));
         long population = random.setPopulationSeed(worldSeed, chunkX << 4, chunkZ << 4);
         List<Integer> out = new ArrayList<>();
 
         // ore_ancient_debris_large: 0-3 blocks, trapezoid height 8-24. ore_debris_small: 0-2 blocks, height 8-119.
         for (int f = 0; f < 2; f++) {
-            boolean large = f == 0;
-            random.setDecoratorSeed(population, large ? largeIndex : smallIndex, STEP);
+            boolean big = f == 0;
+            random.setDecoratorSeed(population, big ? large : small, STEP);
             int x = random.nextInt(16) + (chunkX << 4);
             int z = random.nextInt(16) + (chunkZ << 4);
-            int y = large ? 8 + MathHelper.nextBetween(random, 0, 8) + MathHelper.nextBetween(random, 0, 8) : MathHelper.nextBetween(random, 8, 119);
+            int y = big ? 8 + MathHelper.nextBetween(random, 0, 8) + MathHelper.nextBetween(random, 0, 8) : MathHelper.nextBetween(random, 8, 119);
 
-            int count = random.nextInt((large ? 3 : 2) + 1);
+            int count = random.nextInt((big ? 3 : 2) + 1);
             for (int j = 0; j < count; j++) {
                 int spread = Math.min(j, 7);
                 int ox = Math.round((random.nextFloat() - random.nextFloat()) * spread);
@@ -354,11 +497,14 @@ public class NetheriteFinder extends Module {
         if (!seedSet) return "no seed";
         if (error != null) return "error";
         if (mc.world != null && mc.world.getRegistryKey() != World.NETHER) return "nether only";
-        String check = switch (seedState) {
-            case SEED_GOOD -> "seed ok";
-            case SEED_BAD -> "wrong seed";
-            default -> "checking";
+        if (seedState == SEED_BAD) return "wrong seed";
+        if (seedState != SEED_GOOD) return "checking";
+        return switch (debrisState) {
+            case DEBRIS_GOOD -> "seed ok " + (shownPredicted.size() + shownFound.size());
+            case DEBRIS_SEARCHING -> "fixing seed";
+            case DEBRIS_RANDOM -> "ores not from seed";
+            // Bedrock agrees; real debris has to agree too before anything is drawn.
+            default -> "find debris " + Math.min(realDebris.size(), 3) + "/3";
         };
-        return check + " " + (shownPredicted.size() + shownFound.size());
     }
 }

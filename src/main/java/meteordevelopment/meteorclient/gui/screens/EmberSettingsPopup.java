@@ -1002,11 +1002,16 @@ public class EmberSettingsPopup {
         }
 
         if (editing != null || editingNumber != null) {
+            boolean ctrl = (input.modifiers() & GLFW_MOD_CONTROL) != 0;
             switch (key) {
                 case GLFW_KEY_ESCAPE -> stopEditing(false);
                 case GLFW_KEY_ENTER, GLFW_KEY_KP_ENTER -> stopEditing(true);
                 case GLFW_KEY_BACKSPACE -> {
-                    if (!editBuffer.isEmpty()) editBuffer = editBuffer.substring(0, editBuffer.length() - 1);
+                    if (ctrl) editBuffer = "";
+                    else if (!editBuffer.isEmpty()) editBuffer = editBuffer.substring(0, editBuffer.length() - 1);
+                }
+                case GLFW_KEY_V -> {
+                    if (ctrl) paste();
                 }
                 default -> {
                 }
@@ -1016,6 +1021,20 @@ public class EmberSettingsPopup {
 
         if (key == GLFW_KEY_ESCAPE) close();
         return true;
+    }
+
+    /** Ctrl+V into the box being typed in: one line, and for number boxes only what a number can hold. */
+    private void paste() {
+        String clip = meteordevelopment.meteorclient.MeteorClient.mc.keyboard.getClipboard();
+        if (clip == null) return;
+        clip = clip.replaceAll("[\\r\\n\\t]", "").strip();
+        if (editingNumber != null) {
+            clip = clip.replaceAll("[^0-9.\\-]", "");
+            editBuffer = (editBuffer + clip).substring(0, Math.min(16, (editBuffer + clip).length()));
+        } else {
+            String joined = editBuffer + clip;
+            editBuffer = joined.substring(0, Math.min(256, joined.length()));
+        }
     }
 
     public boolean charTyped(CharInput input) {
