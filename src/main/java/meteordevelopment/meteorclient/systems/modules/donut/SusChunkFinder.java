@@ -28,11 +28,8 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.misc.ChunkFindIndex;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
-import meteordevelopment.meteorclient.utils.render.EmberStrip;
-import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.*;
@@ -59,7 +56,6 @@ import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.World;
 import net.minecraft.world.dimension.DimensionType;
-import org.joml.Vector3d;
 
 import java.io.File;
 import java.io.IOException;
@@ -111,17 +107,6 @@ public class SusChunkFinder extends Module {
     /** Keeps the pairwise cluster pass cheap in shop districts packed with chests. */
     private static final int CLUSTER_MAX_POINTS = 2048;
 
-    private static final Color EMERALD = new Color(34, 197, 94, 255);
-    private static final Color AMBER = new Color(245, 158, 11, 255);
-    private static final Color CORAL = new Color(239, 68, 68, 255);
-    private static final Color SLATE = new Color(100, 116, 139, 255);
-    private static final Color MUTED_GREEN = new Color(110, 190, 130, 255);
-
-    public enum DotYMode {
-        AnomalyY,
-        PlayerEyeY,
-        FixedY
-    }
 
     private final SettingGroup sgHeight = settings.createGroup("Height");
     private final SettingGroup sgBlocks = settings.createGroup("Block Signals");
@@ -661,63 +646,55 @@ public class SusChunkFinder extends Module {
 
     private final Setting<Integer> renderY = sgRender.add(new IntSetting.Builder()
         .name("render-y")
-        .description("Height of the chunk plane, and of the center dot in Fixed Y mode.")
+        .description("Height of the chunk plane.")
         .defaultValue(63)
         .sliderRange(-64, 320)
-        .visible(() -> !followPlayerY.get() || renderCenterDotVisibleFixed())
+        .visible(() -> !followPlayerY.get())
         .build()
     );
 
-    private final Setting<Boolean> renderCenterDot = sgRender.add(new BoolSetting.Builder()
-        .name("render-center-dot")
-        .description("Draw a marker in the middle of every flagged chunk.")
+    private final Setting<Boolean> beacons = sgRender.add(new BoolSetting.Builder()
+        .name("beacons")
+        .description("A glowing beam up from where the suspicious blocks are. Grey = maybe, orange = likely base, white-hot = strong base, dark red = raided.")
         .defaultValue(true)
         .build()
     );
 
-    private final Setting<DotYMode> dotYMode = sgRender.add(new EnumSetting.Builder<DotYMode>()
-        .name("dot-y-mode")
-        .description("Height of the center dot: where the suspicious blocks are, your eye level, or render-y.")
-        .defaultValue(DotYMode.AnomalyY)
-        .visible(renderCenterDot::get)
-        .build()
-    );
-
-    private final Setting<Boolean> lookAtCard = sgRender.add(new BoolSetting.Builder()
-        .name("look-at-card")
-        .description("Show an inspection card when your crosshair is on a chunk's center dot.")
+    private final Setting<Boolean> lookAtInfo = sgRender.add(new BoolSetting.Builder()
+        .name("look-at-info")
+        .description("Look at a beacon to see what it found and how far to dig, under your crosshair.")
         .defaultValue(true)
-        .visible(renderCenterDot::get)
+        .visible(beacons::get)
         .build()
     );
 
     private final Setting<Double> lookAtAngle = sgRender.add(new DoubleSetting.Builder()
         .name("look-at-angle")
-        .description("How close (in degrees) the crosshair must be to a center dot to open its card.")
-        .defaultValue(6.0)
+        .description("How close (in degrees) the crosshair must be to a beacon to show its info.")
+        .defaultValue(4.0)
         .range(1.5, 15.0)
         .sliderRange(1.5, 15.0)
-        .visible(() -> renderCenterDot.get() && lookAtCard.get())
+        .visible(() -> beacons.get() && lookAtInfo.get())
         .build()
     );
 
-    private final Setting<Double> cardScale = sgRender.add(new DoubleSetting.Builder()
-        .name("card-scale")
-        .description("Size of the inspection card.")
+    private final Setting<Double> infoScale = sgRender.add(new DoubleSetting.Builder()
+        .name("info-scale")
+        .description("Size of the info under your crosshair.")
         .defaultValue(1.0)
         .range(0.5, 2.5)
         .sliderRange(0.5, 2.5)
-        .visible(() -> renderCenterDot.get() && lookAtCard.get())
+        .visible(() -> beacons.get() && lookAtInfo.get())
         .build()
     );
 
-    private final Setting<Integer> dotRange = sgRender.add(new IntSetting.Builder()
-        .name("dot-range")
-        .description("Only draw center dots for chunks within this many blocks.")
+    private final Setting<Integer> beaconRange = sgRender.add(new IntSetting.Builder()
+        .name("beacon-range")
+        .description("Only draw beacons for chunks within this many blocks.")
         .defaultValue(384)
         .range(32, 2048)
         .sliderRange(64, 1024)
-        .visible(renderCenterDot::get)
+        .visible(beacons::get)
         .build()
     );
 
@@ -793,11 +770,10 @@ public class SusChunkFinder extends Module {
     // Render-thread state for the center dot and inspection card.
     private final EmberAnim.Clock clock = new EmberAnim.Clock();
     private final EmberAnim.Clock cardClock = new EmberAnim.Clock();
-    private double smoothEyeY = Double.NaN;
     private FlaggedChunk hovered;
-    private FlaggedChunk cardChunk;
+    private FlaggedChunk infoChunk;
     private float hoverAnim;
-    private float shellAnim;
+    private float hoverPulse;
 
     // Light data, see onPacket. Kept across the relog (a rejoin) and only reset for another world.
     // The maps are guarded by flagged; the protection bookkeeping is main-thread only.
@@ -830,10 +806,6 @@ public class SusChunkFinder extends Module {
 
     public SusChunkFinder() {
         super(Categories.Donut, "sus-chunk-finder", "Highlights chunks showing signs of player activity.");
-    }
-
-    private boolean renderCenterDotVisibleFixed() {
-        return renderCenterDot != null && dotYMode != null && renderCenterDot.get() && dotYMode.get() == DotYMode.FixedY;
     }
 
     @Override
@@ -882,7 +854,7 @@ public class SusChunkFinder extends Module {
             indexedFilter = filterState();
         }
         hovered = null;
-        cardChunk = null;
+        infoChunk = null;
         hoverAnim = 0;
     }
 
@@ -3122,12 +3094,9 @@ public class SusChunkFinder extends Module {
         if (mc.player == null) return;
 
         float dt = clock.tick();
-        double eyeY = mc.player.getEyeY();
-        smoothEyeY = Double.isNaN(smoothEyeY) ? eyeY : EmberAnim.approach(smoothEyeY, eyeY, dt, 0.25);
-
         double planeY = followPlayerY.get() ? Math.floor(mc.player.getY()) : renderY.get();
 
-        double queryRange = Math.max(planeRange.get(), Math.max(renderCenterDot.get() ? dotRange.get() : 0, tracers.get() ? tracerRange.get() : 0));
+        double queryRange = Math.max(planeRange.get(), Math.max(beacons.get() ? beaconRange.get() : 0, tracers.get() ? tracerRange.get() : 0));
         List<FlaggedChunk> visible;
         synchronized (flagged) {
             visible = renderIndex.nearby(mc.player.getChunkPos().x, mc.player.getChunkPos().z, (int) Math.ceil(queryRange / 16) + 2);
@@ -3140,7 +3109,7 @@ public class SusChunkFinder extends Module {
 
         if (tracers.get()) drawTracers(event, visible);
 
-        if (!renderCenterDot.get()) {
+        if (!beacons.get()) {
             hovered = null;
             return;
         }
@@ -3148,50 +3117,48 @@ public class SusChunkFinder extends Module {
         Camera camera = mc.gameRenderer.getCamera();
         Vec3d cam = camera.getCameraPos();
         Vec3d look = Vec3d.fromPolar(camera.getPitch(), camera.getYaw());
-        double range = dotRange.get();
-        double bestAngle = lookAtCard.get() ? lookAtAngle.get() : -1;
+        double range = beaconRange.get();
+        double bestAngle = lookAtInfo.get() ? lookAtAngle.get() : -1;
         FlaggedChunk best = null;
+        List<FlaggedChunk> near = new ArrayList<>();
 
         for (FlaggedChunk fc : visible) {
             double cx = (fc.chunkX << 4) + 8.0, cz = (fc.chunkZ << 4) + 8.0;
             double dx = cx - cam.x, dz = cz - cam.z;
             if (dx * dx + dz * dz > range * range) continue;
+            near.add(fc);
 
-            double cy = dotY(fc);
-            double dy = cy - cam.y;
-            double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            if (dist < 0.5) continue;
-
-            double cos = (look.x * dx + look.y * dy + look.z * dz) / dist;
-            double angle = Math.toDegrees(Math.acos(MathHelper.clamp(cos, -1, 1)));
+            double angle = FindBeacon.angleTo(cam, look, cx, findY(fc), cz);
             if (angle < bestAngle) {
                 bestAngle = angle;
                 best = fc;
             }
         }
 
-        if (best != hovered) shellAnim = 0;
+        if (best != null) FindBeacon.offer(this, bestAngle);
+        else FindBeacon.withdraw(this);
+        if (best != hovered) hoverPulse = 0;
         hovered = best;
-        if (best != null) cardChunk = best;
-        shellAnim = EmberAnim.approach(shellAnim, best != null ? 1f : 0f, dt, 0.08);
+        if (best != null) infoChunk = best;
+        hoverPulse = EmberAnim.approach(hoverPulse, best != null ? 1f : 0f, dt, 0.08);
 
-        for (FlaggedChunk fc : visible) {
-            double cx = (fc.chunkX << 4) + 8.0, cz = (fc.chunkZ << 4) + 8.0;
-            double dx = cx - cam.x, dz = cz - cam.z;
-            if (dx * dx + dz * dz > range * range) continue;
-            drawDot(event, fc, cx, dotY(fc), cz, cam, fc == best);
+        for (FlaggedChunk fc : near) {
+            FindBeacon.draw(event.renderer, (fc.chunkX << 4) + 8.0, findY(fc), (fc.chunkZ << 4) + 8.0, cam, beaconColor(fc),
+                fc == best ? hoverPulse : 0, fc.griefedProb >= 60, fc.chunkX * 31 + fc.chunkZ,
+                fc.griefedProb >= 60 ? 1 : (fc.baseConfidence - 20) / 50.0);
         }
     }
 
-    private double dotY(FlaggedChunk fc) {
-        return switch (dotYMode.get()) {
-            case AnomalyY -> fc.focusY + 0.5;
-            case PlayerEyeY -> Double.isNaN(smoothEyeY) ? fc.focusY + 0.5 : smoothEyeY;
-            case FixedY -> renderY.get() + 0.5;
-        };
+    /** Where the suspicious blocks are: the notch of the beacon and the end of the tracer. */
+    private static double findY(FlaggedChunk fc) {
+        return fc.focusY + 0.5;
     }
 
-    /** Lines from the crosshair to the nearest chunks' center dots, so a find stays easy to get back to. */
+    private static Color beaconColor(FlaggedChunk fc) {
+        return fc.griefedProb >= 60 ? FindBeacon.RAIDED : FindBeacon.heat(fc.baseConfidence);
+    }
+
+    /** Lines from the crosshair to the nearest chunks' beacons, so a find stays easy to get back to. */
     private void drawTracers(Render3DEvent event, List<FlaggedChunk> visible) {
         double range = (double) tracerRange.get() * tracerRange.get();
         double px = mc.player.getX(), pz = mc.player.getZ();
@@ -3204,9 +3171,10 @@ public class SusChunkFinder extends Module {
 
         for (int i = 0; i < near.size() && i < maxTracers.get(); i++) {
             FlaggedChunk fc = near.get(i);
-            Color tone = dotColor(fc);
+            // Strong and raided finds keep their beacon's color; the rest use the tracer color.
+            Color tone = fc.griefedProb >= 60 || fc.baseConfidence >= 70 ? beaconColor(fc) : tracerColor.get();
             event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z,
-                (fc.chunkX << 4) + 8.0, dotY(fc), (fc.chunkZ << 4) + 8.0, tone != null ? tone : tracerColor.get());
+                (fc.chunkX << 4) + 8.0, findY(fc), (fc.chunkZ << 4) + 8.0, tone);
         }
     }
 
@@ -3221,270 +3189,49 @@ public class SusChunkFinder extends Module {
         event.renderer.box(x, y, z, x + 16, y, z + 16, sideColor.get(), lineColor.get(), shapeMode.get(), 0);
     }
 
-    private Color dotColor(FlaggedChunk fc) {
-        if (fc.griefedProb >= 60) return fc.griefedProb >= 80 ? CORAL : AMBER;
-        if (fc.baseConfidence >= 70) return EmberPalette.accent();
-        return null;
-    }
-
-    private void drawDot(Render3DEvent event, FlaggedChunk fc, double cx, double cy, double cz, Vec3d cam, boolean target) {
-        double dist = Math.sqrt((cx - cam.x) * (cx - cam.x) + (cy - cam.y) * (cy - cam.y) + (cz - cam.z) * (cz - cam.z));
-        // Grows slowly with distance so it stays findable far away without filling the view up close.
-        double r = MathHelper.clamp(0.2 + dist * 0.0045, 0.2, 1.6);
-
-        Color tone = dotColor(fc);
-        Color side = tone != null ? tone : sideColor.get();
-        Color line = tone != null ? tone : lineColor.get();
-
-        float hover = target ? shellAnim : 0f;
-        Color core = new Color(side.r, side.g, side.b, tone != null ? 150 : Math.max(110, side.a * 2));
-        Color edge = new Color(line.r, line.g, line.b, Math.min(255, (int) (line.a * (0.75 + 0.25 * hover))));
-        Color tick = new Color(line.r, line.g, line.b, (int) (line.a * 0.45));
-
-        event.renderer.box(cx - r, cy - r, cz - r, cx + r, cy + r, cz + r, core, edge, ShapeMode.Both, 0);
-
-        // Diamond shell around the core.
-        double s = r * (1.8 + 0.55 * hover);
-        double top = cy + s, bottom = cy - s;
-        double[][] ring = {{cx + s, cz}, {cx, cz + s}, {cx - s, cz}, {cx, cz - s}};
-        for (int i = 0; i < 4; i++) {
-            double[] a = ring[i], b = ring[(i + 1) % 4];
-            event.renderer.line(a[0], cy, a[1], b[0], cy, b[1], edge);
-            event.renderer.line(a[0], cy, a[1], cx, top, cz, edge);
-            event.renderer.line(a[0], cy, a[1], cx, bottom, cz, edge);
-        }
-
-        double reach = s * 2.4;
-        event.renderer.line(cx, top, cz, cx, top + reach, cz, tick);
-        event.renderer.line(cx, bottom, cz, cx, bottom - reach, cz, tick);
-    }
+    // What you see when you look at a beacon: two short lines under the crosshair.
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         float dt = cardClock.tick();
-        boolean show = lookAtCard.get() && renderCenterDot.get() && hovered != null
-            && mc.currentScreen == null && !mc.options.hudHidden;
+        boolean show = lookAtInfo.get() && beacons.get() && hovered != null && FindBeacon.shows(this) && mc.currentScreen == null && !mc.options.hudHidden;
         hoverAnim = EmberAnim.approach(hoverAnim, show ? 1f : 0f, dt, 0.07);
 
-        FlaggedChunk fc = cardChunk;
-        if (fc == null || hoverAnim <= 0.01f || mc.player == null) return;
-        if (mc.currentScreen != null || mc.options.hudHidden) return;
+        FlaggedChunk fc = infoChunk;
+        if (fc == null || hoverAnim <= 0.01f || mc.player == null || mc.currentScreen != null || mc.options.hudHidden) return;
 
-        double cx = (fc.chunkX << 4) + 8.0, cz = (fc.chunkZ << 4) + 8.0, cy = dotY(fc);
-        Vector3d pos = new Vector3d(cx, cy, cz);
-        if (!NametagUtils.to2D(pos, 1, false)) return;
-
-        Vec3d cam = mc.gameRenderer.getCamera().getCameraPos();
-        double dist = Math.sqrt((cx - cam.x) * (cx - cam.x) + (cy - cam.y) * (cy - cam.y) + (cz - cam.z) * (cz - cam.z));
+        double dx = (fc.chunkX << 4) + 8.0 - mc.player.getX(), dz = (fc.chunkZ << 4) + 8.0 - mc.player.getZ();
+        String where = Math.round(Math.sqrt(dx * dx + dz * dz)) + "m  ·  " + FindBeacon.dig(findY(fc));
 
         HudRenderer r = HudRenderer.INSTANCE;
         r.begin(event.drawContext);
         try {
-            drawCard(r, fc, pos.x, pos.y, dist, hoverAnim);
+            FindBeacon.gauges(r, new FindBeacon.Gauge[] {
+                new FindBeacon.Gauge("BASE", fc.baseConfidence, FindBeacon.BASE),
+                new FindBeacon.Gauge("FALSE POS", fc.falsePositiveProb, FindBeacon.FALSE_POS),
+                new FindBeacon.Gauge("GRIEFED", fc.griefedProb, FindBeacon.GRIEFED)
+            }, hoverAnim, infoScale.get());
+            FindBeacon.info(r, beaconColor(fc), verdict(fc), where, reason(fc), hoverAnim, infoScale.get());
         } finally {
             r.end();
         }
     }
 
-    private void drawCard(HudRenderer r, FlaggedChunk fc, double dotX, double dotY, double distance, float a) {
-        // Read at a glance mid-flight, so it sits a size above the regular HUD text.
-        double s = cardScale.get() * 1.25;
-        double pad = 9 * s;
-        double titleScale = 0.8 * s, bodyScale = 0.68 * s, smallScale = 0.6 * s;
-        double titleH = r.textHeight(true, titleScale);
-        double bodyH = r.textHeight(false, bodyScale);
-        double smallH = r.textHeight(false, smallScale);
-
-        // The theme's dim text tones vanish on frosted glass, so secondary text is bright text faded instead.
-        Color accent = EmberPalette.accent();
-        Color bright = EmberPalette.textBright();
-        Color dim = fade(bright, 0.72f);
-        Color faint = fade(bright, 0.55f);
-
-        String title = "CHUNK [" + fc.chunkX + ", " + fc.chunkZ + "]";
-        String distLabel = Math.round(distance) + "m";
-        String yLabel = "Y " + fc.focusY;
-
-        String status;
-        Color statusColor;
-        if (fc.griefedProb >= 60) {
-            status = "LIKELY GRIEFED / RAIDED";
-            statusColor = fc.griefedProb >= 80 ? CORAL : AMBER;
-        } else if (fc.baseConfidence >= 70) {
-            status = "HIGH CONFIDENCE BASE";
-            statusColor = EMERALD;
-        } else if (fc.baseConfidence >= 45) {
-            status = "LIKELY BASE";
-            statusColor = accent;
-        } else if (fc.falsePositiveProb >= 60) {
-            status = "POSSIBLE WORLDGEN FP";
-            statusColor = CORAL;
-        } else {
-            status = "WORTH A LOOK";
-            statusColor = SLATE;
-        }
-        if (fc.fromSave) status += fc.measured ? "  \u00B7  SAVED" : "  \u00B7  OLD SAVE";
-        // Only what is above the deepslate was sent; the base itself, if any, is still unseen.
-        if (fc.deepHidden) status += "  \u00B7  DIG BELOW Y 0 + RELOG";
-
-        int maxSignals = 5;
-        List<String> signals = fc.reasons.size() > maxSignals ? fc.reasons.subList(0, maxSignals) : fc.reasons;
-        int hiddenSignals = fc.reasons.size() - signals.size();
-
-        // Measure.
-        double pillPadX = 5 * s;
-        double badgeH = smallH + 3 * s;
-        double distW = r.textWidth(distLabel, smallScale) + pillPadX * 2;
-        double yW = r.textWidth(yLabel, smallScale) + pillPadX * 2;
-        double dotSize = 6 * s;
-        double headerW = dotSize + 6 * s + r.textWidth(title, true, titleScale) + 12 * s + distW + 4 * s + yW;
-
-        double w = Math.max(232 * s, pad * 2 + headerW);
-        for (String sig : signals) w = Math.max(w, pad * 2 + 10 * s + r.textWidth(sig, bodyScale));
-        for (String g : fc.griefReasons) w = Math.max(w, pad * 2 + 12 * s + r.textWidth(g, bodyScale));
-        w = Math.min(w, 330 * s);
-
-        double metricH = bodyH + 3 * s + 3 * s + 6 * s;
-        double statusH = smallH + 5 * s;
-        double signalRowH = bodyH + 3 * s;
-
-        double h = pad + titleH + 6 * s + 1 + 7 * s + statusH + 8 * s + metricH * 3
-            + smallH + 5 * s + signalRowH * (signals.size() + (hiddenSignals > 0 ? 1 : 0)) + pad;
-        if (!fc.griefReasons.isEmpty()) h += 6 * s + smallH + 5 * s + signalRowH * fc.griefReasons.size();
-
-        double radius = 7 * s;
-        int fbW = mc.getWindow().getFramebufferWidth(), fbH = mc.getWindow().getFramebufferHeight();
-        double slide = (1 - EmberAnim.easeOut(a)) * 10 * s;
-
-        double x = dotX + 18 * s + slide;
-        if (x + w > fbW - 8) x = dotX - 18 * s - w - slide;
-        x = MathHelper.clamp(x, 8, Math.max(8, fbW - w - 8));
-        double y = MathHelper.clamp(dotY - h / 2, 8, Math.max(8, fbH - h - 8));
-
-        // Leader from the dot to the card.
-        double anchorX = x > dotX ? x : x + w;
-        r.line(dotX, dotY, anchorX, y + h / 2, fade(accent, a * 0.55f));
-        double ring = 4 * s;
-        r.roundedQuad(dotX - ring, dotY - ring, ring * 2, ring * 2, ring, fade(accent, a * 0.35f));
-        r.roundedQuad(dotX - ring / 2, dotY - ring / 2, ring, ring, ring / 2, fade(accent, a));
-
-        r.dropShadow(x, y, w, h, radius, 16 * s, a);
-        EmberStrip.panel(r, x, y, w, h, radius, a);
-
-        double cy = y + pad;
-
-        // Header.
-        double dotY0 = cy + (titleH - dotSize) / 2;
-        r.softGlow(x + pad, dotY0, dotSize, dotSize, dotSize / 2, 4 * s, fade(accent, a * 0.6f));
-        r.roundedQuad(x + pad, dotY0, dotSize, dotSize, dotSize / 2, fade(accent, a));
-        r.text(title, x + pad + dotSize + 6 * s, cy, fade(bright, a), true, titleScale);
-
-        double bx = x + w - pad - yW;
-        double by = cy + (titleH - badgeH) / 2;
-        badge(r, yLabel, bx, by, yW, badgeH, smallScale, bright, a);
-        bx -= 4 * s + distW;
-        badge(r, distLabel, bx, by, distW, badgeH, smallScale, bright, a);
-
-        cy += titleH + 6 * s;
-        divider(r, x + pad, cy, w - pad * 2, accent, a);
-        cy += 1 + 7 * s;
-
-        // Classification.
-        double statusW = r.textWidth(status, smallScale) + 12 * s;
-        r.roundedQuad(x + pad, cy, statusW, statusH, statusH / 2, fade(statusColor, a * 0.16f));
-        r.roundedQuad(x + pad + 5 * s, cy + (statusH - 3 * s) / 2, 3 * s, 3 * s, 1.5 * s, fade(statusColor, a));
-        r.text(status, x + pad + 10 * s, cy + (statusH - smallH) / 2, fade(lighten(statusColor), a), false, smallScale);
-        cy += statusH + 8 * s;
-
-        // Scores.
-        Color baseColor = fc.baseConfidence >= 70 ? EMERALD : accent;
-        Color fpColor = fc.falsePositiveProb < 30 ? MUTED_GREEN : (fc.falsePositiveProb >= 60 ? CORAL : AMBER);
-        Color griefColor = fc.griefedProb < 25 ? MUTED_GREEN : (fc.griefedProb >= 60 ? CORAL : AMBER);
-        String suffix = fc.measured ? "%" : "% (est.)";
-
-        metric(r, "Base confidence", fc.baseConfidence, suffix, baseColor, x + pad, cy, w - pad * 2, bodyScale, bodyH, s, dim, bright, a);
-        cy += metricH;
-        metric(r, "False positive", fc.falsePositiveProb, suffix, fpColor, x + pad, cy, w - pad * 2, bodyScale, bodyH, s, dim, bright, a);
-        cy += metricH;
-        metric(r, "Griefed", fc.griefedProb, suffix, griefColor, x + pad, cy, w - pad * 2, bodyScale, bodyH, s, dim, bright, a);
-        cy += metricH;
-
-        // Signals.
-        r.text("SIGNALS", x + pad, cy, fade(faint, a), false, smallScale);
-        cy += smallH + 5 * s;
-        double textMax = w - pad * 2 - 10 * s;
-        for (String sig : signals) {
-            double bullet = 3 * s;
-            r.roundedQuad(x + pad + 1 * s, cy + (bodyH - bullet) / 2, bullet, bullet, bullet / 2, fade(accent, a * 0.85f));
-            r.text(fit(r, sig, textMax, bodyScale), x + pad + 10 * s, cy, fade(bright, a * 0.92f), false, bodyScale);
-            cy += signalRowH;
-        }
-        if (hiddenSignals > 0) {
-            r.text("+" + hiddenSignals + " more", x + pad + 10 * s, cy, fade(faint, a), false, bodyScale);
-            cy += signalRowH;
-        }
-
-        // Grief indicators.
-        if (!fc.griefReasons.isEmpty()) {
-            cy += 6 * s;
-            Color warn = fc.griefedProb >= 60 ? CORAL : AMBER;
-            r.roundedQuad(x + pad - 4 * s, cy - 3 * s, w - pad * 2 + 8 * s,
-                smallH + 5 * s + signalRowH * fc.griefReasons.size() + 3 * s, 4 * s, fade(warn, a * 0.08f));
-            r.text("GRIEF INDICATORS", x + pad, cy, fade(lighten(warn), a), false, smallScale);
-            cy += smallH + 5 * s;
-            for (String g : fc.griefReasons) {
-                double t = 6 * s;
-                double ty = cy + (bodyH - t) / 2;
-                r.triangle(x + pad, ty + t, x + pad + t, ty + t, x + pad + t / 2, ty, fade(warn, a));
-                r.text(fit(r, g, w - pad * 2 - 12 * s, bodyScale), x + pad + 12 * s, cy, fade(bright, a * 0.92f), false, bodyScale);
-                cy += signalRowH;
-            }
-        }
+    /** One plain word or two for what this probably is. */
+    private static String verdict(FlaggedChunk fc) {
+        if (fc.griefedProb >= 60) return "RAIDED BASE";
+        if (fc.baseConfidence >= 70) return "STRONG BASE";
+        if (fc.baseConfidence >= 45) return "LIKELY BASE";
+        if (fc.falsePositiveProb >= 60) return "PROBABLY NATURAL";
+        return "MAYBE";
     }
 
-    private void metric(HudRenderer r, String label, int value, String suffix, Color fill, double x, double y, double w,
-                        double scale, double textH, double s, Color dim, Color bright, float a) {
-        String text = value + suffix;
-        r.text(label, x, y, fade(dim, a), false, scale);
-        double vw = r.textWidth(text, scale);
-        r.text(text, x + w - vw, y, fade(bright, a), false, scale);
-
-        double barY = y + textH + 3 * s;
-        double barH = 3 * s;
-        r.roundedQuad(x, barY, w, barH, barH / 2, fade(EmberPalette.track(), a * 0.9f));
-        double fw = w * MathHelper.clamp(value / 100.0, 0, 1);
-        if (fw >= barH) r.roundedQuad(x, barY, fw, barH, barH / 2, fade(fill, a));
-    }
-
-    private void badge(HudRenderer r, String text, double x, double y, double w, double h, double scale, Color color, float a) {
-        r.roundedQuad(x, y, w, h, h / 2, fade(EmberPalette.control(), a * 0.9f));
-        double tw = r.textWidth(text, scale);
-        r.text(text, x + (w - tw) / 2, y + (h - r.textHeight(false, scale)) / 2, fade(color, a), false, scale);
-    }
-
-    private void divider(HudRenderer r, double x, double y, double w, Color accent, float a) {
-        Color base = fade(EmberPalette.divider(), a * 0.7f);
-        r.quad(x, y, w, 1, base);
-        double lead = Math.min(w * 0.35, 60);
-        Color hot = fade(accent, a * 0.8f);
-        Color clear = new Color(accent.r, accent.g, accent.b, 0);
-        r.quad(x, y, lead, 1, hot, clear, clear, hot);
-    }
-
-    private static String fit(HudRenderer r, String text, double max, double scale) {
-        if (r.textWidth(text, scale) <= max) return text;
-        String out = text;
-        while (out.length() > 1 && r.textWidth(out + "...", scale) > max) out = out.substring(0, out.length() - 1);
-        return out + "...";
-    }
-
-    /** Halfway to white, so coloured text stays readable on a tinted pill of the same colour. */
-    private static Color lighten(Color c) {
-        return new Color((c.r + 255) / 2, (c.g + 255) / 2, (c.b + 255) / 2, c.a);
-    }
-
-    private static Color fade(Color c, float a) {
-        return new Color(c.r, c.g, c.b, MathHelper.clamp((int) (c.a * a), 0, 255));
+    /** The strongest reason, and how many more there are. */
+    private static String reason(FlaggedChunk fc) {
+        if (fc.deepHidden) return "Only seen from above: dig below Y 0 and relog to check";
+        if (fc.reasons.isEmpty()) return null;
+        int more = fc.reasons.size() - 1;
+        return fc.reasons.get(0) + (more > 0 ? "  +" + more + " more" : "");
     }
 
     @Override

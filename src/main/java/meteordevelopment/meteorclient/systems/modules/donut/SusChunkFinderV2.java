@@ -17,12 +17,7 @@ import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.EmberAnim;
-import meteordevelopment.meteorclient.utils.render.EmberHudCards;
-import meteordevelopment.meteorclient.utils.render.NametagUtils;
-import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
-import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
-import org.joml.Vector3d;
 import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -167,38 +162,38 @@ public class SusChunkFinderV2 extends Module {
         .build()
     );
 
-    private final Setting<Boolean> centerDot = sgRender.add(new BoolSetting.Builder()
-        .name("center-dot")
-        .description("Marker in the middle of each zone's center chunk, where to dig down.")
+    private final Setting<Boolean> beacons = sgRender.add(new BoolSetting.Builder()
+        .name("beacons")
+        .description("A glowing beam up from the middle of each zone, where to dig down. Grey = weak, orange = likely, white-hot = strong.")
         .defaultValue(true)
         .build()
     );
 
-    private final Setting<Boolean> lookAtCard = sgRender.add(new BoolSetting.Builder()
-        .name("look-at-card")
-        .description("Show an inspection card when your crosshair is on a zone's center dot.")
+    private final Setting<Boolean> lookAtInfo = sgRender.add(new BoolSetting.Builder()
+        .name("look-at-info")
+        .description("Look at a zone's beacon to see how sure it is and how far, under your crosshair.")
         .defaultValue(true)
-        .visible(centerDot::get)
+        .visible(beacons::get)
         .build()
     );
 
     private final Setting<Double> lookAtAngle = sgRender.add(new DoubleSetting.Builder()
         .name("look-at-angle")
-        .description("How close (in degrees) the crosshair must be to a center dot to open its card.")
-        .defaultValue(6.0)
+        .description("How close (in degrees) the crosshair must be to a beacon to show its info.")
+        .defaultValue(4.0)
         .range(1.5, 15.0)
         .sliderRange(1.5, 15.0)
-        .visible(() -> centerDot.get() && lookAtCard.get())
+        .visible(() -> beacons.get() && lookAtInfo.get())
         .build()
     );
 
-    private final Setting<Double> cardScale = sgRender.add(new DoubleSetting.Builder()
-        .name("card-scale")
-        .description("Size of the inspection card.")
+    private final Setting<Double> infoScale = sgRender.add(new DoubleSetting.Builder()
+        .name("info-scale")
+        .description("Size of the info under your crosshair.")
         .defaultValue(1.0)
         .range(0.5, 2.5)
         .sliderRange(0.5, 2.5)
-        .visible(() -> centerDot.get() && lookAtCard.get())
+        .visible(() -> beacons.get() && lookAtInfo.get())
         .build()
     );
 
@@ -291,15 +286,11 @@ public class SusChunkFinderV2 extends Module {
     private FindsStorage.Context context = new FindsStorage.Context("", "");
     private List<Zone> saved = List.of();
 
-    // Render-thread state for the dot and card.
-    private static final double DOT_HEIGHT = 1.5;
-    private static final Color EMERALD = new Color(34, 197, 94, 255);
-    private static final Color AMBER = new Color(245, 158, 11, 255);
-    private static final Color MUTED_GREEN = new Color(110, 190, 130, 255);
+    // Render-thread state for the beacons and the info under the crosshair.
     private final EmberAnim.Clock clock = new EmberAnim.Clock(), cardClock = new EmberAnim.Clock();
     private double planeY;
-    private Zone hovered, cardZone;
-    private float shellAnim, cardAnim;
+    private Zone hovered, infoZone;
+    private float hoverPulse, infoAnim;
 
     private volatile int serverSimulation;
     /** Published by the worker, drawn by the render thread. */
@@ -869,7 +860,7 @@ public class SusChunkFinderV2 extends Module {
         planeY = followPlayerY.get() ? Math.floor(mc.player.getY()) : renderY.get();
         List<Zone> live = zones;
 
-        // Zones past render-range aren't drawn, pointed at or opened: they stay saved and counted.
+        // Zones past render-range aren't drawn or pointed at: they stay saved and counted.
         double px = mc.player.getX(), pz = mc.player.getZ();
         double range = (double) renderRange.get() * renderRange.get();
         List<Zone> shown = new ArrayList<>();
@@ -888,29 +879,34 @@ public class SusChunkFinderV2 extends Module {
             if (!covered) shown.add(zone);
         }
 
-        // The dot nearest the crosshair, within look-at-angle, opens the card.
+        // The beacon nearest the crosshair, within look-at-angle, shows its info.
+        Vec3d cam = mc.gameRenderer.getCamera().getCameraPos();
         Zone best = null;
-        if (centerDot.get() && lookAtCard.get()) {
-            Vec3d cam = mc.gameRenderer.getCamera().getCameraPos();
+        double bestAngle = lookAtAngle.get();
+        if (beacons.get() && lookAtInfo.get()) {
             Vec3d look = Vec3d.fromPolar(mc.gameRenderer.getCamera().getPitch(), mc.gameRenderer.getCamera().getYaw());
-            double bestAngle = lookAtAngle.get();
             for (Zone zone : shown) {
-                double dx = zone.centerX * 16.0 + 8 - cam.x, dy = planeY + DOT_HEIGHT - cam.y, dz = zone.centerZ * 16.0 + 8 - cam.z;
-                double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                if (dist < 0.5) continue;
-                double angle = Math.toDegrees(Math.acos(MathHelper.clamp((look.x * dx + look.y * dy + look.z * dz) / dist, -1, 1)));
+                double angle = FindBeacon.angleTo(cam, look, zone.centerX * 16.0 + 8, planeY, zone.centerZ * 16.0 + 8);
                 if (angle < bestAngle) {
                     bestAngle = angle;
                     best = zone;
                 }
             }
         }
-        if (best != hovered) shellAnim = 0;
+        if (best != null) FindBeacon.offer(this, bestAngle);
+        else FindBeacon.withdraw(this);
+        if (best != hovered) hoverPulse = 0;
         hovered = best;
-        if (best != null) cardZone = best;
-        shellAnim = EmberAnim.approach(shellAnim, best != null ? 1f : 0f, dt, 0.08);
+        if (best != null) infoZone = best;
+        hoverPulse = EmberAnim.approach(hoverPulse, best != null ? 1f : 0f, dt, 0.08);
 
-        for (Zone zone : shown) drawZone(event, zone, planeY, zone == best);
+        for (Zone zone : shown) {
+            drawZone(event, zone, planeY);
+            if (beacons.get()) {
+                FindBeacon.draw(event.renderer, zone.centerX * 16.0 + 8, planeY, zone.centerZ * 16.0 + 8, cam, FindBeacon.heat(zone.percent),
+                    zone == best ? hoverPulse : 0, false, zone.centerX * 31 + zone.centerZ, (zone.percent - 25) / 50.0);
+            }
+        }
         if (tracers.get()) drawTracers(event, shown, px, pz);
     }
 
@@ -932,11 +928,11 @@ public class SusChunkFinderV2 extends Module {
         for (int i = 0; i < near.size() && i < maxTracers.get(); i++) {
             Zone zone = near.get(i);
             event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z,
-                zone.centerX * 16.0 + 8, planeY + DOT_HEIGHT, zone.centerZ * 16.0 + 8, line);
+                zone.centerX * 16.0 + 8, planeY, zone.centerZ * 16.0 + 8, line);
         }
     }
 
-    private void drawZone(Render3DEvent event, Zone zone, double y, boolean target) {
+    private void drawZone(Render3DEvent event, Zone zone, double y) {
         Color fill = zoneColor.get(), line = centerColor.get();
         int r = zone.radius, size = 2 * r + 1;
 
@@ -961,193 +957,38 @@ public class SusChunkFinderV2 extends Module {
 
         double cx = zone.centerX * 16.0, cz = zone.centerZ * 16.0;
         event.renderer.box(cx, y, cz, cx + 16, y, cz + 16, new Color(line.r, line.g, line.b, 60), line, ShapeMode.Both, 0);
-
-        if (centerDot.get()) drawDot(event, cx + 8, y + DOT_HEIGHT, cz + 8, line, target ? shellAnim : 0);
     }
 
-    /** Same marker as the sus chunk finder: a small cube in a diamond shell that opens up while looked at. */
-    private void drawDot(Render3DEvent event, double x, double y, double z, Color color, float hover) {
-        var cam = mc.gameRenderer.getCamera().getCameraPos();
-        double dist = Math.sqrt((x - cam.x) * (x - cam.x) + (y - cam.y) * (y - cam.y) + (z - cam.z) * (z - cam.z));
-        double r = Math.max(0.2, Math.min(1.6, 0.2 + dist * 0.0045));
-
-        Color core = new Color(color.r, color.g, color.b, 150);
-        Color tick = new Color(color.r, color.g, color.b, (int) (color.a * 0.45));
-        event.renderer.box(x - r, y - r, z - r, x + r, y + r, z + r, core, color, ShapeMode.Both, 0);
-
-        double s = r * (1.8 + 0.55 * hover);
-        double top = y + s, bottom = y - s;
-        double[][] ring = {{x + s, z}, {x, z + s}, {x - s, z}, {x, z - s}};
-        for (int i = 0; i < 4; i++) {
-            double[] a = ring[i], b = ring[(i + 1) % 4];
-            event.renderer.line(a[0], y, a[1], b[0], y, b[1], color);
-            event.renderer.line(a[0], y, a[1], x, top, z, color);
-            event.renderer.line(a[0], y, a[1], x, bottom, z, color);
-        }
-        event.renderer.line(x, top, z, x, top + s * 2.4, z, tick);
-        event.renderer.line(x, bottom, z, x, bottom - s * 2.4, z, tick);
-    }
-
-    // Inspection card, laid out like the sus chunk finder's, on the shared glass card surface.
+    // What you see when you look at a zone's beacon: two short lines under the crosshair.
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         float dt = cardClock.tick();
-        boolean show = hovered != null && mc.currentScreen == null && !mc.options.hudHidden;
-        cardAnim = EmberAnim.approach(cardAnim, show ? 1f : 0f, dt, 0.07);
+        boolean show = hovered != null && FindBeacon.shows(this) && mc.currentScreen == null && !mc.options.hudHidden;
+        infoAnim = EmberAnim.approach(infoAnim, show ? 1f : 0f, dt, 0.07);
 
-        Zone zone = cardZone;
-        if (zone == null || cardAnim <= 0.01f || mc.player == null || mc.currentScreen != null || mc.options.hudHidden) return;
+        Zone zone = infoZone;
+        if (zone == null || infoAnim <= 0.01f || mc.player == null || mc.currentScreen != null || mc.options.hudHidden) return;
 
-        double cx = zone.centerX * 16.0 + 8, cz = zone.centerZ * 16.0 + 8, cy = planeY + DOT_HEIGHT;
-        Vector3d pos = new Vector3d(cx, cy, cz);
-        if (!NametagUtils.to2D(pos, 1, false)) return;
-
-        Vec3d cam = mc.gameRenderer.getCamera().getCameraPos();
-        double dist = Math.sqrt((cx - cam.x) * (cx - cam.x) + (cy - cam.y) * (cy - cam.y) + (cz - cam.z) * (cz - cam.z));
+        String verdict = zone.percent >= 75 ? "STRONG AFK SPOT" : zone.percent >= 50 ? "LIKELY AFK SPOT" : "WEAK AFK SPOT";
+        String where = Math.round(Math.sqrt(distanceSq(zone, mc.player.getX(), mc.player.getZ()))) + "m  ·  dig down in the middle";
+        String reason = zone.plants > 0
+            ? zone.grownPlants + "/" + zone.plants + " plants grown around it" + (zone.fromSave ? "  ·  saved" : "")
+            : zone.fromSave ? "Saved from an earlier session" : null;
 
         HudRenderer r = HudRenderer.INSTANCE;
         r.begin(event.drawContext);
         try {
-            drawCard(r, zone, pos.x, pos.y, dist, cardAnim);
+            int grownShare = zone.plants == 0 ? 0 : (int) Math.round(100.0 * Math.min(zone.grownPlants, zone.plants) / zone.plants);
+            FindBeacon.gauges(r, new FindBeacon.Gauge[] {
+                new FindBeacon.Gauge("ZONE", zone.percent, FindBeacon.BASE),
+                new FindBeacon.Gauge(zone.edge < 0 ? "EDGE ?" : "SHARP EDGE", Math.max(0, zone.edge), FindBeacon.FALSE_POS),
+                new FindBeacon.Gauge("PLANTS GROWN", grownShare, FindBeacon.GROWN)
+            }, infoAnim, infoScale.get());
+            FindBeacon.info(r, FindBeacon.heat(zone.percent), verdict, where, reason, infoAnim, infoScale.get());
         } finally {
             r.end();
         }
-    }
-
-    private void drawCard(HudRenderer r, Zone zone, double dotX, double dotY, double distance, float a) {
-        double s = cardScale.get() * 1.25;
-        double pad = 9 * s;
-        double titleScale = 0.8 * s, bodyScale = 0.68 * s, smallScale = 0.6 * s;
-        double titleH = r.textHeight(true, titleScale), bodyH = r.textHeight(false, bodyScale), smallH = r.textHeight(false, smallScale);
-
-        Color accent = EmberPalette.accent();
-        Color bright = EmberPalette.textBright();
-        Color dim = fade(bright, 0.72f), faint = fade(bright, 0.55f);
-
-        String title = "SUS ZONE [" + zone.centerX + ", " + zone.centerZ + "]";
-        String distLabel = Math.round(distance) + "m";
-        String sizeLabel = (2 * zone.radius + 1) + "x" + (2 * zone.radius + 1);
-
-        String status;
-        Color statusColor;
-        if (zone.percent >= 75) {
-            status = "STRONG AFK ZONE";
-            statusColor = EMERALD;
-        } else if (zone.percent >= 50) {
-            status = "LIKELY AFK ZONE";
-            statusColor = accent;
-        } else {
-            status = "WEAK ZONE";
-            statusColor = AMBER;
-        }
-        if (zone.fromSave) status += "  \u00B7  SAVED";
-
-        int bx = zone.centerX * 16 + 8, bz = zone.centerZ * 16 + 8;
-        String dig = "Dig down at " + bx + ", " + bz + ", relog below Y 0";
-
-        // Measure.
-        double badgeH = smallH + 6 * s;
-        double distW = EmberHudCards.badgeWidth(r, distLabel, smallScale, s), sizeW = EmberHudCards.badgeWidth(r, sizeLabel, smallScale, s);
-        double dotSize = 6 * s;
-        double w = Math.max(240 * s, pad * 2 + dotSize + 6 * s + r.textWidth(title, true, titleScale) + 12 * s + distW + 4 * s + sizeW);
-        for (String d : zone.details) w = Math.max(w, pad * 2 + 10 * s + r.textWidth(d, bodyScale));
-        w = Math.min(w, 340 * s);
-
-        double metricH = bodyH + 3 * s + 3 * s + 6 * s;
-        double statusH = smallH + 5 * s;
-        double rowH = bodyH + 3 * s;
-        double h = pad + titleH + 6 * s + 1 + 7 * s + statusH + 8 * s + metricH * 3
-            + smallH + 5 * s + rowH * zone.details.size() + 6 * s + rowH + pad;
-
-        int fbW = mc.getWindow().getFramebufferWidth(), fbH = mc.getWindow().getFramebufferHeight();
-        double slide = (1 - EmberAnim.easeOut(a)) * 10 * s;
-        double x = dotX + 18 * s + slide;
-        if (x + w > fbW - 8) x = dotX - 18 * s - w - slide;
-        x = MathHelper.clamp(x, 8, Math.max(8, fbW - w - 8));
-        double y = MathHelper.clamp(dotY - h / 2, 8, Math.max(8, fbH - h - 8));
-
-        // Leader from the dot to the card.
-        double anchorX = x > dotX ? x : x + w;
-        r.line(dotX, dotY, anchorX, y + h / 2, fade(accent, a * 0.55f));
-        double ring = 4 * s;
-        r.roundedQuad(dotX - ring, dotY - ring, ring * 2, ring * 2, ring, fade(accent, a * 0.35f));
-        r.roundedQuad(dotX - ring / 2, dotY - ring / 2, ring, ring, ring / 2, fade(accent, a));
-
-        EmberHudCards.surface(r, x, y, w, h, s, a, false);
-
-        double cy = y + pad;
-
-        // Header.
-        double dot0 = cy + (titleH - dotSize) / 2;
-        r.softGlow(x + pad, dot0, dotSize, dotSize, dotSize / 2, 4 * s, fade(accent, a * 0.6f));
-        r.roundedQuad(x + pad, dot0, dotSize, dotSize, dotSize / 2, fade(accent, a));
-        r.text(title, x + pad + dotSize + 6 * s, cy, fade(bright, a), true, titleScale);
-        double badgeX = x + w - pad - sizeW, badgeY = cy + (titleH - badgeH) / 2;
-        EmberHudCards.badge(r, sizeLabel, badgeX, badgeY, smallScale, s, bright, a);
-        EmberHudCards.badge(r, distLabel, badgeX - 4 * s - distW, badgeY, smallScale, s, bright, a);
-
-        cy += titleH + 6 * s;
-        divider(r, x + pad, cy, w - pad * 2, accent, a);
-        cy += 1 + 7 * s;
-
-        // Classification.
-        double statusW = r.textWidth(status, smallScale) + 12 * s;
-        r.roundedQuad(x + pad, cy, statusW, statusH, statusH / 2, fade(statusColor, a * 0.16f));
-        r.roundedQuad(x + pad + 5 * s, cy + (statusH - 3 * s) / 2, 3 * s, 3 * s, 1.5 * s, fade(statusColor, a));
-        r.text(status, x + pad + 10 * s, cy + (statusH - smallH) / 2, fade(lighten(statusColor), a), false, smallScale);
-        cy += statusH + 8 * s;
-
-        // Scores.
-        int grownShare = zone.plants == 0 ? 0 : (int) Math.round(100.0 * Math.min(zone.grownPlants, zone.plants) / zone.plants);
-        metric(r, "Zone score", zone.percent + "%", zone.percent, zone.percent >= 75 ? EMERALD : accent, x + pad, cy, w - pad * 2, bodyScale, bodyH, s, dim, bright, a);
-        cy += metricH;
-        metric(r, "Plants grown", zone.grownPlants + "/" + zone.plants, grownShare, MUTED_GREEN, x + pad, cy, w - pad * 2, bodyScale, bodyH, s, dim, bright, a);
-        cy += metricH;
-        metric(r, "Sharp edge", zone.edge < 0 ? "not loaded yet" : zone.edge + "%", Math.max(0, zone.edge),
-            zone.edge >= 60 ? MUTED_GREEN : AMBER, x + pad, cy, w - pad * 2, bodyScale, bodyH, s, dim, bright, a);
-        cy += metricH;
-
-        // What the square is made of.
-        r.text("SIGNALS", x + pad, cy, fade(faint, a), false, smallScale);
-        cy += smallH + 5 * s;
-        double textMax = w - pad * 2 - 10 * s;
-        for (String d : zone.details) {
-            double bullet = 3 * s;
-            r.roundedQuad(x + pad + 1 * s, cy + (bodyH - bullet) / 2, bullet, bullet, bullet / 2, fade(accent, a * 0.85f));
-            r.text(EmberHudCards.fit(r, d, bodyScale, textMax), x + pad + 10 * s, cy, fade(bright, a * 0.92f), false, bodyScale);
-            cy += rowH;
-        }
-
-        cy += 6 * s;
-        r.text(EmberHudCards.fit(r, dig, bodyScale, w - pad * 2), x + pad, cy, fade(lighten(accent), a), false, bodyScale);
-    }
-
-    private void metric(HudRenderer r, String label, String text, int value, Color fill, double x, double y, double w,
-                        double scale, double textH, double s, Color dim, Color bright, float a) {
-        r.text(label, x, y, fade(dim, a), false, scale);
-        double vw = r.textWidth(text, scale);
-        r.text(text, x + w - vw, y, fade(bright, a), false, scale);
-
-        double barY = y + textH + 3 * s, barH = 3 * s;
-        r.roundedQuad(x, barY, w, barH, barH / 2, fade(EmberPalette.track(), a * 0.9f));
-        double fw = w * MathHelper.clamp(value / 100.0, 0, 1);
-        if (fw >= barH) r.roundedQuad(x, barY, fw, barH, barH / 2, fade(fill, a));
-    }
-
-    private void divider(HudRenderer r, double x, double y, double w, Color accent, float a) {
-        r.quad(x, y, w, 1, fade(EmberPalette.divider(), a * 0.7f));
-        double lead = Math.min(w * 0.35, 60);
-        Color hot = fade(accent, a * 0.8f), clear = new Color(accent.r, accent.g, accent.b, 0);
-        r.quad(x, y, lead, 1, hot, clear, clear, hot);
-    }
-
-    private static Color lighten(Color c) {
-        return new Color((c.r + 255) / 2, (c.g + 255) / 2, (c.b + 255) / 2, c.a);
-    }
-
-    private static Color fade(Color c, float a) {
-        return new Color(c.r, c.g, c.b, MathHelper.clamp((int) (c.a * a), 0, 255));
     }
 
     @Override
