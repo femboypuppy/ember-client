@@ -20,4 +20,7 @@ public interface ClientPlayerInteractionManagerAccessor {
 
     @Accessor("currentBreakingPos")
     BlockPos meteor$getCurrentBreakingBlockPos();
+
+    @Accessor("blockBreakingCooldown")
+    int meteor$getBlockBreakingCooldown();
 }

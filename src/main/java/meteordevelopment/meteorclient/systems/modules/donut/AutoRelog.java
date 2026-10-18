@@ -142,12 +142,35 @@ public class AutoRelog extends Module {
             return;
         }
 
+        relog("Relogging to load below the deepslate");
+    }
+
+    /**
+     * Relogs now on another module's behalf: the auto miner, when the deepslate ahead of it arrived hidden. Only
+     * while this module is on, and never in combat.
+     *
+     * @return whether the relog started
+     */
+    public boolean relogNow(String why) {
+        if (!isActive() || reconnectAt >= 0 || mc.player == null || mc.getNetworkHandler() == null || server() == null) return false;
+        if (donutOnly.get() && !onDonut()) return false;
+        if (skipInCombat.get() && System.currentTimeMillis() - lastHurt < COMBAT_MS) return false;
+        relog(why);
+        return true;
+    }
+
+    /** Whether the disconnect under way is this module's relog, so other modules know you'll be right back. */
+    public boolean relogging() {
+        return isActive() && relogged;
+    }
+
+    private void relog(String why) {
         armed = false;
         relogged = true;
         attempts = 0;
         // Auto Reconnect, when on, rejoins from the disconnect screen itself; doing it here too would race it.
         if (!Modules.get().isActive(AutoReconnect.class)) reconnectAt = System.currentTimeMillis() + (long) (delay.get() * 1000);
-        mc.player.networkHandler.onDisconnect(new DisconnectS2CPacket(Text.literal("[Auto relog] Relogging to load below the deepslate")));
+        mc.player.networkHandler.onDisconnect(new DisconnectS2CPacket(Text.literal("[Auto relog] " + why)));
     }
 
     private void tickReconnect() {

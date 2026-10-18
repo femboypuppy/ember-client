@@ -418,6 +418,7 @@ public class Modules extends System<Modules> {
         add(new meteordevelopment.meteorclient.systems.modules.donut.SusChunkFinder());
         add(new meteordevelopment.meteorclient.systems.modules.donut.SusChunkFinderV2());
         add(new meteordevelopment.meteorclient.systems.modules.donut.AutoRelog());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.AutoMiner());
         add(new meteordevelopment.meteorclient.systems.modules.donut.TPAMacro());
         add(new meteordevelopment.meteorclient.systems.modules.donut.TunnelBaseFinder());
         add(new meteordevelopment.meteorclient.systems.modules.donut.VillagerESP());

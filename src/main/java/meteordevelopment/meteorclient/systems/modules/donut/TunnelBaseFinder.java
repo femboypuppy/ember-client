@@ -210,7 +210,7 @@ public class TunnelBaseFinder extends Module {
         worker.submit(() -> {
             if (!isActive() || gen != generation) return;
 
-            List<Run> runs = scan(chunk, needed, top);
+            List<Run> runs = scan(chunk, needed, top, ctx);
             List<Segment> fresh;
 
             synchronized (lock) {
@@ -352,7 +352,7 @@ public class TunnelBaseFinder extends Module {
         return new Segment(new Line(alongX, alongX ? find.z : find.x, find.y), start, start + length);
     }
 
-    private List<Run> scan(WorldChunk chunk, int needed, int maxHeight) {
+    private List<Run> scan(WorldChunk chunk, int needed, int maxHeight, FindsStorage.Context ctx) {
         List<Run> runs = new ArrayList<>();
 
         int baseX = chunk.getPos().getStartX();
@@ -367,7 +367,7 @@ public class TunnelBaseFinder extends Module {
             for (int lz = 1; lz < 15; lz++) {
                 int run = 0;
                 for (int lx = 0; lx <= 16; lx++) {
-                    if (lx < 16 && isTunnelCell(chunk, pos, baseX + lx, y, baseZ + lz, true)) {
+                    if (lx < 16 && isTunnelCell(chunk, pos, baseX + lx, y, baseZ + lz, true) && !dugByMiner(ctx, baseX + lx, y, baseZ + lz)) {
                         run++;
                         continue;
                     }
@@ -384,7 +384,7 @@ public class TunnelBaseFinder extends Module {
             for (int lx = 1; lx < 15; lx++) {
                 int run = 0;
                 for (int lz = 0; lz <= 16; lz++) {
-                    if (lz < 16 && isTunnelCell(chunk, pos, baseX + lx, y, baseZ + lz, false)) {
+                    if (lz < 16 && isTunnelCell(chunk, pos, baseX + lx, y, baseZ + lz, false) && !dugByMiner(ctx, baseX + lx, y, baseZ + lz)) {
                         run++;
                         continue;
                     }
@@ -398,6 +398,11 @@ public class TunnelBaseFinder extends Module {
         }
 
         return runs;
+    }
+
+    /** Your own tunnels from the auto miner are exactly this shape, so they are left out. */
+    private static boolean dugByMiner(FindsStorage.Context ctx, int x, int y, int z) {
+        return OwnDigging.contains(ctx, x, y, z) || OwnDigging.contains(ctx, x, y + 1, z);
     }
 
     /** A 1x2 air gap with solid floor, ceiling and walls on both sides. */
