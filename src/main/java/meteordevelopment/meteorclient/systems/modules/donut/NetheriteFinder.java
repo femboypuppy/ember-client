@@ -247,6 +247,8 @@ public class NetheriteFinder extends Module {
         var sections = chunk.getSectionArray();
         int x0 = chunk.getPos().getStartX(), z0 = chunk.getPos().getStartZ();
         BlockPos.Mutable pos = new BlockPos.Mutable();
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet buried = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        int open = 0;
         for (int i = 0; i < sections.length && i < 8; i++) {
             var section = sections[i];
             if (section == null || section.isEmpty() || !section.hasAny(s -> s.isOf(Blocks.ANCIENT_DEBRIS))) continue;
@@ -256,14 +258,56 @@ public class NetheriteFinder extends Module {
                     for (int z = 0; z < 16; z++) {
                         if (!section.getBlockState(x, y, z).isOf(Blocks.ANCIENT_DEBRIS)) continue;
                         pos.set(x0 + x, y0 + y, z0 + z);
-                        if (exposed(pos)) addDebris(pos.toImmutable());
+                        if (exposed(pos)) {
+                            open++;
+                            addDebris(pos.toImmutable());
+                        } else {
+                            buried.add(pos.asLong());
+                        }
                     }
                 }
             }
         }
+        noteLoad(chunk.getPos().toLong(), buried, open);
+    }
+
+    // How the server sends debris, logged to learn how its anti-xray works. Fake ores that change on every send
+    // give a low repeat share when the same chunk arrives twice; real debris repeats every time.
+
+    private final Long2ObjectOpenHashMap<it.unimi.dsi.fastutil.longs.LongOpenHashSet> lastBuried = new Long2ObjectOpenHashMap<>();
+    private int statChunks, statBuried, statOpen, statReloads, statRepeat, statRepeatOf, statLogged;
+    private long statLoggedAt;
+
+    private void noteLoad(long key, it.unimi.dsi.fastutil.longs.LongOpenHashSet buried, int open) {
+        statChunks++;
+        statBuried += buried.size();
+        statOpen += open;
+        var before = lastBuried.get(key);
+        if (before != null && !before.isEmpty()) {
+            statReloads++;
+            statRepeatOf += before.size();
+            for (long p : before) if (buried.contains(p)) statRepeat++;
+        }
+        if (lastBuried.size() > 20_000) lastBuried.clear();
+        lastBuried.put(key, buried);
+
+        if (statLogged < 3 && (buried.size() + open) > 0) {
+            statLogged++;
+            MeteorClient.LOG.info("[Ember Netherite] Chunk {} arrived with {} debris: {} open to air, {} buried", ChunkPos.getPackedX(key) + ", " + ChunkPos.getPackedZ(key),
+                buried.size() + open, open, buried.size());
+        }
+        if (ticks - statLoggedAt > 1200 && statChunks > 0) {
+            statLoggedAt = ticks;
+            MeteorClient.LOG.info("[Ember Netherite] Debris in packets: {} chunks, {} buried, {} open to air; {} chunks seen again, {} of {} buried debris in the same place again",
+                statChunks, statBuried, statOpen, statReloads, statRepeat, statRepeatOf);
+        }
     }
 
     private void addDebris(BlockPos pos) {
+        if (realDebris.size() < 400 && !realDebris.contains(pos)) {
+            MeteorClient.LOG.info("[Ember Netherite] Real debris at {} (seed says {})", pos.toShortString(),
+                seedSet && largeIndex >= 0 && explained(seedValue, List.of(pos), largeIndex, smallIndex) > 0 ? "yes" : "no");
+        }
         if (realDebris.size() < 400 && realDebris.add(pos) && debrisState != DEBRIS_SEARCHING) {
             // New evidence: look again, unless the seed was already proven.
             if (debrisState != DEBRIS_GOOD) debrisState = DEBRIS_UNKNOWN;
