@@ -6,11 +6,19 @@ from check_profile_sharing import stubs as shared_stubs
 ROOT = Path(__file__).resolve().parents[1]
 P = 'meteordevelopment/meteorclient/'
 JAVA = Path(os.environ['JAVA_HOME'])/'bin' if os.environ.get('JAVA_HOME') else Path(shutil.which('java')).parent
+gradle_home = Path(os.environ.get('GRADLE_USER_HOME', Path.home()/'.gradle'))
+orbit_version = re.search(r'^orbit\s*=\s*"([^"]+)"', (ROOT/'gradle/libs.versions.toml').read_text(), re.MULTILINE).group(1)
+orbit_jars = [p for p in (gradle_home/'caches/modules-2/files-2.1/meteordevelopment/orbit'/orbit_version).rglob('*.jar')
+              if not p.name.endswith(('-sources.jar', '-javadoc.jar'))]
+if not orbit_jars:
+    raise SystemExit('Build the client first to resolve its Orbit event-bus dependency.')
+ORBIT = str(sorted(orbit_jars)[0])
 stubs = dict(shared_stubs)
+stubs.pop('meteordevelopment/orbit/EventHandler.java', None)
 stubs[P+'MeteorClient.java'] = '''package meteordevelopment.meteorclient;
 public class MeteorClient {
- public static final java.io.File FOLDER=new java.io.File(".");public static final Client mc=new Client();public static final Bus EVENT_BUS=new Bus();public static final Log LOG=new Log();
- public static class Bus{public void subscribe(Object o){}}public static class Log{public void error(String s,Object... args){}}
+ public static final java.io.File FOLDER=new java.io.File(".");public static final Client mc=new Client();public static final meteordevelopment.orbit.EventBus EVENT_BUS=new meteordevelopment.orbit.EventBus();public static final Log LOG=new Log();
+ public static class Log{public void error(String s,Object... args){}}
  public static class Client{public World world;public Object player,screen;public final Keyboard keyboard=new Keyboard();public final Window window=new Window();public Window getWindow(){return window;}public void setScreen(Object s){screen=s;}}
  public static class Window{public double scale=1;public double getScaleFactor(){return scale;}}
  public static class Keyboard{String value="";public String getClipboard(){return value;}public void setClipboard(String s){value=s;}}
@@ -74,12 +82,14 @@ public class Config{public enum CelestialSky{Nebula,Aurora,Dusk}public enum Bass
 HARNESS=r'''import java.nio.file.*;import java.lang.reflect.*;import meteordevelopment.meteorclient.MeteorClient;import meteordevelopment.meteorclient.gui.*;import meteordevelopment.meteorclient.gui.screens.EmberClientSettingsScreen;import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;import meteordevelopment.meteorclient.utils.Utils;import meteordevelopment.meteorclient.utils.render.*;import meteordevelopment.meteorclient.systems.config.Config;import meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud;import net.minecraft.client.gui.*;import net.minecraft.client.input.*;
 public class RainAndSettingsChecks{
  static void require(boolean condition,String message){if(!condition)throw new AssertionError(message);}
- static final java.util.List<String> messages=EmberNotificationsHud.messages;static Method tick,left;
- static void weather(boolean requested,float strength)throws Exception{MeteorClient.mc.world.properties.raining=requested;MeteorClient.mc.world.strength=strength;tick.invoke(null,new meteordevelopment.meteorclient.events.world.TickEvent.Post());}
+ static final java.util.List<String> messages=EmberNotificationsHud.messages;
+ static void weather(boolean requested,float strength)throws Exception{MeteorClient.mc.world.properties.raining=requested;MeteorClient.mc.world.strength=strength;MeteorClient.EVENT_BUS.post(meteordevelopment.meteorclient.events.world.TickEvent.Post.get());}
  static class Menu extends EmberClientSettingsScreen{Menu(Page page){super(new GuiTheme(),page);}void draw(){for(int i=0;i<3;i++)onRenderBefore(new DrawContext(),0);}}
  static void click(Menu menu,String label){var point=GuiRenderer.labels.get(label);require(point!=null,"Missing visible control: "+label);menu.mouseClicked(new Click(point[0],point[1],0),false);menu.draw();}
  public static void main(String[] args)throws Exception{
-  tick=EmberRainStatus.class.getDeclaredMethod("onTick",meteordevelopment.meteorclient.events.world.TickEvent.Post.class);tick.setAccessible(true);left=EmberRainStatus.class.getDeclaredMethod("onLeft",meteordevelopment.meteorclient.events.game.GameLeftEvent.class);left.setAccessible(true);
+  MeteorClient.EVENT_BUS.registerLambdaFactory("meteordevelopment.meteorclient",(method,klass)->(java.lang.invoke.MethodHandles.Lookup)method.invoke(null,klass,java.lang.invoke.MethodHandles.lookup()));
+  boolean initialized=false;for(Method method:EmberRainStatus.class.getDeclaredMethods())if(method.isAnnotationPresent(meteordevelopment.meteorclient.utils.PostInit.class)){method.invoke(null);initialized=true;}
+  require(initialized&&MeteorClient.EVENT_BUS.isListening(meteordevelopment.meteorclient.events.world.TickEvent.Post.class)&&MeteorClient.EVENT_BUS.isListening(meteordevelopment.meteorclient.events.game.GameLeftEvent.class),"Real post-init registration must connect weather ticks and disconnects to Orbit");
   var c=Config.get();c.customWeather.set(false);MeteorClient.mc.world=new MeteorClient.World();MeteorClient.mc.player=new Object();weather(false,0);weather(true,0);
   require(messages.equals(java.util.List.of("Rain has started"))&&EmberRainStatus.indicatorVisible(),"Start notification and icon appear once");
   for(int i=0;i<1000;i++)weather(true,1);require(messages.size()==1,"Steady rain must not spam notifications");
@@ -89,10 +99,21 @@ public class RainAndSettingsChecks{
   c.rainNotifications.set(false);weather(true,1);require(messages.size()==3&&EmberRainStatus.indicatorVisible(),"Notifications and icon have independent toggles");c.rainStatusIcon.set(false);require(!EmberRainStatus.indicatorVisible(),"Disabling the icon applies immediately");c.rainStatusIcon.set(true);c.rainNotifications.set(true);weather(true,1);require(messages.size()==3,"Enabling notifications during rain must not invent a new start");
   c.rainEndingNotification.set(false);weather(false,1);require(messages.size()==3,"Ending notification can be disabled independently");weather(false,0);require(messages.size()==4,"Stopped alert still works");
   MeteorClient.mc.world=new MeteorClient.World();weather(true,1);require(messages.size()==4&&EmberRainStatus.indicatorVisible(),"Joining an already-raining world establishes a silent baseline");
-  left.invoke(null,new meteordevelopment.meteorclient.events.game.GameLeftEvent());require(!EmberRainStatus.indicatorVisible(),"Disconnect clears the badge immediately");
-  MeteorClient.mc.world=new MeteorClient.World();weather(false,0);c.customWeather.set(true);weather(false,0);require(messages.get(messages.size()-1).equals("Rain has started")&&EmberRainStatus.indicatorVisible(),"Local rain works without server rain");c.weatherStyle.set(WeatherSimulation.Kind.Snow);weather(true,1);require(!EmberRainStatus.indicatorVisible(),"Custom snow must not show a rain badge even when server rain is active");
+  MeteorClient.EVENT_BUS.post(meteordevelopment.meteorclient.events.game.GameLeftEvent.get());require(!EmberRainStatus.indicatorVisible(),"Disconnect clears the badge immediately");
+  MeteorClient.mc.world=new MeteorClient.World();weather(false,0);c.customWeather.set(true);weather(false,0);require(messages.get(messages.size()-1).equals("Rain has started")&&EmberRainStatus.indicatorVisible(),"Local rain works without server rain");c.weatherStyle.set(WeatherSimulation.Kind.Snow);weather(true,1);require(EmberRainStatus.indicatorVisible(),"Custom snow must not hide real server rain");
+  c.rainEndingNotification.set(true);
+  for(var style:WeatherSimulation.Kind.values())if(style!=WeatherSimulation.Kind.Rain){
+   c.weatherStyle.set(style);weather(false,0);int baseline=messages.size();require(!EmberRainStatus.indicatorVisible(),"Non-rain particles do not invent server rain");
+   weather(true,0);require(EmberRainStatus.indicatorVisible()&&messages.size()==baseline+1&&messages.get(baseline).equals("Rain has started"),style+" cannot suppress server rain start");
+   weather(true,1);weather(false,1);require(EmberRainStatus.ending()&&messages.get(messages.size()-1).equals("Rain is about to stop"),style+" cannot suppress the easing alert");
+   weather(false,.02f);require(EmberRainStatus.indicatorVisible(),style+" keeps the badge through the fade");weather(false,0);require(!EmberRainStatus.indicatorVisible()&&messages.get(messages.size()-1).equals("Rain has stopped"),style+" cannot suppress rain stopping");
+  }
+  c.weatherStyle.set(WeatherSimulation.Kind.Rain);weather(true,1);int overlapping=messages.size();c.customWeather.set(false);weather(true,1);require(EmberRainStatus.indicatorVisible()&&messages.size()==overlapping,"Disabling local rain does not stop real rain");
+  c.customWeather.set(true);weather(false,1);weather(false,0);require(EmberRainStatus.indicatorVisible()&&messages.size()==overlapping,"Local rain keeps the badge after server rain stops");c.customWeather.set(false);weather(false,0);
   c.customWeather.set(false);c.ambience.set(false);c.worldAtmosphere.set(false);weather(false,0);int before=messages.size();weather(true,1);require(messages.size()==before+1,"Server rain alerts work with atmosphere effects disabled");
   MeteorClient.mc.world=new MeteorClient.World();MeteorClient.mc.world.weather=false;weather(true,1);require(!EmberRainStatus.indicatorVisible(),"Dimensions without weather never show the icon");
+  c.ambience.set(true);c.worldAtmosphere.set(true);c.customWeather.set(true);c.weatherStyle.set(WeatherSimulation.Kind.Rain);weather(false,0);require(EmberRainStatus.indicatorVisible(),"Custom rain in a skylit weatherless dimension must match the actual particle renderer");
+  c.weatherDensity.set(0.0);weather(false,0);require(!EmberRainStatus.indicatorVisible(),"Zero local density leaves no phantom rain");c.weatherDensity.set(.5);MeteorClient.mc.world.sky=false;weather(false,0);require(!EmberRainStatus.indicatorVisible(),"Local rain needs a skylit dimension");
   var tracker=new RainTracker();require(tracker.update(false,0)==RainTracker.Change.None,"Quiet baseline");require(tracker.update(true,0)==RainTracker.Change.Started,"Rain request precedes visible strength");require(tracker.update(false,1)==RainTracker.Change.Ending,"Easing event");require(tracker.update(true,.7f)==RainTracker.Change.None&&!tracker.ending(),"Rain restarting during fade clears easing without a false fresh start");
   var glyph=new meteordevelopment.meteorclient.systems.hud.HudRenderer();EmberIcons.draw(glyph,EmberIcons.Glyph.RAIN,0,0,32,new meteordevelopment.meteorclient.utils.render.color.Color(255,255,255,255),new meteordevelopment.meteorclient.utils.render.color.Color(0,0,0,255));require(glyph.primitives>4&&glyph.primitives<120,"Rain icon has a bounded primitive budget");
   c.rainNotifications.set(true);c.rainEndingNotification.set(true);c.rainStatusIcon.set(true);c.customWeather.set(false);c.ambience.set(true);c.worldAtmosphere.set(true);
@@ -104,7 +125,7 @@ public class RainAndSettingsChecks{
   GuiRenderer.save(Path.of(args[0]).resolve("small-settings.json"));
   for(var page:EmberClientSettingsScreen.Page.values()){menu=new Menu(page);menu.draw();menu.keyPressed(new KeyInput(258,2));menu.draw();}
   require(EmberClientSettingsScreen.Page.values().length==11,"All focused settings pages are present");
-  System.out.println("Rain and settings passed: start/easing/stop, complete fades, 1,000 steady ticks, independent toggles, reconnect, local rain/snow, dimensions, icon bounds, real menu controls, sidebar clipping/scrolling and eleven category routes.");
+  System.out.println("Rain and settings passed: real Orbit post-init/tick/disconnect delivery, independent server/custom rain, every non-rain particle style, overlap, dimensions, complete fades, independent toggles, icon bounds and eleven settings routes.");
  }
 }'''
 
@@ -113,10 +134,10 @@ with tempfile.TemporaryDirectory(prefix='ember-rain-checks-') as temp:
     temp=Path(temp);sources=temp/'src';classes=temp/'classes'
     for name,body in stubs.items():
         target=sources/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_text(body,encoding='utf-8')
-    for name in ['gui/screens/EmberClientSettingsScreen','utils/render/StartMenuLayout','utils/render/RainTracker','utils/render/EmberRainStatus','utils/render/EmberIcons']:
+    for name in ['gui/screens/EmberClientSettingsScreen','utils/render/StartMenuLayout','utils/render/RainTracker','utils/render/EmberRainStatus','utils/render/EmberIcons','utils/PostInit','events/world/TickEvent','events/game/GameLeftEvent']:
         target=sources/(P+name+'.java');target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/'src/main/java'/(P+name+'.java'),target)
     (sources/'RainAndSettingsChecks.java').write_text(HARNESS,encoding='utf-8')
-    compiled=subprocess.run([str(JAVA/'javac'),'-encoding','UTF-8','-d',str(classes),*map(str,sources.rglob('*.java'))],capture_output=True,text=True)
+    compiled=subprocess.run([str(JAVA/'javac'),'-encoding','UTF-8','-cp',ORBIT,'-d',str(classes),*map(str,sources.rglob('*.java'))],capture_output=True,text=True)
     if compiled.returncode:
         print(compiled.stderr);raise SystemExit(compiled.returncode)
-    subprocess.run([str(JAVA/'java'),'-cp',str(classes),'RainAndSettingsChecks',str(output)],check=True)
+    subprocess.run([str(JAVA/'java'),'-cp',str(classes)+os.pathsep+ORBIT,'RainAndSettingsChecks',str(output)],check=True)

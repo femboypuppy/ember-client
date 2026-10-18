@@ -56,25 +56,22 @@ public final class EmberRainStatus {
             TRACKER.reset();
             world = mc.world;
         }
-        boolean requested = false;
-        float strength = 0;
-        if (mc.world.canHaveWeather()) {
-            // Blindness and roofs hide particles temporarily, without changing the selected
-            // weather.
-            boolean local =
-                    c.customWeather.get()
-                            && c.ambience.get()
-                            && c.worldAtmosphere.get()
-                            && mc.world.getDimension().hasSkyLight();
-            if (local) {
-                requested =
-                        c.weatherStyle.get() == WeatherSimulation.Kind.Rain
-                                && c.weatherDensity.get() > 0;
-                strength = requested ? 1 : 0;
-            } else {
-                requested = mc.world.getLevelProperties().isRaining();
-                strength = mc.world.getRainGradient(1);
-            }
+        // Local particles are a separate visual layer, not a replacement for server weather.
+        // Snow/leaves/petals must not hide a real rain event from the HUD.
+        boolean serverWeather = mc.world.canHaveWeather();
+        boolean requested = serverWeather && mc.world.getLevelProperties().isRaining();
+        float strength = serverWeather ? mc.world.getRainGradient(1) : 0;
+        // Match custom weather's skylight eligibility, including sky dimensions without native
+        // weather. Roofs and temporary blindness do not change the chosen local weather.
+        boolean localRain = c.customWeather.get()
+                && c.ambience.get()
+                && c.worldAtmosphere.get()
+                && mc.world.getDimension().hasSkyLight()
+                && c.weatherStyle.get() == WeatherSimulation.Kind.Rain
+                && c.weatherDensity.get() > 0;
+        if (localRain) {
+            requested = true;
+            strength = 1;
         }
         var change = TRACKER.update(requested, strength);
         if (!c.rainNotifications.get()) return;
