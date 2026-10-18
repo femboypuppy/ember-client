@@ -1,6 +1,6 @@
 
 <p align="center">
-<img src="src/main/resources/assets/meteor-client/icon.png" alt="Ember Client logo" width="15%"/>
+<img src="src/main/resources/assets/ember-client/icon.png" alt="Ember Client logo" width="15%"/>
 </p>
 
 <h1 align="center">Ember Client</h1>

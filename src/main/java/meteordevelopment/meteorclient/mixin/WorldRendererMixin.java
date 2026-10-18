@@ -88,7 +88,7 @@ public abstract class WorldRendererMixin implements IWorldRenderer {
 
     @WrapWithCondition(method = "method_62216", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/WeatherRendering;renderPrecipitation(Lnet/minecraft/client/render/VertexConsumerProvider;Lnet/minecraft/util/math/Vec3d;Lnet/minecraft/client/render/state/WeatherRenderState;)V"))
     private boolean shouldRenderPrecipitation(WeatherRendering instance, VertexConsumerProvider vertexConsumers, Vec3d pos, WeatherRenderState weatherRenderState) {
-        return !noRender.noWeather();
+        return !noRender.noWeather() && !meteordevelopment.meteorclient.utils.render.EmberWeather.active();
     }
 
     @WrapWithCondition(method = "method_62216", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/WorldBorderRendering;render(Lnet/minecraft/client/render/state/WorldBorderRenderState;Lnet/minecraft/util/math/Vec3d;DD)V"))

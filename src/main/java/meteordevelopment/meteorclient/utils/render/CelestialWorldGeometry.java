@@ -3,6 +3,8 @@ package meteordevelopment.meteorclient.utils.render;
 /** Stable celestial directions and world-anchored motes, independent of the game and GPU. */
 public final class CelestialWorldGeometry {
     private static final double TAU = Math.PI * 2;
+    private static int graphCount = -1;
+    private static int[][] graph = new int[0][];
     private CelestialWorldGeometry() {}
 
     public static void skyShell(CelestialMesh mesh) {
@@ -25,6 +27,68 @@ public final class CelestialWorldGeometry {
             double a = random(i * 7L + 2) * TAU + time * 0.0007, r = Math.sqrt(1 - y * y) * 32;
             double glow = intensity * (0.55 + 0.25 * Math.sin(time * (0.2 + random(i * 7L + 3) * 0.3) + i));
             star(mesh, Math.cos(a) * r, y * 32, Math.sin(a) * r, 0.035 + random(i * 7L + 4) * 0.065, glow, rgb);
+        }
+    }
+
+    public static double[] skyStarPosition(int index, double time) {
+        double y = .025 + random(index * 7L + 1) * .975;
+        double a = random(index * 7L + 2) * TAU + time * .0007;
+        double r = Math.sqrt(1 - y * y) * 32;
+        return new double[]{Math.cos(a) * r, y * 32, Math.sin(a) * r};
+    }
+
+    /** A cached graph of nearby real stars, rebuilt only when the star count changes. */
+    public static int[][] constellationEdges(double density) {
+        int count = (int) (1200 * Math.clamp(density, 0, 1));
+        if (count == graphCount) return graph;
+        graphCount = count;
+        if (count < 24) return graph = new int[0][];
+        var edges = new java.util.ArrayList<int[]>();
+        double[][] points = new double[count][];
+        for (int i = 0; i < count; i++) points[i] = skyStarPosition(i, 0);
+        boolean[] used = new boolean[count];
+        for (int group = 0; group < 8; group++) {
+            double elevation = .25 + group % 3 * .2, azimuth = group * TAU / 8;
+            double horizontal = Math.sqrt(1 - elevation * elevation) * 32;
+            double[] target = {Math.cos(azimuth) * horizontal, elevation * 32, Math.sin(azimuth) * horizontal};
+            int current = nearest(points, used, target, false);
+            if (current < 0) continue;
+            used[current] = true;
+            for (int step = 0; step < 4; step++) {
+                int next = nearest(points, used, points[current], true);
+                if (next < 0 || distanceSquared(points[current], points[next]) > 160) break;
+                edges.add(new int[]{current, next, group}); used[next] = true; current = next;
+            }
+        }
+        return graph = edges.toArray(int[][]::new);
+    }
+
+    private static int nearest(double[][] points, boolean[] used, double[] target, boolean minimum) {
+        int best = -1; double distance = Double.POSITIVE_INFINITY;
+        for (int i = 0; i < points.length; i++) if (!used[i]) {
+            double d = distanceSquared(points[i], target);
+            if ((!minimum || d > 2) && d < distance) { best = i; distance = d; }
+        }
+        return best;
+    }
+    private static double distanceSquared(double[] a, double[] b) {
+        return Math.pow(a[0] - b[0], 2) + Math.pow(a[1] - b[1], 2) + Math.pow(a[2] - b[2], 2);
+    }
+
+    public static void constellations(CelestialMesh mesh, double time, double density, double intensity, int rgb, int groups) {
+        if (density <= 0 || intensity <= 0) return;
+        for (int[] edge : constellationEdges(density)) {
+            if (edge[2] >= groups || !mesh.hasRoom(6)) continue;
+            double envelope = Math.pow(.5 + .5 * Math.sin(time * .18 + edge[2] * 1.7), 2);
+            int color = CelestialGeometry.color(rgb, intensity * .3 * envelope, .45);
+            double[] a = skyStarPosition(edge[0], time), b = skyStarPosition(edge[1], time);
+            double dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+            double ux = a[1] * dz - a[2] * dy, uy = a[2] * dx - a[0] * dz, uz = a[0] * dy - a[1] * dx;
+            double length = Math.sqrt(ux * ux + uy * uy + uz * uz);
+            if (length < 1e-8) continue;
+            double width = .035 / length; ux *= width; uy *= width; uz *= width;
+            mesh.quad(a[0]-ux,a[1]-uy,a[2]-uz,a[0]+ux,a[1]+uy,a[2]+uz,
+                b[0]+ux,b[1]+uy,b[2]+uz,b[0]-ux,b[1]-uy,b[2]-uz,color,color,color,color);
         }
     }
 

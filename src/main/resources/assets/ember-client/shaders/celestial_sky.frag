@@ -1,6 +1,6 @@
 #version 330 core
 in vec3 v_Direction;
-layout (std140) uniform SkyData { vec4 u_AccentStrength; vec4 u_Motion; };
+layout (std140) uniform SkyData { vec4 u_AccentStrength; vec4 u_Motion; vec4 u_Horizon; };
 out vec4 color;
 float hash(vec3 p) { p = fract(p * 0.3183099 + vec3(.1,.2,.3)); p *= 17.; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float noise(vec3 p) {
@@ -32,5 +32,9 @@ void main() {
     // Spherical noise avoids UV seams and singularities at the zenith.
     // Intensity changes the sky's brightness, never its coverage. A translucent
     // replacement would leave the original blue daytime sky mixed into every pixel.
-    color=vec4(base*(.35+.65*u_AccentStrength.a)*u_Motion.z,1.);
+    vec3 sky=base*(.35+.65*u_AccentStrength.a)*u_Motion.z;
+    float horizon=exp(-pow((d.y-.035)/max(.015,u_Horizon.y),2.))*smoothstep(-.12,.015,d.y);
+    // The band lives in the opaque sky pass, so mountains and translucent edges occlude it.
+    sky+=mix(accent,vec3(.82),.12)*horizon*u_Horizon.x*u_Horizon.z*(.75+.25*u_Motion.z);
+    color=vec4(sky,1.);
 }

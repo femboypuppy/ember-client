@@ -179,6 +179,13 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             style.toString(), () -> ambience.celestialSky.set(style), ambience.celestialSky.get() == style, dt);
         y += 46;
         y = slider(r, y, "Sky intensity", ambience.skyIntensity.get(), percent(ambience.skyIntensity.get()), ambience.skyIntensity::set, dt);
+        y = toggle(r, y, "Horizon glow", "A soft illuminated band behind distant mountains.", ambience.horizonGlow.get(), () -> ambience.horizonGlow.set(!ambience.horizonGlow.get()), dt);
+        if (ambience.horizonGlow.get()) {
+            y = slider(r, y, "Horizon brightness", ambience.horizonStrength.get(), percent(ambience.horizonStrength.get()), ambience.horizonStrength::set, dt);
+            y = slider(r, y, "Horizon band width", (ambience.horizonWidth.get() - .025) / .275, String.format("%.0f°", Math.toDegrees(Math.atan(ambience.horizonWidth.get()))), v -> ambience.horizonWidth.set(.025 + v * .275), dt);
+            y = toggle(r, y, "Slow Spotify pulses", "Requires React to Spotify below. Smooth pulses only affect the horizon band.", ambience.horizonBass.get(), () -> ambience.horizonBass.set(!ambience.horizonBass.get()), dt);
+            y = slider(r, y, "Horizon pulse strength", ambience.horizonPulse.get(), percent(ambience.horizonPulse.get()), ambience.horizonPulse::set, dt);
+        }
         y = section(r, y, "WORLD LIGHTING", "Balanced keeps terrain readable; Cinematic deepens the shadows.");
         double presetW = contentW / 3;
         action(r, contentX, y, presetW - 5, 34, "Vanilla", () -> lightingPreset(0), false, dt);
@@ -194,8 +201,39 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = toggle(r, y, "Sky stars", "Distant stars in the world sky.", ambience.worldStars.get(), () -> ambience.worldStars.set(!ambience.worldStars.get()), dt);
         y = toggle(r, y, "Floating motes", "Nearby drifting starlight with depth and terrain occlusion.", ambience.worldMotes.get(), () -> ambience.worldMotes.set(!ambience.worldMotes.get()), dt);
         y = slider(r, y, "Star brightness", ambience.starBrightness.get() / 2, percent(ambience.starBrightness.get()), v -> ambience.starBrightness.set(v * 2), dt);
+        y = toggle(r, y, "Constellations", "Faint lines connect selected sky stars and slowly fade in and out.", ambience.constellations.get(), () -> ambience.constellations.set(!ambience.constellations.get()), dt);
+        if (ambience.constellations.get()) {
+            y = slider(r, y, "Constellation brightness", ambience.constellationStrength.get(), percent(ambience.constellationStrength.get()), ambience.constellationStrength::set, dt);
+            y = slider(r, y, "Constellation groups", (ambience.constellationCount.get() - 1) / 7.0, ambience.constellationCount.get().toString(), v -> ambience.constellationCount.set(1 + (int) Math.round(v * 7)), dt);
+        }
         y = toggle(r, y, "Accent fog", "Tint distant haze while keeping nearby blocks readable.", ambience.accentFog.get(), () -> ambience.accentFog.set(!ambience.accentFog.get()), dt);
-        y = slider(r, y, "Fog amount", ambience.fogAmount.get(), percent(ambience.fogAmount.get()), ambience.fogAmount::set, dt);
+        y = slider(r, y, "Fog density", ambience.fogAmount.get(), percent(ambience.fogAmount.get()), ambience.fogAmount::set, dt);
+        y = slider(r, y, "Fog start", ambience.fogStart.get() / 512, String.format("%.0f blocks", ambience.fogStart.get()), v -> {
+            ambience.fogStart.set(v * 512);
+            if (ambience.fogEnd.get() < ambience.fogStart.get() + 8) ambience.fogEnd.set(ambience.fogStart.get() + 8);
+        }, dt);
+        y = slider(r, y, "Fog end", (ambience.fogEnd.get() - 16) / 1008, String.format("%.0f blocks", ambience.fogEnd.get()), v -> ambience.fogEnd.set(Math.max(ambience.fogStart.get() + 8, 16 + v * 1008)), dt);
+        y = section(r, y, "CUSTOM WEATHER", "Local visual weather, independent of server weather and biome.");
+        y = toggle(r, y, "Custom weather", "Wind, roof shelter, splashes and surface impacts. No permanent world changes.", ambience.customWeather.get(), () -> ambience.customWeather.set(!ambience.customWeather.get()), dt);
+        if (ambience.customWeather.get()) {
+            double weatherW = contentW / 3;
+            for (var kind : meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind.values()) {
+                String name = switch (kind) { case Snow -> "Glowing snow"; case Leaves -> "Autumn leaves"; default -> kind.name(); };
+                action(r, contentX + weatherW * (kind.ordinal() % 3), y + (kind.ordinal() / 3) * 42, weatherW - 5, 34,
+                    name, () -> ambience.weatherStyle.set(kind), ambience.weatherStyle.get() == kind, dt);
+            }
+            y += 90;
+            y = slider(r, y, "Weather density", ambience.weatherDensity.get(), percent(ambience.weatherDensity.get()), ambience.weatherDensity::set, dt);
+            y = slider(r, y, "Weather radius", (ambience.weatherRadius.get() - 8) / 32, String.format("%.0f blocks", ambience.weatherRadius.get()), v -> ambience.weatherRadius.set(8 + v * 32), dt);
+            y = slider(r, y, "Weather speed", (ambience.weatherSpeed.get() - .2) / 1.8, percent(ambience.weatherSpeed.get()), v -> ambience.weatherSpeed.set(.2 + v * 1.8), dt);
+            y = slider(r, y, "Wind strength", ambience.weatherWind.get(), percent(ambience.weatherWind.get()), ambience.weatherWind::set, dt);
+            y = slider(r, y, "Wind heading", ambience.weatherWindDirection.get() / 360, String.format("%.0f°", ambience.weatherWindDirection.get()), v -> ambience.weatherWindDirection.set(v * 360), dt);
+            y = toggle(r, y, "Surface impacts", "Rain splashes and water ripples; snow and petals briefly settle.", ambience.weatherImpacts.get(), () -> ambience.weatherImpacts.set(!ambience.weatherImpacts.get()), dt);
+            y = toggle(r, y, "Match weather to accent", "Off keeps natural rain, snow, autumn and petal colors.", ambience.weatherAccent.get(), () -> ambience.weatherAccent.set(!ambience.weatherAccent.get()), dt);
+            if (ambience.weatherStyle.get() == meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind.Rain)
+                y = toggle(r, y, "Rain sound", "Quieter under nearby roofs and silent deep underground.", ambience.weatherSound.get(), () -> ambience.weatherSound.set(!ambience.weatherSound.get()), dt);
+        }
+        y = section(r, y, "GROUND LIGHT", "Accent illumination on nearby terrain.");
         y = toggle(r, y, "Ground lighting", "Soft light on nearby ground, in the current accent color.", ambience.groundLight.get(), () -> ambience.groundLight.set(!ambience.groundLight.get()), dt);
         y = slider(r, y, "Light brightness", ambience.groundLightIntensity.get(), percent(ambience.groundLightIntensity.get()), ambience.groundLightIntensity::set, dt);
         y = slider(r, y, "Light radius", (ambience.groundLightRadius.get() - 1.5) / 5.5, String.format("%.1f blocks", ambience.groundLightRadius.get()), v -> ambience.groundLightRadius.set(1.5 + v * 5.5), dt);

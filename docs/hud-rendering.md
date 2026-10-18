@@ -38,7 +38,7 @@ an in-game check with the built mod.
 
 ## Top-bar logo
 
-The brand glyph uses `assets/meteor-client/icon.png`, shared with the Fabric icon
+The brand glyph uses `assets/ember-client/icon.png`, shared with the Fabric icon
 and README. The compact Liquid Glass status bar places it in an inner rounded
 tile with a gentle float/pulse and a highlight following the rounded perimeter.
 In **HUD → Ember Status Bar**, **Animate logo** switches motion off and **Logo

@@ -31,6 +31,7 @@ public final class EmberWorldAtmosphere {
     private static long previous;
     private static Object world;
     private static double time;
+    private static double horizonEnvelope;
     private static long previousLightSample;
     private static double sampledLightReaction = 1;
     private EmberWorldAtmosphere() {}
@@ -123,10 +124,14 @@ public final class EmberWorldAtmosphere {
 
     private static void advance() {
         long now = System.nanoTime();
-        if (world != mc.world) { world = mc.world; previous = now; time = 0; }
+        if (world != mc.world) { world = mc.world; previous = now; time = 0; horizonEnvelope = 0; }
         double dt = previous == 0 ? 0 : Math.clamp((now - previous) / 1e9, 0, 0.1); previous = now;
         var c = Config.get();
-        if (!mc.isPaused()) time += dt * c.ambienceSpeed.get();
+        if (!mc.isPaused()) {
+            time += dt * c.ambienceSpeed.get();
+            double target = c.horizonBass.get() ? MusicReactive.level() : 0;
+            horizonEnvelope = EmberAnim.approach(horizonEnvelope, target, dt, target > horizonEnvelope ? .65 : 1.8);
+        }
     }
 
     /** Called inside Minecraft's sky pass, before cutouts, translucency, terrain and entities. */
@@ -148,11 +153,16 @@ public final class EmberWorldAtmosphere {
             CelestialRenderer.draw(SHELL, sky, camera.x, 0, camera.z, 0, 0);
             SkyUniforms.STORAGE.clear();
             var uniform = SkyUniforms.STORAGE.write(new SkyUniforms.Data(accent.r / 255f, accent.g / 255f, accent.b / 255f,
-                c.skyIntensity.get().floatValue(), (float) time, c.celestialSky.get().ordinal(), (float) skyExposure()));
+                c.skyIntensity.get().floatValue(), (float) time, c.celestialSky.get().ordinal(), (float) skyExposure(),
+                c.horizonGlow.get() ? c.horizonStrength.get().floatValue() : 0, c.horizonWidth.get().floatValue(),
+                (float) (1 + horizonEnvelope * c.horizonPulse.get() * .9)));
             submitSky(sky, true, uniform);
         }
         if (c.worldStars.get()) {
-            STARS.clear(); CelestialWorldGeometry.skyStars(STARS, time, c.ambienceDensity.get(), intensity, rgb);
+            STARS.clear();
+            if (c.constellations.get()) CelestialWorldGeometry.constellations(STARS, time, c.ambienceDensity.get(),
+                intensity * c.constellationStrength.get(), rgb, c.constellationCount.get());
+            CelestialWorldGeometry.skyStars(STARS, time, c.ambienceDensity.get(), intensity, rgb);
             if (stars == null) stars = new Renderer3D(MeteorRenderPipelines.WORLD_COLORED_LINES_DEPTH, MeteorRenderPipelines.CELESTIAL_STARS);
             stars.begin(); CelestialRenderer.draw(STARS, stars, camera.x, 0, camera.z, 0, 0); submitSky(stars, false, null);
         }
@@ -201,10 +211,11 @@ public final class EmberWorldAtmosphere {
     }
 
     private static final class SkyUniforms {
-        static final DynamicUniformStorage<Data> STORAGE = new DynamicUniformStorage<>("Ember - Celestial sky", 32, 2);
-        private record Data(float r, float g, float b, float intensity, float time, float style, float exposure) implements DynamicUniformStorage.Uploadable {
+        static final DynamicUniformStorage<Data> STORAGE = new DynamicUniformStorage<>("Ember - Celestial sky", 48, 2);
+        private record Data(float r, float g, float b, float intensity, float time, float style, float exposure,
+                            float horizon, float width, float pulse) implements DynamicUniformStorage.Uploadable {
             @Override public void write(ByteBuffer buffer) {
-                Std140Builder.intoBuffer(buffer).putVec4(r, g, b, intensity).putVec4(time, style, exposure, 0);
+                Std140Builder.intoBuffer(buffer).putVec4(r, g, b, intensity).putVec4(time, style, exposure, 0).putVec4(horizon, width, pulse, 0);
             }
         }
     }

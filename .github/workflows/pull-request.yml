@@ -29,6 +29,9 @@ jobs:
       - name: Check sky render-pass lifecycle
         run: python3 scripts/check_sky_submission.py
 
+      - name: Check configurable atmosphere fog
+        run: python3 scripts/check_atmosphere_fog.py
+
       - name: Build
         run: ./gradlew build
 

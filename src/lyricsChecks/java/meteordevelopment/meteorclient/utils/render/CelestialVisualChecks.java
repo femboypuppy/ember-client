@@ -7,6 +7,7 @@ import java.nio.file.Path;
 public final class CelestialVisualChecks {
     public static void main(String[] args) throws Exception {
         HandLayoutChecks.run();
+        WeatherChecks.run();
         EspGeometryChecks.run();
         terrainSurfaces();
         worldAtmosphere();
@@ -192,6 +193,15 @@ public final class CelestialVisualChecks {
         append(json, mesh, "sky", "Celestial sky");
         mesh.clear(); CelestialWorldGeometry.skyStars(mesh, 5, 0.8, 0.85, 0xA78BE0);
         append(json, mesh, "sky-stars", "Celestial stars");
+        mesh.clear(); CelestialWorldGeometry.constellations(mesh, 5, .8, .8, 0xA78BE0, 8);
+        append(json, mesh, "constellations", "Fading constellations");
+        for (var kind : WeatherSimulation.Kind.values()) {
+            var weather = new WeatherSimulation();
+            for (int i = 0; i < 500; i++) weather.tick(.05, 0, 2, 0, kind, .7, 16, .5, 35, 1, true,
+                (x, z) -> new WeatherSimulation.Surface(x < 0 ? .5 : 0, x >= 0));
+            mesh.clear(); WeatherGeometry.build(mesh, weather, 0, 2, 0, .5, 16, 0xA78BE0, false);
+            append(json, mesh, "weather-" + kind.name(), kind.name());
+        }
         mesh.clear();
         for (int x = -4; x < 4; x++) for (int z = -4; z < 4; z++) {
             double y = x >= 1 && x <= 2 && z >= -1 && z <= 1 ? 0.5 : 0;

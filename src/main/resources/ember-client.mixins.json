@@ -202,6 +202,7 @@
     "TransformationMixin",
     "TridentItemMixin",
     "Vec3dMixin",
+    "WeatherRenderingMixin",
     "WorldAccessor",
     "WorldBorderMixin",
     "WorldChunkMixin",

@@ -107,6 +107,16 @@ public class Config extends System<Config> {
         .name("celestial-sky-style").description("Choose a nebula, aurora or soft dusk skybox.").defaultValue(CelestialSky.Nebula).build());
     public final Setting<Double> skyIntensity = sgVisual.add(new DoubleSetting.Builder()
         .name("accent-sky-intensity").description("Brightness of the complete custom sky. Zero restores the original sky.").defaultValue(0.75).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Boolean> horizonGlow = sgVisual.add(new BoolSetting.Builder()
+        .name("horizon-glow").description("A soft accent-colored band behind distant mountains.").defaultValue(true).build());
+    public final Setting<Double> horizonStrength = sgVisual.add(new DoubleSetting.Builder()
+        .name("horizon-glow-strength").defaultValue(0.3).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> horizonWidth = sgVisual.add(new DoubleSetting.Builder()
+        .name("horizon-glow-width").defaultValue(0.1).range(0.025, 0.3).sliderRange(0.025, 0.3).build());
+    public final Setting<Boolean> horizonBass = sgVisual.add(new BoolSetting.Builder()
+        .name("horizon-spotify-pulses").description("Slowly pulse the horizon on Spotify bass. Requires React to Spotify.").defaultValue(true).build());
+    public final Setting<Double> horizonPulse = sgVisual.add(new DoubleSetting.Builder()
+        .name("horizon-pulse-strength").defaultValue(0.45).range(0, 1).sliderRange(0, 1).build());
     public final Setting<Boolean> worldLighting = sgVisual.add(new BoolSetting.Builder()
         .name("accent-world-lighting").description("Match daylight on blocks and entities to the accent sky using Minecraft's lightmap.").defaultValue(true).build());
     public final Setting<Double> worldDarkness = sgVisual.add(new DoubleSetting.Builder()
@@ -123,10 +133,40 @@ public class Config extends System<Config> {
         .name("world-motes").description("Show nearby floating starlight independently of distant sky stars.").defaultValue(true).build());
     public final Setting<Double> starBrightness = sgVisual.add(new DoubleSetting.Builder()
         .name("star-brightness").description("Brightness of world stars and motes without changing their density.").defaultValue(1).range(0, 2).sliderRange(0, 2).build());
+    public final Setting<Boolean> constellations = sgVisual.add(new BoolSetting.Builder()
+        .name("world-constellations").description("Faint, slowly fading lines connecting selected sky stars.").defaultValue(true).build());
+    public final Setting<Double> constellationStrength = sgVisual.add(new DoubleSetting.Builder()
+        .name("constellation-strength").defaultValue(0.55).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Integer> constellationCount = sgVisual.add(new IntSetting.Builder()
+        .name("constellation-count").defaultValue(6).range(1, 8).sliderRange(1, 8).build());
     public final Setting<Boolean> accentFog = sgVisual.add(new BoolSetting.Builder()
         .name("accent-fog").description("A subtle accent tint and atmospheric haze in open-air dimensions.").defaultValue(true).build());
     public final Setting<Double> fogAmount = sgVisual.add(new DoubleSetting.Builder()
-        .name("accent-fog-amount").description("Fog tint and distant haze strength. Nearby terrain stays clear.").defaultValue(0.3).range(0, 1).sliderRange(0, 1).build());
+        .name("accent-fog-amount").description("Maximum atmospheric fog opacity. Independent of render distance and liquid fog.").defaultValue(0.3).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> fogStart = sgVisual.add(new DoubleSetting.Builder()
+        .name("atmosphere-fog-start").description("Distance in blocks where atmospheric haze starts.").defaultValue(48).range(0, 512).sliderRange(0, 384).build());
+    public final Setting<Double> fogEnd = sgVisual.add(new DoubleSetting.Builder()
+        .name("atmosphere-fog-end").description("Distance where haze reaches its selected opacity. Stays visible at high render distances.").defaultValue(224).range(16, 1024).sliderRange(32, 512).build());
+    public final Setting<Boolean> customWeather = sgVisual.add(new BoolSetting.Builder()
+        .name("custom-atmospheric-weather").description("Local visual weather independent of server weather and biome, with roof and surface collisions.").defaultValue(false).build());
+    public final Setting<meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind> weatherStyle = sgVisual.add(new EnumSetting.Builder<meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind>()
+        .name("atmospheric-weather-style").defaultValue(meteordevelopment.meteorclient.utils.render.WeatherSimulation.Kind.Rain).build());
+    public final Setting<Double> weatherDensity = sgVisual.add(new DoubleSetting.Builder()
+        .name("atmospheric-weather-density").defaultValue(0.55).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> weatherRadius = sgVisual.add(new DoubleSetting.Builder()
+        .name("atmospheric-weather-radius").description("Local particle radius in blocks; larger values spread the same particle budget.").defaultValue(20).range(8, 40).sliderRange(8, 40).build());
+    public final Setting<Double> weatherSpeed = sgVisual.add(new DoubleSetting.Builder()
+        .name("atmospheric-weather-speed").defaultValue(1).range(0.2, 2).sliderRange(0.2, 2).build());
+    public final Setting<Double> weatherWind = sgVisual.add(new DoubleSetting.Builder()
+        .name("atmospheric-weather-wind").description("Wind strength, including slow natural gusts.").defaultValue(0.35).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> weatherWindDirection = sgVisual.add(new DoubleSetting.Builder()
+        .name("atmospheric-weather-wind-direction").description("Wind heading in degrees.").defaultValue(35).range(0, 360).sliderRange(0, 360).build());
+    public final Setting<Boolean> weatherImpacts = sgVisual.add(new BoolSetting.Builder()
+        .name("atmospheric-weather-impacts").description("Rain splashes, water ripples, and briefly settled snow, leaves and petals.").defaultValue(true).build());
+    public final Setting<Boolean> weatherAccent = sgVisual.add(new BoolSetting.Builder()
+        .name("atmospheric-weather-accent").description("Blend particles with the current accent; off keeps natural weather colors.").defaultValue(false).build());
+    public final Setting<Boolean> weatherSound = sgVisual.add(new BoolSetting.Builder()
+        .name("atmospheric-rain-sound").description("Local rain ambience that becomes quieter under roofs.").defaultValue(true).build());
     public final Setting<Double> lightShimmer = sgVisual.add(new DoubleSetting.Builder()
         .name("world-light-shimmer").description("Slow moving pools of accent light across nearby terrain.").defaultValue(0.3).range(0, 1).sliderRange(0, 1).build());
     public final Setting<Boolean> groundLight = sgVisual.add(new BoolSetting.Builder()

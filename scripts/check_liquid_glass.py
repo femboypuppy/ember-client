@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "build/ui-tools"))
 import moderngl
 from PIL import Image, ImageDraw
 
-SHADERS = ROOT / "src/main/resources/assets/meteor-client/shaders"
+SHADERS = ROOT / "src/main/resources/assets/ember-client/shaders"
 ctx = moderngl.create_standalone_context(require=330)
 program = ctx.program(
     vertex_shader=(SHADERS / "pos_tex_color.vert").read_text(),
