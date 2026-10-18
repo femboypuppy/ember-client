@@ -112,6 +112,14 @@ public final class EmberTitleScreen extends Screen {
             if (openFade < .995)
                 r.quad(0, 0, w, h, new Color(0, 0, 0, (int) (255 * (1 - openFade))));
             label("EMBER", 30 * u, 25 * u, 15 * u, DIM, false, 150 * u);
+            if (!locked && !customizing && reveal > .9) {
+                var accounts = new StartMenuLayout.Rect(w - 154 * u, 20 * u, 124 * u, 30 * u);
+                r.roundedRect(accounts.x(), accounts.y(), accounts.w(), accounts.h(), 8 * u,
+                    new Color(255, 255, 255, accounts.contains(mx, my) ? 35 : 18));
+                label("Accounts", accounts.x() + accounts.w() / 2, accounts.y() + 7 * u,
+                    17 * u, alpha(WHITE, reveal), true, accounts.w() - 12 * u);
+                hits.add(new Hit(accounts, () -> mc.setScreen(GuiThemes.get().accountsScreen())));
+            }
             updateClock();
             if (panelFade < .99) {
                 Color clockColor = alpha(WHITE, openFade * (1 - panelFade));

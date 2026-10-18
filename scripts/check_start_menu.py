@@ -8,6 +8,7 @@ JAVA=Path(os.environ['JAVA_HOME'])/'bin' if os.environ.get('JAVA_HOME') else Pat
 P='meteordevelopment/meteorclient/'
 stubs=dict(shared_stubs)
 stubs[P+'gui/GuiThemes.java']='package meteordevelopment.meteorclient.gui;public class GuiThemes{static final GuiTheme THEME=new GuiTheme();public static GuiTheme get(){return THEME;}}'
+stubs[P+'gui/GuiTheme.java']=stubs[P+'gui/GuiTheme.java'].replace('final Text text=', 'public net.minecraft.client.gui.screen.Screen accountsScreen(){return new net.minecraft.client.gui.screen.TitleScreen();}final Text text=')
 stubs[P+'MeteorClient.java']='''package meteordevelopment.meteorclient;
 public class MeteorClient {
  public static final String VERSION="1.8.5-dev";public static final Client mc=new Client();public static final java.io.File FOLDER=new java.io.File(".");public static final Log LOG=new Log();
@@ -81,6 +82,8 @@ public class StartMenuChecks {
   require(EmberGlass.captures==0,"Locked screen must not run the blur chain");
   dock(first,0);require(MeteorClient.mc.currentScreen==first,"Unlock click must not launch a world");dock(first,0);require(MeteorClient.mc.currentScreen==first,"Double-click unlock must not leak into Play");
   draw(first,60);GuiRenderer.save(Path.of(args[0]).resolve("dock.json"));require(EmberGlass.captures>0,"Unlocked glass can capture the wallpaper");
+  var accounts=GuiRenderer.labels.get("Accounts");require(accounts!=null,"Unlocked startup menu exposes Accounts");
+  click(first,accounts[0],accounts[1]);require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.TitleScreen,"Accounts shortcut opens the theme's account screen");MeteorClient.mc.setScreen(first);draw(first,2);
   dock(first,3);draw(first,30);GuiRenderer.save(Path.of(args[0]).resolve("customize.json"));
   var panel=StartMenuLayout.frame(Utils.width,Utils.height,1).panel();double u=StartMenuLayout.frame(Utils.width,Utils.height,1).unit();
   click(first,panel.x()+panel.w()*.75,panel.y()+149*u);require(Config.get().startWallpaper.get()==StartMenuLayout.Wallpaper.Midnight,"Wallpaper selection must persist");

@@ -53,6 +53,11 @@ jobs:
       - name: Check startup menu
         run: python3 scripts/check_start_menu.py
 
+      - name: Check account switcher
+        run: |
+          python3 scripts/check_accounts.py
+          python3 scripts/check_account_login.py
+
       - name: Check rain status and settings categories
         run: python3 scripts/check_rain_status.py
 

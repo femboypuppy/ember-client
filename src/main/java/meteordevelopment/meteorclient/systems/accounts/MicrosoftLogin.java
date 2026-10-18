@@ -33,7 +33,8 @@ public class MicrosoftLogin {
     );
 
     private static final AtomicReference<Future<?>> loginTask = new AtomicReference<>();
-    private static final AtomicBoolean cancelled = new AtomicBoolean();
+    private static AtomicBoolean cancellation = new AtomicBoolean();
+    private static CompletableFuture<String> loginUrl;
 
     private MicrosoftLogin() {
     }
@@ -41,20 +42,23 @@ public class MicrosoftLogin {
     public record LoginData(String mcToken, String newRefreshToken, String uuid, String username) {
     }
 
-    public static String getRefreshToken(Consumer<String> callback) {
+    /** Returns immediately; each request owns its cancellation flag, including late callbacks. */
+    public static synchronized CompletableFuture<String> startLogin(Consumer<String> callback) {
         cancelLogin();
-        cancelled.set(false);
-
+        AtomicBoolean cancelled = new AtomicBoolean();
+        cancellation = cancelled;
         CompletableFuture<String> urlFuture = new CompletableFuture<>();
+        loginUrl = urlFuture;
 
         loginTask.set(MeteorExecutor.executor.submit(() -> {
             try {
                 JavaAuthManager authManager = JavaAuthManager.create(MinecraftAuth.createHttpClient())
                     .msaApplicationConfig(APPLICATION_CONFIG)
                     .login(DeviceCodeMsaAuthService::new, (Consumer<MsaDeviceCode>) deviceCode -> {
+                        if (cancelled.get()) return;
                         String urlString = deviceCode.getDirectVerificationUri();
                         urlFuture.complete(urlString);
-                        Util.getOperatingSystem().open(urlString);
+                        if (!cancelled.get()) Util.getOperatingSystem().open(urlString);
                     });
 
                 MsaToken msaToken = authManager.getMsaToken().getUpToDate();
@@ -76,9 +80,13 @@ public class MicrosoftLogin {
             }
 
         }));
+        return urlFuture;
+    }
 
+    /** Retained for addons and older account screens. New UI uses the nonblocking API. */
+    public static String getRefreshToken(Consumer<String> callback) {
         try {
-            return urlFuture.get();
+            return startLogin(callback).get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("Interrupted while starting Microsoft login", e);
@@ -109,8 +117,9 @@ public class MicrosoftLogin {
         }
     }
 
-    public static void cancelLogin() {
-        cancelled.set(true);
+    public static synchronized void cancelLogin() {
+        cancellation.set(true);
+        if (loginUrl != null) { loginUrl.cancel(false); loginUrl = null; }
 
         Future<?> task = loginTask.getAndSet(null);
 
