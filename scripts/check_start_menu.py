@@ -12,7 +12,8 @@ stubs[P+'MeteorClient.java']='''package meteordevelopment.meteorclient;
 public class MeteorClient {
  public static final String VERSION="1.8.5-dev";public static final Client mc=new Client();public static final java.io.File FOLDER=new java.io.File(".");public static final Log LOG=new Log();
  public static String identifier(String path){return "ember-client:"+path;}public static class Log{public void error(String m,Object...v){}}
- public static class Client {public Object world,options=new Object(),currentScreen;public int stopped;public final Window window=new Window();public Window getWindow(){return window;}public void setScreen(Object screen){currentScreen=screen;}public void scheduleStop(){stopped++;}public Manager getTextureManager(){return new Manager();}}
+ public static class Options {public boolean skipMultiplayerWarning;}
+ public static class Client {public Object world,currentScreen;public final Options options=new Options();public int stopped;public final Window window=new Window();public Window getWindow(){return window;}public void setScreen(Object screen){currentScreen=screen;}public void scheduleStop(){stopped++;}public Manager getTextureManager(){return new Manager();}}
  public static class Window{public double scale=1;public double getScaleFactor(){return scale;}}
  public static class Manager{public Texture getTexture(String id){if(!id.startsWith("ember-client:textures/menu/"))throw new AssertionError("Wrong namespace");return new Texture();}}
  public static class Texture{public Object getGlTextureView(){return this;}public Object getSampler(){return this;}}
@@ -52,7 +53,7 @@ stubs['net/minecraft/client/gui/screen/Screen.java']='''package net.minecraft.cl
 public class Screen{public Screen parent;public Screen(Text t){}public void render(DrawContext c,int x,int y,float d){}public void renderBackground(DrawContext c,int x,int y,float d){}public boolean shouldCloseOnEsc(){return true;}public boolean shouldPause(){return true;}public boolean mouseClicked(Click c,boolean d){return false;}public boolean keyPressed(KeyInput k){return false;}public boolean keyReleased(KeyInput k){return false;}public void close(){}}
 '''
 stubs['net/minecraft/client/gui/screen/TitleScreen.java']='package net.minecraft.client.gui.screen;public class TitleScreen extends Screen{public TitleScreen(){super(null);}}'
-for package,cls,arguments in [('world','SelectWorldScreen','Screen parent'),('multiplayer','MultiplayerWarningScreen','Screen parent'),('option','OptionsScreen','Screen parent,Object options')]:
+for package,cls,arguments in [('world','SelectWorldScreen','Screen parent'),('multiplayer','MultiplayerWarningScreen','Screen parent'),('multiplayer','MultiplayerScreen','Screen parent'),('option','OptionsScreen','Screen parent,Object options')]:
     stubs[f'net/minecraft/client/gui/screen/{package}/{cls}.java']=f'package net.minecraft.client.gui.screen.{package};import net.minecraft.client.gui.screen.Screen;public class {cls} extends Screen{{public {cls}({arguments}){{super(null);this.parent=parent;}}}}'
 stubs['net/minecraft/util/Util.java']='package net.minecraft.util;public class Util{public static Util getOperatingSystem(){return new Util();}public void open(String url){if(!url.startsWith("https://unsplash.com/photos/"))throw new AssertionError("Unexpected wallpaper link");}}'
 stubs['org/lwjgl/glfw/GLFW.java']='''package org.lwjgl.glfw;public class GLFW{public static final int GLFW_MOUSE_BUTTON_LEFT=0,GLFW_KEY_ENTER=257,GLFW_KEY_KP_ENTER=335,GLFW_KEY_SPACE=32,GLFW_KEY_ESCAPE=256,GLFW_KEY_TAB=258,GLFW_KEY_LEFT=263,GLFW_KEY_RIGHT=262,GLFW_KEY_UP=265,GLFW_KEY_DOWN=264,GLFW_MOD_SHIFT=1,GLFW_MOD_CONTROL=2,GLFW_KEY_A=65,GLFW_KEY_V=86,GLFW_KEY_BACKSPACE=259;}'''
@@ -98,6 +99,16 @@ public class StartMenuChecks {
   MeteorClient.mc.window.scale=1;
   var menu=new EmberTitleScreen(false);MeteorClient.mc.setScreen(menu);draw(menu,30);key(menu,262);draw(menu,2);key(menu,257);
   require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.multiplayer.MultiplayerWarningScreen,"Arrow navigation must select Multiplayer");release(menu,257);
+  MeteorClient.mc.options.skipMultiplayerWarning=true;
+  for(int attempt=0;attempt<3;attempt++){
+   var returning=new EmberTitleScreen(false);MeteorClient.mc.setScreen(returning);draw(returning,30);dock(returning,1);
+   require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen,"Remember do-not-show-again on every visit, including a new title screen");
+   require(((net.minecraft.client.gui.screen.Screen)MeteorClient.mc.currentScreen).parent==returning,"Multiplayer returns to the current menu");
+   MeteorClient.mc.setScreen(returning);key(returning,262);key(returning,257);release(returning,257);
+   require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen,"Keyboard respects the same saved warning preference");
+  }
+  MeteorClient.mc.options.skipMultiplayerWarning=false;MeteorClient.mc.setScreen(menu);dock(menu,1);
+  require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.multiplayer.MultiplayerWarningScreen,"Re-enabling the warning must restore it");
   MeteorClient.mc.setScreen(menu);dock(menu,3);draw(menu,30);key(menu,258);key(menu,257);require(Config.get().startMenu.get()==StartMenuLayout.Style.Classic,"Keyboard can switch to the classic menu");require(!EmberMenuWallpaper.enabled(),"Classic restores the normal panorama path");
   Config.get().startMenu.set(StartMenuLayout.Style.LockScreen);MeteorClient.mc.world=new Object();require(!EmberMenuWallpaper.enabled(),"Never replace in-world backgrounds");MeteorClient.mc.world=null;
   for(int[] size:new int[][]{{640,360},{870,519},{1600,900},{3440,1440},{3840,2160}}){

@@ -123,6 +123,17 @@ public abstract class MeteorRenderPipelines {
         .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST).withDepthWrite(false)
         .withBlend(new BlendFunction(SourceFactor.SRC_ALPHA, DestFactor.ONE)).withCull(false).build());
 
+    /** Uses vanilla's deferred entity uniforms, retaining depth without obscuring later geometry. */
+    public static final RenderPipeline HOLOGRAPHIC_HAT = add(new ExtendedRenderPipelineBuilder()
+        .withLocation(MeteorClient.identifier("pipeline/holographic_hat"))
+        .withVertexFormat(VertexFormats.POSITION_COLOR, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexShader(MeteorClient.identifier("shaders/holographic_hat.vert"))
+        .withFragmentShader(MeteorClient.identifier("shaders/pos_color.frag"))
+        .withUniform("Projection", UniformType.UNIFORM_BUFFER)
+        .withUniform("DynamicTransforms", UniformType.UNIFORM_BUFFER)
+        .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST).withDepthWrite(false)
+        .withBlend(BlendFunction.TRANSLUCENT).withCull(false).build());
+
     // UI
 
     public static final RenderPipeline UI_COLORED = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)

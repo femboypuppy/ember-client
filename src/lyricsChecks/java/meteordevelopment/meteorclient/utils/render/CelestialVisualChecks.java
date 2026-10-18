@@ -7,6 +7,7 @@ import java.nio.file.Path;
 public final class CelestialVisualChecks {
     public static void main(String[] args) throws Exception {
         HandLayoutChecks.run();
+        HatVisualChecks.run();
         WeatherChecks.run();
         InteractionVisualChecks.run();
         EspGeometryChecks.run();
@@ -180,6 +181,10 @@ public final class CelestialVisualChecks {
     private static void export(Path path) throws Exception {
         StringBuilder json = new StringBuilder("[");
         var mesh = new CelestialMesh(60000);
+        for (var style : HatGeometry.Style.values()) {
+            mesh.clear(); HatGeometry.build(mesh, style, .7, 1, .85, .75, true, .3, 0xA78BE0);
+            append(json, mesh, "hat", style.name());
+        }
         for (var style : CelestialGeometry.WingStyle.values()) {
             mesh.clear(); CelestialGeometry.wings(mesh, style, 0.7, 1, 0.93, 0.7, 0.8, 14, 0xA78BE0, 0.85);
             append(json, mesh, "wings", style.name());

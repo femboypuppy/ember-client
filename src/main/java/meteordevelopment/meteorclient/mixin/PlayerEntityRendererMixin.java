@@ -12,6 +12,7 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.render.Chams;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.ChamsMaterials;
+import meteordevelopment.meteorclient.utils.render.HatFeatureRenderer;
 import net.minecraft.client.model.ModelPart;
 import net.minecraft.client.network.ClientPlayerLikeEntity;
 import net.minecraft.client.render.RenderLayer;
@@ -49,6 +50,7 @@ public abstract class PlayerEntityRendererMixin<AvatarlikeEntity extends PlayerL
     @Inject(method = "<init>", at = @At("RETURN"))
     private void init$chams(CallbackInfo info) {
         chams = Modules.get().get(Chams.class);
+        addFeature(new HatFeatureRenderer(this));
     }
 
     // Chams - Player scale

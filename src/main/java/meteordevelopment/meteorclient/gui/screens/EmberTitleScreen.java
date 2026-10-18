@@ -18,6 +18,7 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.TitleScreen;
 import net.minecraft.client.gui.screen.multiplayer.MultiplayerWarningScreen;
+import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
 import net.minecraft.client.gui.screen.option.OptionsScreen;
 import net.minecraft.client.gui.screen.world.SelectWorldScreen;
 import net.minecraft.client.input.KeyInput;
@@ -382,7 +383,8 @@ public final class EmberTitleScreen extends Screen {
     private void activate(StartMenuLayout.Action action) {
         switch (action) {
             case Play -> mc.setScreen(new SelectWorldScreen(this));
-            case Multiplayer -> mc.setScreen(new MultiplayerWarningScreen(this));
+            case Multiplayer -> mc.setScreen(mc.options.skipMultiplayerWarning
+                ? new MultiplayerScreen(this) : new MultiplayerWarningScreen(this));
             case Settings -> mc.setScreen(new OptionsScreen(this, mc.options));
             case Menu -> {
                 customizing = !customizing;

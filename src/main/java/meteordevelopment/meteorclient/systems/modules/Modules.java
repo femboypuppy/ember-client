@@ -554,6 +554,7 @@ public class Modules extends System<Modules> {
         add(new ItemHighlight());
         add(new JumpCircles());
         add(new Wings());
+        add(new Hats());
         add(new LightOverlay());
         add(new LogoutSpots());
         add(new Marker());

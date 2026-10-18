@@ -97,6 +97,26 @@ sprinting. The attachment follows interpolated player position and smoothly
 tracks body yaw. Wings are hidden in first person by default. This cosmetic is
 rendered locally and is not sent to other players.
 
+## Hats
+
+Enable **Render → Hats** and press **F5**. The cosmetic is local, like Wings, and starts disabled.
+
+- **Hologram:** a translucent cone with a bright brim, fine scan bands and wireframe seams.
+- **Halo:** two floating light rings with orbiting diamond details.
+- **Crown:** eight luminous points, small gems and a translucent band.
+- **Witch:** a wide brim and a tall, bent tip.
+- **TopHat:** a flat brim, tall crown and glowing hatband.
+
+Every style supports accent matching or a custom color, size, height, opacity, glow,
+scanlines, color shifting, animation speed and gentle floating movement. Set color
+shift to zero for a consistent accent; set animation speed to zero to freeze the
+effect. Raise height to clear a helmet, or enable **Hide with helmet**.
+
+The hat attaches to the rendered head, including head turns, crouching, swimming,
+gliding and player scaling. It is hidden in first person, for invisible players
+and spectators. It respects scene depth and does not change equipment or send
+cosmetics to the server. Each renderer reuses a 24,000-vertex mesh.
+
 ## Custom circles / Jump Circles
 
 The existing **Jump Circles** module retains its saved ID and setting names.
