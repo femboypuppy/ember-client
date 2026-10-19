@@ -8,6 +8,7 @@ public final class CelestialVisualChecks {
     public static void main(String[] args) throws Exception {
         HandLayoutChecks.run();
         HatVisualChecks.run();
+        SceneVisualChecks.run();
         WeatherChecks.run();
         InteractionVisualChecks.run();
         EspGeometryChecks.run();

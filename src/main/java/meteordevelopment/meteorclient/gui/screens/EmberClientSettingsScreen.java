@@ -48,6 +48,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         Lighting("World lighting", "Daylight, foliage color and ground glow"),
         Weather("Weather", "Rain alerts, local weather, wind and fog"),
         Effects("Effects", "Movement, water wakes, placements and block breaks"),
+        Scene("Scene visuals", "Bloom, floating geometry and curved light trails"),
+        Players("Player cosmetics", "Auras, bright halos and orbiting ribbons"),
         Bass("Bass reaction", "Spotify bass and visual reactions"),
         Typography("Typography", "Choose a readable font for Ember"),
         Widgets("HUD widgets", "Choose what appears in your game"),
@@ -150,6 +152,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             case Lighting -> lighting(r, start, dt);
             case Weather -> weather(r, start, dt);
             case Effects -> effects(r, start, dt);
+            case Scene -> scene(r, start, dt);
+            case Players -> players(r, start, dt);
             case Bass -> bass(r, start, dt);
             case Typography -> typography(r, start, dt);
             case Widgets -> widgets(r, start, dt);
@@ -211,6 +215,44 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             y = toggle(r, y, "Accent tint", "Blend your accent color into the glass.", c.glassAccent.get(), () -> c.glassAccent.set(!c.glassAccent.get()), dt);
             if (EmberAppearance.liquid()) y = slider(r, y, "Animation speed", c.liquidMotion.get() / 2, percent(c.liquidMotion.get()), v -> c.liquidMotion.set(v * 2), dt);
         }
+        return y;
+    }
+
+    private double scene(GuiRenderer r, double y, double dt) {
+        var c = Config.get();
+        y = section(r, y, "BLOOM", "Soft light around bright world details. The HUD stays sharp.");
+        y = toggle(r, y, "Bloom", "Glow from the world's brightest colors.", c.bloom.get(), () -> c.bloom.set(!c.bloom.get()), dt);
+        if (c.bloom.get()) {
+            y = slider(r, y, "Bloom strength", c.bloomStrength.get(), percent(c.bloomStrength.get()), c.bloomStrength::set, dt);
+            y = slider(r, y, "Brightness threshold", (c.bloomThreshold.get() - .2) / .8, percent(c.bloomThreshold.get()), v -> c.bloomThreshold.set(.2 + v * .8), dt);
+            y = slider(r, y, "Glow radius", c.bloomRadius.get(), percent(c.bloomRadius.get()), c.bloomRadius::set, dt);
+        }
+        y = section(r, y, "FLOATING GEOMETRY", "Rotating cubes, crystals and wireframe shapes in the world.");
+        y = toggle(r, y, "Geometric particles", "Shapes fade smoothly at the edge of their volume.", c.geometricParticles.get(), () -> c.geometricParticles.set(!c.geometricParticles.get()), dt);
+        y = slider(r, y, "Geometry density", c.geometricDensity.get(), percent(c.geometricDensity.get()), c.geometricDensity::set, dt);
+        y = slider(r, y, "Geometry size", (c.geometricSize.get() - .1) / 1.4, String.format("%.2f", c.geometricSize.get()), v -> c.geometricSize.set(.1 + v * 1.4), dt);
+        y = section(r, y, "LIGHT TRAILS", "Curved comets with a bright head and fading tail.");
+        y = toggle(r, y, "Curved trails", "Ambient light streaks drift between the shapes.", c.curvedTrails.get(), () -> c.curvedTrails.set(!c.curvedTrails.get()), dt);
+        y = slider(r, y, "Trail density", c.curvedTrailDensity.get(), percent(c.curvedTrailDensity.get()), c.curvedTrailDensity::set, dt);
+        y = slider(r, y, "Particle brightness", c.sceneEffectBrightness.get(), percent(c.sceneEffectBrightness.get()), c.sceneEffectBrightness::set, dt);
+        y = slider(r, y, "Animation speed", c.sceneEffectSpeed.get() / 2, percent(c.sceneEffectSpeed.get()), v -> c.sceneEffectSpeed.set(v * 2), dt);
+        return y;
+    }
+
+    private double players(GuiRenderer r, double y, double dt) {
+        var c = Config.get();
+        y = section(r, y, "PLAYER COSMETICS", "Local visual effects that follow players and respect walls.");
+        y = toggle(r, y, "Show on yourself", "Your cosmetics appear in third person.", c.cosmeticsSelf.get(), () -> c.cosmeticsSelf.set(!c.cosmeticsSelf.get()), dt);
+        y = toggle(r, y, "Show on other players", "Decorate nearby visible players on your screen.", c.cosmeticsOthers.get(), () -> c.cosmeticsOthers.set(!c.cosmeticsOthers.get()), dt);
+        y = slider(r, y, "Viewing distance", (c.cosmeticRange.get() - 8) / 56, String.format("%.0f blocks", c.cosmeticRange.get()), v -> c.cosmeticRange.set(8 + v * 56), dt);
+        y = section(r, y, "STARLIGHT AURA", "Orbiting sparks and gently rising wisps.");
+        y = toggle(r, y, "Player auras", "A soft animated aura around the player's body.", c.playerAuras.get(), () -> c.playerAuras.set(!c.playerAuras.get()), dt);
+        y = slider(r, y, "Aura brightness", c.auraStrength.get(), percent(c.auraStrength.get()), c.auraStrength::set, dt);
+        y = section(r, y, "HALOS & RIBBONS", "Bright head rings with accent-colored spirals around the body.");
+        y = toggle(r, y, "Bright halos", "A floating luminous ring above each player's head.", c.playerHalos.get(), () -> c.playerHalos.set(!c.playerHalos.get()), dt);
+        y = slider(r, y, "Halo radius", (c.haloSize.get() - .2) / .7, String.format("%.2f blocks", c.haloSize.get()), v -> c.haloSize.set(.2 + v * .7), dt);
+        y = toggle(r, y, "Swirling rings & ribbons", "Animated orbiting rings and two rising ribbons.", c.playerRibbons.get(), () -> c.playerRibbons.set(!c.playerRibbons.get()), dt);
+        y = slider(r, y, "Ribbon brightness", c.ribbonStrength.get(), percent(c.ribbonStrength.get()), c.ribbonStrength::set, dt);
         return y;
     }
 
@@ -325,6 +367,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         }
         y = section(r, y, "FOG & HAZE", "Set nearby clarity and distant haze independently of render distance.");
         y = toggle(r, y, "Accent fog", "Tint distant haze while keeping nearby blocks readable.", ambience.accentFog.get(), () -> ambience.accentFog.set(!ambience.accentFog.get()), dt);
+        y = toggle(r, y, "Depth-based fog", "Keep haze independent of other mods' fog-distance overrides.", ambience.depthFog.get(), () -> ambience.depthFog.set(!ambience.depthFog.get()), dt);
         y = slider(r, y, "Fog density", ambience.fogAmount.get(), percent(ambience.fogAmount.get()), ambience.fogAmount::set, dt);
         y = slider(r, y, "Fog start", ambience.fogStart.get() / 512, String.format("%.0f blocks", ambience.fogStart.get()), v -> {
             ambience.fogStart.set(v * 512);

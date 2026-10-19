@@ -53,6 +53,11 @@ jobs:
       - name: Check music bridge and artwork lifecycle
         run: python3 scripts/check_music_connection.py
 
+      - name: Check rain settings and scene effects
+        run: |
+          python3 scripts/check_rain_status.py
+          python3 scripts/check_scene_effects.py
+
       - name: Check hand editor and mirror lifecycle
         run: python3 scripts/check_hand_editor.py
 

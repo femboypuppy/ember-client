@@ -51,8 +51,9 @@ public final class EmberWorldAtmosphere {
     public static boolean fogEnabled() { return openSky() && Config.get().accentFog.get() && Config.get().fogAmount.get() > 0; }
     public static boolean fogHazeEnabled() {
         // Underwater/lava/snow distances belong to Minecraft's medium-specific fog.
-        return fogEnabled() && mc.gameRenderer.getCamera().getSubmersionType() == CameraSubmersionType.NONE;
+        return fogAirEnabled() && !Config.get().depthFog.get();
     }
+    public static boolean fogAirEnabled() { return fogEnabled() && mc.gameRenderer.getCamera().getSubmersionType() == CameraSubmersionType.NONE; }
     public static boolean skyActive() { return openSky() && Config.get().accentSky.get() && Config.get().skyIntensity.get() > 0; }
     public static boolean lightingEnabled() {
         return openSky() && Config.get().worldLighting.get() && Config.get().vanillaLightMix.get() < 1

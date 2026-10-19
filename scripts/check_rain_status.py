@@ -124,8 +124,10 @@ public class RainAndSettingsChecks{
   Utils.height=360;menu=new Menu(EmberClientSettingsScreen.Page.Appearance);menu.draw();require(!GuiRenderer.labels.containsKey("Music & lyrics"),"Small windows clip the bottom navigation rows");menu.mouseScrolled(150,160,0,-100);menu.draw();require(GuiRenderer.labels.containsKey("Music & lyrics"),"Sidebar scrolling reveals the last category");click(menu,"Music & lyrics");require(GuiRenderer.labels.containsKey("PLAYBACK"),"Visible category opens the correct page");
   GuiRenderer.save(Path.of(args[0]).resolve("small-settings.json"));
   for(var page:EmberClientSettingsScreen.Page.values()){menu=new Menu(page);menu.draw();menu.keyPressed(new KeyInput(258,2));menu.draw();}
-  require(EmberClientSettingsScreen.Page.values().length==11,"All focused settings pages are present");
-  System.out.println("Rain and settings passed: real Orbit post-init/tick/disconnect delivery, independent server/custom rain, every non-rain particle style, overlap, dimensions, complete fades, independent toggles, icon bounds and eleven settings routes.");
+  Utils.height=700;menu=new Menu(EmberClientSettingsScreen.Page.Scene);menu.draw();require(GuiRenderer.labels.containsKey("BLOOM"),"Scene visuals has its own page");click(menu,"Bloom");require(!c.bloom.get(),"Bloom toggle controls the real setting");
+  menu=new Menu(EmberClientSettingsScreen.Page.Players);menu.draw();require(GuiRenderer.labels.containsKey("PLAYER COSMETICS"),"Player cosmetics has its own page");click(menu,"Show on other players");require(!c.cosmeticsOthers.get(),"Player target toggle controls the real setting");
+  require(EmberClientSettingsScreen.Page.values().length==13,"All focused settings pages are present");
+  System.out.println("Rain and settings passed: real Orbit post-init/tick/disconnect delivery, independent server/custom rain, every non-rain particle style, overlap, dimensions, complete fades, independent toggles, icon bounds and thirteen settings routes including scene visuals and player cosmetics.");
  }
 }'''
 

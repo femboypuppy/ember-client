@@ -59,7 +59,9 @@ jobs:
           python3 scripts/check_account_login.py
 
       - name: Check rain status and settings categories
-        run: python3 scripts/check_rain_status.py
+        run: |
+          python3 scripts/check_rain_status.py
+          python3 scripts/check_scene_effects.py
 
       - name: Check hand editor and mirror lifecycle
         run: python3 scripts/check_hand_editor.py

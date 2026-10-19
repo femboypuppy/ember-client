@@ -17,7 +17,7 @@ stays visible; turning custom Rain off during server rain does not create a fals
 stop. Ordinary server alerts work with atmospheric effects disabled. Sheltering
 under a roof or temporary blindness does not switch the chosen local rain off.
 
-Settings now have separate pages for **Appearance**, **Start menu**, **Atmosphere**, **Stars & meteors**, **World lighting**, **Weather**, **Effects**, **Bass reaction**, **Typography**, **HUD widgets**, and **Music & lyrics**. Weather also contains local precipitation, wind, impacts and fog controls. Scroll the sidebar on small windows, or use Ctrl+Tab / Ctrl+Shift+Tab to change categories. The existing setting keys and config-sharing sections are preserved.
+Settings now have separate pages for **Appearance**, **Start menu**, **Atmosphere**, **Stars & meteors**, **World lighting**, **Weather**, **Effects**, **Scene visuals**, **Player cosmetics**, **Bass reaction**, **Typography**, **HUD widgets**, and **Music & lyrics**. Weather also contains local precipitation, wind, impacts and fog controls. Scroll the sidebar on small windows, or use Ctrl+Tab / Ctrl+Shift+Tab to change categories. The existing setting keys and config-sharing sections are preserved.
 
 After building the client, `python scripts/check_rain_status.py` exercises the
 production observer with the same Orbit event bus as Minecraft. It discovers its

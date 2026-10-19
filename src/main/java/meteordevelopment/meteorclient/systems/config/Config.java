@@ -148,6 +148,48 @@ public class Config extends System<Config> {
         .name("atmosphere-fog-start").description("Distance in blocks where atmospheric haze starts.").defaultValue(48).range(0, 512).sliderRange(0, 384).build());
     public final Setting<Double> fogEnd = sgVisual.add(new DoubleSetting.Builder()
         .name("atmosphere-fog-end").description("Distance where haze reaches its selected opacity. Stays visible at high render distances.").defaultValue(224).range(16, 1024).sliderRange(32, 512).build());
+    public final Setting<Boolean> depthFog = sgVisual.add(new BoolSetting.Builder()
+        .name("depth-atmospheric-fog").description("Apply colored haze from scene depth, independently of other mods' fog distances.").defaultValue(true).build());
+    public final Setting<Boolean> bloom = sgVisual.add(new BoolSetting.Builder()
+        .name("scene-bloom").description("Soft glow around bright world details, before the HUD is drawn.").defaultValue(true).build());
+    public final Setting<Double> bloomStrength = sgVisual.add(new DoubleSetting.Builder()
+        .name("bloom-strength").defaultValue(0.35).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> bloomThreshold = sgVisual.add(new DoubleSetting.Builder()
+        .name("bloom-threshold").description("Brightness required to produce bloom. Higher values keep the scene clearer.").defaultValue(0.78).range(0.2, 1).sliderRange(0.2, 1).build());
+    public final Setting<Double> bloomRadius = sgVisual.add(new DoubleSetting.Builder()
+        .name("bloom-radius").defaultValue(0.5).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Boolean> geometricParticles = sgVisual.add(new BoolSetting.Builder()
+        .name("geometric-particles").description("Floating crystals, translucent cubes and wireframe shapes anchored in the world.").defaultValue(true).build());
+    public final Setting<Double> geometricDensity = sgVisual.add(new DoubleSetting.Builder()
+        .name("geometric-density").defaultValue(0.4).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> geometricSize = sgVisual.add(new DoubleSetting.Builder()
+        .name("geometric-size").defaultValue(0.6).range(0.1, 1.5).sliderRange(0.1, 1.5).build());
+    public final Setting<Boolean> curvedTrails = sgVisual.add(new BoolSetting.Builder()
+        .name("curved-light-trails").description("Drifting curved comet trails between the floating shapes.").defaultValue(true).build());
+    public final Setting<Double> curvedTrailDensity = sgVisual.add(new DoubleSetting.Builder()
+        .name("curved-trail-density").defaultValue(0.4).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> sceneEffectBrightness = sgVisual.add(new DoubleSetting.Builder()
+        .name("scene-effect-brightness").defaultValue(0.65).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> sceneEffectSpeed = sgVisual.add(new DoubleSetting.Builder()
+        .name("scene-effect-speed").defaultValue(0.7).range(0, 2).sliderRange(0, 2).build());
+    public final Setting<Boolean> playerAuras = sgVisual.add(new BoolSetting.Builder()
+        .name("player-auras").description("An animated starlight aura around visible players.").defaultValue(true).build());
+    public final Setting<Boolean> playerHalos = sgVisual.add(new BoolSetting.Builder()
+        .name("player-halos").description("Bright floating halos above players' heads.").defaultValue(true).build());
+    public final Setting<Boolean> playerRibbons = sgVisual.add(new BoolSetting.Builder()
+        .name("player-ribbons").description("Orbiting rings and spiraling ribbons around players.").defaultValue(true).build());
+    public final Setting<Boolean> cosmeticsSelf = sgVisual.add(new BoolSetting.Builder()
+        .name("cosmetics-self").description("Show your own aura, halo and ribbons in third person.").defaultValue(true).build());
+    public final Setting<Boolean> cosmeticsOthers = sgVisual.add(new BoolSetting.Builder()
+        .name("cosmetics-other-players").description("Show these local cosmetics on nearby visible players.").defaultValue(true).build());
+    public final Setting<Double> auraStrength = sgVisual.add(new DoubleSetting.Builder()
+        .name("aura-strength").defaultValue(0.55).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> haloSize = sgVisual.add(new DoubleSetting.Builder()
+        .name("halo-size").defaultValue(0.42).range(0.2, 0.9).sliderRange(0.2, 0.9).build());
+    public final Setting<Double> ribbonStrength = sgVisual.add(new DoubleSetting.Builder()
+        .name("ribbon-strength").defaultValue(0.55).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Double> cosmeticRange = sgVisual.add(new DoubleSetting.Builder()
+        .name("cosmetic-range").description("Maximum player cosmetic distance, in blocks. Limited to twelve nearby players.").defaultValue(32).range(8, 64).sliderRange(8, 64).build());
     public final Setting<Boolean> customWeather = sgVisual.add(new BoolSetting.Builder()
         .name("custom-atmospheric-weather").description("Local visual weather independent of server weather and biome, with roof and surface collisions.").defaultValue(false).build());
     public final Setting<Boolean> rainNotifications = sgVisual.add(new BoolSetting.Builder()

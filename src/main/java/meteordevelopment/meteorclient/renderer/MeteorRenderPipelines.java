@@ -233,6 +233,32 @@ public abstract class MeteorRenderPipelines {
         .build()
     );
 
+    public static final RenderPipeline SCENE_FOG = add(new ExtendedRenderPipelineBuilder()
+        .withLocation(MeteorClient.identifier("pipeline/scene_fog"))
+        .withVertexFormat(MeteorVertexFormats.POS2, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexShader(MeteorClient.identifier("shaders/blur.vert"))
+        .withFragmentShader(MeteorClient.identifier("shaders/scene_fog.frag"))
+        .withSampler("u_Depth").withUniform("SceneFogData", UniformType.UNIFORM_BUFFER)
+        .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST).withDepthWrite(false)
+        .withBlend(BlendFunction.TRANSLUCENT).withCull(false).build());
+
+    public static final RenderPipeline BLOOM_EXTRACT = add(new ExtendedRenderPipelineBuilder()
+        .withLocation(MeteorClient.identifier("pipeline/bloom_extract"))
+        .withVertexFormat(MeteorVertexFormats.POS2, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexShader(MeteorClient.identifier("shaders/blur.vert"))
+        .withFragmentShader(MeteorClient.identifier("shaders/bloom_extract.frag"))
+        .withSampler("u_Texture").withUniform("BloomData", UniformType.UNIFORM_BUFFER)
+        .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST).withDepthWrite(false).withCull(false).build());
+
+    public static final RenderPipeline BLOOM_COMPOSITE = add(new ExtendedRenderPipelineBuilder()
+        .withLocation(MeteorClient.identifier("pipeline/bloom_composite"))
+        .withVertexFormat(MeteorVertexFormats.POS2, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexShader(MeteorClient.identifier("shaders/blur.vert"))
+        .withFragmentShader(MeteorClient.identifier("shaders/bloom_composite.frag"))
+        .withSampler("u_Texture").withUniform("BloomData", UniformType.UNIFORM_BUFFER)
+        .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST).withDepthWrite(false)
+        .withBlend(new BlendFunction(SourceFactor.SRC_ALPHA, DestFactor.ONE)).withCull(false).build());
+
     // Blur
 
     public static final RenderPipeline CHAMS_PREVIEW = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)
