@@ -835,7 +835,11 @@ public class NetheriteFinder extends Module {
     public String getInfoString() {
         if (mc.world != null && mc.world.getRegistryKey() != World.NETHER) return "nether only";
         int exact = shownFound.size() + shownPinned.size();
-        if (revealScan.get() && shownAreas.isEmpty()) return exact + " debris · " + (revealed.size() >= 1000 ? revealed.size() / 1000 + "k" : revealed.size()) + " scanned";
+        if (revealScan.get() && shownAreas.isEmpty()) {
+            // Most debris is in the large clusters, Y 8-24: scanning higher mostly turns up magma.
+            if (mc.player != null && (mc.player.getY() > 26 || mc.player.getY() < 6)) return "go to Y 15 for debris";
+            return exact + " debris · " + (revealed.size() >= 1000 ? revealed.size() / 1000 + "k" : revealed.size()) + " scanned";
+        }
         String text = shownAreas.size() + (shownAreas.size() == 1 ? " area" : " areas");
         if (exact > 0) text += " · " + exact + " exact";
         if (pinState == PIN_SEARCHING || seedSet && pinState == PIN_UNKNOWN) text += " · checking seed";
