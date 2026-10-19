@@ -90,9 +90,28 @@ public class NetheriteFinder extends Module {
         .build()
     );
 
+    private final SettingGroup sgScan = settings.createGroup("Reveal Scan");
+
+    private final Setting<Boolean> revealScan = sgScan.add(new BoolSetting.Builder()
+        .name("reveal-scan")
+        .description("Shows the real blocks around you, hidden debris included: taps blocks within reach (start digging, then stop) so the server's anti-xray sends what's around them. Nothing gets broken. Sends dig packets, so an anticheat could notice.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Integer> scanSpeed = sgScan.add(new IntSetting.Builder()
+        .name("scan-speed")
+        .description("Blocks tapped per tick. Each one reveals the 24 blocks within 2 of it.")
+        .defaultValue(3)
+        .range(1, 10)
+        .sliderRange(1, 6)
+        .visible(revealScan::get)
+        .build()
+    );
+
     private final Setting<String> seed = sgGeneral.add(new StringSetting.Builder()
         .name("seed")
-        .description("Optional. The world seed: if the areas agree with it, every area shows its exact debris blocks. A wrong seed is ignored.")
+        .description("Optional. The world seed: if the areas agree with it, every area shows its exact debris blocks. A wrong seed is ignored. DonutSMP's ores don't follow its seed, so leave it empty there.")
         .defaultValue("")
         .placeholder("world seed (optional)")
         .wide()
@@ -201,6 +220,10 @@ public class NetheriteFinder extends Module {
         readable.clear();
         found.clear();
         mined.clear();
+        watched.clear();
+        empty.clear();
+        revealed.clear();
+        tapped.clear();
         shownAreas = List.of();
         shownFound = List.of();
         shownPinned = List.of();
@@ -319,12 +342,200 @@ public class NetheriteFinder extends Module {
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
         if (mc.world == null || mc.world.getRegistryKey() != World.NETHER) return;
+        noteReveal(event);
         if (event.newState.isOf(Blocks.ANCIENT_DEBRIS)) {
-            if (found.size() < 5000) found.add(event.pos.toImmutable());
+            BlockPos pos = event.pos.toImmutable();
+            if (found.size() < 5000 && found.add(pos) && mc.player != null) {
+                MeteorClient.LOG.info("[Ember Netherite] Ancient debris revealed at {} ({} taps so far)", pos.toShortString(), taps);
+                if (ticks - notifiedAt > 40) {
+                    notifiedAt = ticks;
+                    EmberNotificationsHud.push("Netherite finder", "Ancient debris at " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
+                        + " (" + Math.round(Math.sqrt(pos.getSquaredDistance(mc.player.getEyePos()))) + "m)", EmberNotificationsHud.GOOD);
+                }
+            }
         } else if (event.oldState.isOf(Blocks.ANCIENT_DEBRIS) || found.contains(event.pos)) {
             found.remove(event.pos);
             // The server's list only updates when the chunk is sent again, so this area may be empty now.
             mined.add(ChunkSectionPos.asLong(event.pos.getX() >> 4, event.pos.getY() >> 4, event.pos.getZ() >> 4));
+        }
+    }
+
+    // Reveal scan. Paper's anti-xray (DonutSMP's too: measured 2026-10-19) sends the real blocks within 2 of any block a
+    // player starts digging, even one that doesn't break. So tapping a few well-spread blocks in reach shows every hidden
+    // block up to about 7 away: each tap uncovers the 24 blocks around it, not the tapped one itself.
+
+    private static final double TAP_REACH = 5.0, SCAN_RADIUS = 7.0;
+    /** Blocks whose real state the server has sent us, and blocks already tapped. */
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet revealed = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(),
+        tapped = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private int taps;
+    private long handWarnedAt = -100_000;
+
+    @EventHandler
+    private void onTickPre(TickEvent.Pre event) {
+        if (!revealScan.get() || mc.player == null || mc.world == null || mc.interactionManager == null || mc.getNetworkHandler() == null) return;
+        if (mc.world.getRegistryKey() != World.NETHER || mc.currentScreen != null || mc.player.isUsingItem() || mc.interactionManager.isBreakingBlock()) return;
+        if (mc.player.isSpectator() || mc.player.getAbilities().creativeMode) return;
+        if (revealed.size() > 3_000_000) revealed.clear();
+        if (tapped.size() > 1_000_000) tapped.clear();
+
+        Vec3d eye = mc.player.getEyePos();
+        // Hidden-looking blocks around you: netherrack with no air beside it (anti-xray's stand-in). Open blocks are
+        // already sent as they are.
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet hidden = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        List<BlockPos> order = new ArrayList<>();
+        int r = (int) Math.ceil(SCAN_RADIUS);
+        BlockPos center = BlockPos.ofFloored(eye);
+        BlockPos.Mutable pos = new BlockPos.Mutable();
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -r; dy <= r; dy++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    pos.set(center.getX() + dx, center.getY() + dy, center.getZ() + dz);
+                    if (pos.getY() < MIN_Y || pos.getY() > MAX_Y || revealed.contains(pos.asLong())) continue;
+                    if (boxDistanceSq(eye, pos) > SCAN_RADIUS * SCAN_RADIUS || !mc.world.getBlockState(pos).isOf(Blocks.NETHERRACK)) continue;
+                    if (touchesAir(pos)) continue;
+                    hidden.add(pos.asLong());
+                    order.add(pos.toImmutable());
+                }
+            }
+        }
+        if (order.isEmpty()) return;
+        order.sort(Comparator.comparingDouble(p -> boxDistanceSq(eye, p)));
+
+        List<BlockPos> picks = new ArrayList<>();
+        for (BlockPos target : order) {
+            if (picks.size() >= scanSpeed.get()) break;
+            if (!hidden.contains(target.asLong())) continue;
+            BlockPos tap = bestTap(target, hidden, eye);
+            if (tap == null) {
+                // Out of reach from here; try again once you've moved.
+                hidden.remove(target.asLong());
+                continue;
+            }
+            picks.add(tap);
+            tapped.add(tap.asLong());
+            forShell(tap, p -> {
+                hidden.remove(p);
+                revealed.add(p);
+            });
+        }
+        if (picks.isEmpty()) return;
+
+        // Tapping with a pickaxe would break netherrack outright: tap with a slot that holds no tool.
+        int selected = mc.player.getInventory().getSelectedSlot(), slot = tapSlot(selected);
+        if (slot < 0) {
+            if (ticks - handWarnedAt > 1200) {
+                handWarnedAt = ticks;
+                EmberNotificationsHud.push("Netherite finder", "Reveal scan needs a hotbar slot without a tool", EmberNotificationsHud.WARN);
+            }
+            for (BlockPos tap : picks) tapped.remove(tap.asLong());
+            return;
+        }
+        if (slot != selected) mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket(slot));
+        for (BlockPos tap : picks) {
+            Direction side = Direction.getFacing(eye.x - (tap.getX() + 0.5), eye.y - (tap.getY() + 0.5), eye.z - (tap.getZ() + 0.5));
+            mc.interactionManager.sendSequencedPacket(mc.world, sequence -> new net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket(
+                net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, tap, side, sequence));
+            taps++;
+        }
+        BlockPos last = picks.get(picks.size() - 1);
+        mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket(
+            net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket.Action.ABORT_DESTROY_BLOCK, last, Direction.UP));
+        if (slot != selected) mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket(selected));
+    }
+
+    /** The block within reach whose 24 neighbours cover the most still-hidden blocks, one of them being the target. */
+    private BlockPos bestTap(BlockPos target, it.unimi.dsi.fastutil.longs.LongOpenHashSet hidden, Vec3d eye) {
+        BlockPos best = null;
+        int bestCount = 0;
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                for (int dz = -2; dz <= 2; dz++) {
+                    int d = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+                    if (d == 0 || d > 2) continue;
+                    BlockPos tap = target.add(dx, dy, dz);
+                    if (tapped.contains(tap.asLong()) || boxDistanceSq(eye, tap) > TAP_REACH * TAP_REACH) continue;
+                    BlockState state = mc.world.getBlockState(tap);
+                    // A real, solid block that takes time to break, like Anubis checks: never air, fluid or bedrock.
+                    if (state.isAir() || !state.getFluidState().isEmpty() || state.getHardness(mc.world, tap) <= 0) continue;
+                    int[] count = {0};
+                    forShell(tap, p -> {
+                        if (hidden.contains(p)) count[0]++;
+                    });
+                    if (count[0] > bestCount) {
+                        bestCount = count[0];
+                        best = tap;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    /** The blocks the server sends when one is tapped: everything within 2 steps, not the tapped block. */
+    private static void forShell(BlockPos tap, java.util.function.LongConsumer action) {
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                for (int dz = -2; dz <= 2; dz++) {
+                    int d = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+                    if (d == 0 || d > 2) continue;
+                    action.accept(BlockPos.asLong(tap.getX() + dx, tap.getY() + dy, tap.getZ() + dz));
+                }
+            }
+        }
+    }
+
+    private int tapSlot(int selected) {
+        var inventory = mc.player.getInventory();
+        if (!inventory.getStack(selected).contains(net.minecraft.component.DataComponentTypes.TOOL)) return selected;
+        for (int i = 0; i < 9; i++) if (inventory.getStack(i).isEmpty()) return i;
+        for (int i = 0; i < 9; i++) if (!inventory.getStack(i).contains(net.minecraft.component.DataComponentTypes.TOOL)) return i;
+        return -1;
+    }
+
+    private boolean touchesAir(BlockPos pos) {
+        for (Direction d : Direction.values()) if (mc.world.getBlockState(pos.offset(d)).isAir()) return true;
+        return false;
+    }
+
+    private static double boxDistanceSq(Vec3d p, BlockPos pos) {
+        double dx = Math.max(0, Math.max(pos.getX() - p.x, p.x - (pos.getX() + 1)));
+        double dy = Math.max(0, Math.max(pos.getY() - p.y, p.y - (pos.getY() + 1)));
+        double dz = Math.max(0, Math.max(pos.getZ() - p.z, p.z - (pos.getZ() + 1)));
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    // How this server reveals hidden blocks: something that showed as netherrack turning into an ore, measured from the
+    // last block you broke. Paper reveals 2 blocks around every block you start digging.
+
+    private long notifiedAt = -100_000;
+    private BlockPos lastDig;
+    private long lastDigAt;
+    private final java.util.Map<String, Integer> revealTypes = new java.util.TreeMap<>();
+    private final int[] revealDistance = new int[6];
+    private int revealsFar;
+    private long revealLoggedAt;
+
+    private void noteReveal(BlockUpdateEvent event) {
+        if (mc.player == null) return;
+        BlockPos pos = event.pos.toImmutable();
+        if (event.newState.isAir() && !event.oldState.isAir() && mc.player.getEyePos().squaredDistanceTo(Vec3d.ofCenter(pos)) < 49) {
+            lastDig = pos;
+            lastDigAt = ticks;
+            return;
+        }
+        if (!event.oldState.isOf(Blocks.NETHERRACK) || event.newState.isAir() || event.newState.isOf(Blocks.NETHERRACK) || !event.newState.getFluidState().isEmpty()) return;
+        revealTypes.merge(name(event.newState), 1, Integer::sum);
+        if (lastDig != null && ticks - lastDigAt <= 40) {
+            int d = pos.getManhattanDistance(lastDig);
+            revealDistance[Math.min(d, 5)]++;
+        } else {
+            revealsFar++;
+        }
+        if (ticks - revealLoggedAt > 600) {
+            revealLoggedAt = ticks;
+            MeteorClient.LOG.info("[Ember Netherite] Reveals so far {}; blocks from your last dig 0-5+: {}; with no dig of yours just before: {}",
+                revealTypes, java.util.Arrays.toString(revealDistance), revealsFar);
         }
     }
 
@@ -389,18 +600,65 @@ public class NetheriteFinder extends Module {
                     int[] spots = predicted.computeIfAbsent(ChunkPos.toLong(here.x + dx, here.z + dz), k -> predict(seedValue, ChunkPos.getPackedX(k), ChunkPos.getPackedZ(k)));
                     for (int i = 0; i < spots.length; i += 3) {
                         BlockPos pos = new BlockPos(spots[i], spots[i + 1], spots[i + 2]);
-                        if (!found.contains(pos) && isListed(pos) && canHold(pos)) pinnedSet.add(pos);
+                        if (found.contains(pos) || empty.contains(pos) || !canHold(pos)) continue;
+                        if (!isListed(pos)) continue;
+                        pinnedSet.add(pos);
+                        if (watched.size() < 5000) watched.putIfAbsent(pos, -1L);
                     }
                 }
             }
             if (predicted.size() > 20_000) predicted.clear();
         }
+        checkOpened();
         List<BlockPos> pinned = new ArrayList<>(pinnedSet);
         pinned.sort(Comparator.comparingDouble(p -> p.getSquaredDistance(me)));
 
         shownAreas = near;
         shownFound = foundNear.size() > MAX_BLOCKS ? foundNear.subList(0, MAX_BLOCKS) : foundNear;
         shownPinned = pinned.size() > MAX_BLOCKS ? pinned.subList(0, MAX_BLOCKS) : pinned;
+    }
+
+    // Keeping score: every spot shown gets checked once it's opened up, since anti-xray has to show the real block then.
+
+    /** Spots shown, and since when they've been open to air (-1 = still closed). */
+    private final java.util.Map<BlockPos, Long> watched = new java.util.HashMap<>();
+    /** Opened up and turned out to be plain netherrack. */
+    private final Set<BlockPos> empty = new java.util.HashSet<>();
+    private int hits, misses;
+
+    private void checkOpened() {
+        var it = watched.entrySet().iterator();
+        while (it.hasNext()) {
+            var entry = it.next();
+            BlockPos pos = entry.getKey();
+            if (!(mc.world.getChunk(pos.getX() >> 4, pos.getZ() >> 4, ChunkStatus.FULL, false) instanceof WorldChunk)) continue;
+            BlockState state = mc.world.getBlockState(pos);
+            if (state.isOf(Blocks.ANCIENT_DEBRIS)) {
+                hits++;
+                found.add(pos);
+                it.remove();
+                MeteorClient.LOG.info("[Ember Netherite] Spot {} opened: ancient debris ({} of {} so far)", pos.toShortString(), hits, hits + misses);
+                continue;
+            }
+            if (!state.isOf(Blocks.NETHERRACK)) {
+                // Mined or changed before we saw what it was.
+                if (state.isAir() && entry.getValue() >= 0) it.remove();
+                continue;
+            }
+            boolean open = false;
+            for (Direction d : Direction.values()) open |= mc.world.getBlockState(pos.offset(d)).isAir();
+            if (!open) {
+                entry.setValue(-1L);
+            } else if (entry.getValue() < 0) {
+                entry.setValue(ticks);
+            } else if (ticks - entry.getValue() >= 40) {
+                // Open for 2 seconds and still netherrack: the server would have shown debris by now.
+                misses++;
+                empty.add(pos);
+                it.remove();
+                MeteorClient.LOG.info("[Ember Netherite] Spot {} opened: netherrack ({} of {} had debris)", pos.toShortString(), hits, hits + misses);
+            }
+        }
     }
 
     private boolean isListed(BlockPos pos) {
@@ -556,7 +814,8 @@ public class NetheriteFinder extends Module {
             color = real ? foundColor.get() : pinnedColor.get();
             verdict = "ANCIENT DEBRIS";
             where = Math.round(Math.sqrt(pos.getSquaredDistance(eye))) + "m  ·  " + FindBeacon.dig(pos.getY() + 0.5);
-            reason = real ? "Real block: the server showed it" : "Exact spot from the seed (" + pinPercent + "% match)";
+            if (real) reason = "Real block: the server showed it";
+            else reason = "Exact spot from the seed (" + pinPercent + "% match)";
         }
 
         HudRenderer r = HudRenderer.INSTANCE;
@@ -575,10 +834,11 @@ public class NetheriteFinder extends Module {
     @Override
     public String getInfoString() {
         if (mc.world != null && mc.world.getRegistryKey() != World.NETHER) return "nether only";
-        String text = shownAreas.size() + (shownAreas.size() == 1 ? " area" : " areas");
         int exact = shownFound.size() + shownPinned.size();
+        if (revealScan.get() && shownAreas.isEmpty()) return exact + " debris · " + (revealed.size() >= 1000 ? revealed.size() / 1000 + "k" : revealed.size()) + " scanned";
+        String text = shownAreas.size() + (shownAreas.size() == 1 ? " area" : " areas");
         if (exact > 0) text += " · " + exact + " exact";
-        if (pinState == PIN_SEARCHING) text += " · checking seed";
+        if (pinState == PIN_SEARCHING || seedSet && pinState == PIN_UNKNOWN) text += " · checking seed";
         return text;
     }
 
@@ -615,6 +875,7 @@ public class NetheriteFinder extends Module {
 
     private void resetSeed() {
         predicted.clear();
+        watched.clear();
         shownPinned = List.of();
         bedrockChecked.clear();
         bedrockMatch = bedrockTotal = 0;
@@ -654,16 +915,35 @@ public class NetheriteFinder extends Module {
         List<Snap> snaps = snapshot();
         int[] score = score(seedValue, snaps, largeIndex + indexShift, smallIndex + indexShift, Integer.MAX_VALUE);
         int[] other = score(seedValue ^ (0x5A5AL << 48), snaps, largeIndex + indexShift, smallIndex + indexShift, Integer.MAX_VALUE);
-        MeteorClient.LOG.info("[Ember Netherite] Seed {} vs the listed sections: {} of {} spots ({} chunks); a wrong seed gets {} of {}",
-            seedValue, score[0], score[0] + score[1], snaps.size(), other[0], other[0] + other[1]);
+        String line = score[0] + " of " + (score[0] + score[1]) + " spots; a wrong seed gets " + other[0] + " of " + (other[0] + other[1]);
+        if (!line.equals(lastScoreLine)) {
+            lastScoreLine = line;
+            MeteorClient.LOG.info("[Ember Netherite] Seed {} vs the listed sections: {} ({} chunks)", seedValue, line, snaps.size());
+        }
+        if (ticks - diagnosedAt > 6000) {
+            diagnosedAt = ticks;
+            diagnose();
+        }
         int total = score[0] + score[1];
-        if (total < 40) return;
-        if (matches(score, 40)) {
+        if (total >= 40 && matches(score, 40)) {
             pinState = PIN_GOOD;
             pinPercent = Math.round(100f * score[0] / total);
             EmberNotificationsHud.push("Netherite finder", "Seed matches (" + pinPercent + "%): exact debris shown", EmberNotificationsHud.GOOD);
             return;
         }
+
+        // DonutSMP leaves debris out of the lists altogether, and its ores don't follow the world seed (its spots there
+        // came up netherrack 6 times of 6). With nothing to check the seed against, it isn't used.
+        boolean anyListed = false;
+        for (Snap s : snaps) anyListed |= s.listed != 0;
+        if (!anyListed) {
+            if (total >= 40) {
+                pinState = PIN_NONE;
+                MeteorClient.LOG.info("[Ember Netherite] No section around you lists debris: the seed can't be checked, so it isn't used");
+            }
+            return;
+        }
+        if (total < 40) return;
 
         pinState = PIN_SEARCHING;
         searchFailed = false;
@@ -685,6 +965,68 @@ public class NetheriteFinder extends Module {
             MeteorClient.LOG.info("[Ember Netherite] Seed search: nothing fits ({} ms)", System.currentTimeMillis() - start);
             searchFailed = true;
         });
+    }
+
+    private String lastScoreLine;
+    private long diagnosedAt = -100_000;
+
+    /**
+     * What the server shows where the seed puts debris, against where a wrong seed puts it, and what the section
+     * palettes hold: tells how this server's anti-xray hides debris.
+     */
+    private void diagnose() {
+        ChunkPos here = mc.player.getChunkPos();
+        java.util.Map<String, Integer> right = new java.util.TreeMap<>(), wrong = new java.util.TreeMap<>();
+        List<String> samples = new ArrayList<>();
+        for (int dx = -5; dx <= 5; dx++) {
+            for (int dz = -5; dz <= 5; dz++) {
+                int cx = here.x + dx, cz = here.z + dz;
+                if (!(mc.world.getChunk(cx, cz, ChunkStatus.FULL, false) instanceof WorldChunk)) continue;
+                for (int pass = 0; pass < 2; pass++) {
+                    long s = pass == 0 ? seedValue : seedValue ^ (0x5A5AL << 48);
+                    int[] spots = predict(s, cx, cz);
+                    for (int i = 0; i < spots.length; i += 3) {
+                        BlockPos pos = new BlockPos(spots[i], spots[i + 1], spots[i + 2]);
+                        if (!(mc.world.getChunk(pos.getX() >> 4, pos.getZ() >> 4, ChunkStatus.FULL, false) instanceof WorldChunk)) continue;
+                        int air = 0;
+                        for (Direction d : Direction.values()) if (mc.world.getBlockState(pos.offset(d)).isAir()) air++;
+                        String key = name(mc.world.getBlockState(pos)) + (air > 0 ? "+air" + air : "");
+                        (pass == 0 ? right : wrong).merge(key, 1, Integer::sum);
+                        if (pass == 0 && samples.size() < 6) {
+                            StringBuilder sb = new StringBuilder(pos.toShortString().replace(" ", "")).append('=').append(name(mc.world.getBlockState(pos))).append(" [");
+                            for (Direction d : Direction.values()) sb.append(d.asString().charAt(0)).append(':').append(name(mc.world.getBlockState(pos.offset(d)))).append(' ');
+                            samples.add(sb.append(']').toString());
+                        }
+                    }
+                }
+            }
+        }
+        MeteorClient.LOG.info("[Ember Netherite] Diagnose at {}: blocks where the seed puts debris {}", mc.player.getBlockPos().toShortString(), right);
+        MeteorClient.LOG.info("[Ember Netherite] Diagnose: blocks where a wrong seed puts debris {}", wrong);
+        for (String s : samples) MeteorClient.LOG.info("[Ember Netherite] Diagnose spot {}", s);
+
+        // Palettes of the low sections in the chunk you're in and two neighbours.
+        for (int[] c : new int[][] {{0, 0}, {1, 0}, {0, 1}}) {
+            if (!(mc.world.getChunk(here.x + c[0], here.z + c[1], ChunkStatus.FULL, false) instanceof WorldChunk chunk)) continue;
+            ChunkSection[] sections = chunk.getSectionArray();
+            for (int i = 0; i < sections.length && i < 4; i++) {
+                PalettedContainer<BlockState> blocks = sections[i].getBlockStateContainer();
+                if (blocks.hasAny(s -> false)) {
+                    MeteorClient.LOG.info("[Ember Netherite] Diagnose palette {},{} section {}: global", chunk.getPos().x, chunk.getPos().z, i);
+                    continue;
+                }
+                List<String> names = new ArrayList<>();
+                blocks.hasAny(s -> {
+                    names.add(name(s));
+                    return false;
+                });
+                MeteorClient.LOG.info("[Ember Netherite] Diagnose palette {},{} section {}: {}", chunk.getPos().x, chunk.getPos().z, i, names);
+            }
+        }
+    }
+
+    private static String name(BlockState state) {
+        return net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).getPath();
     }
 
     /** The right seed puts every spot in a listed section; one miss in 50 allows for blocks players changed. */
