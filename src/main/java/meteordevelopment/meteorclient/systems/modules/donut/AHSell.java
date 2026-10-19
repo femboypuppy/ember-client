@@ -7,14 +7,16 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.orbit.EventHandler;
 
+import java.util.Locale;
+
 public class AHSell extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    private final Setting<Integer> price = sgGeneral.add(new IntSetting.Builder()
-        .name("price")
-        .description("Price to list each hotbar item at.")
-        .defaultValue(1000)
-        .min(1)
+    private final Setting<String> price = sgGeneral.add(new StringSetting.Builder()
+        .name("list-price")
+        .description("Price to list each hotbar item at: any amount, as a number or with k, m or b (250k, 1.5m, 2b).")
+        .defaultValue("1k")
+        .placeholder("e.g. 1.5m")
         .build()
     );
 
@@ -29,6 +31,7 @@ public class AHSell extends Module {
 
     private int slot;
     private int timer;
+    private long listPrice;
 
     public AHSell() {
         super(Categories.Donut, "ah-sell", "Lists every hotbar item on the auction house, then turns off.");
@@ -38,6 +41,11 @@ public class AHSell extends Module {
     public void onActivate() {
         slot = 0;
         timer = 0;
+        listPrice = parsePrice(price.get());
+        if (listPrice <= 0) {
+            error("Can't read the price \"%s\": use a number like 5000, 250k, 1.5m or 2b.", price.get());
+            toggle();
+        }
     }
 
     @EventHandler
@@ -56,11 +64,34 @@ public class AHSell extends Module {
             return;
         }
 
-        // /ah sell lists the held item, so select each slot before sending.
+        // /ah sell lists the held item, so select each slot before sending. Sent as a plain number.
         InvUtils.swap(slot, false);
-        mc.player.networkHandler.sendChatCommand("ah sell " + price.get());
+        mc.player.networkHandler.sendChatCommand("ah sell " + listPrice);
 
         slot++;
         timer = delay.get();
+    }
+
+    /** "1500", "1,500", "$2.5k", "1.5m", "2b" to a whole amount, or -1 if it isn't a price. */
+    static long parsePrice(String text) {
+        String s = text.trim().toLowerCase(Locale.ROOT).replace(",", "").replace("$", "").replace("_", "").replace(" ", "");
+        if (s.isEmpty()) return -1;
+        double multiplier = 1;
+        char last = s.charAt(s.length() - 1);
+        switch (last) {
+            case 'k' -> multiplier = 1e3;
+            case 'm' -> multiplier = 1e6;
+            case 'b' -> multiplier = 1e9;
+            case 't' -> multiplier = 1e12;
+            default -> { }
+        }
+        if (multiplier != 1) s = s.substring(0, s.length() - 1);
+        try {
+            double value = Double.parseDouble(s) * multiplier;
+            if (Double.isNaN(value) || value < 1 || value > 9e15) return -1;
+            return Math.round(value);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 }
