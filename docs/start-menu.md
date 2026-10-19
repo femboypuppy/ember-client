@@ -16,7 +16,7 @@ The dock magnifies the hovered icon and its neighbors, fades tooltips, bounces o
 - **Accounts:** list, add, switch and confirm removal; Microsoft browser sign-in plus existing Offline/Session/Altening backends. The existing Ember account store handles credentials; menu preferences never contain them. Account operations are blocked while playing a world.
 - **About:** client/game/mod versions, credits, classic-menu switch. The vanilla title screen retains its Ember-menu button.
 
-The sidebar search filters sections. Content scrolls in compact windows. Tab focuses enabled controls and scrolls them into view; Ctrl/Cmd+F focuses search. Changes apply live and save to **`config/ember/menu.json`**, resolved through Fabric Loader. Writes are debounced, serialized from client-thread snapshots, and atomically replaced where supported. Invalid input is clamped; malformed files load defaults and are preserved until a later explicit preference change/save. Existing clock/wallpaper preferences migrate on first use. Menu preferences are separate from gameplay appearance profiles.
+The sidebar search filters sections. Content scrolls in compact windows. Tab focuses enabled controls and scrolls them into view; Ctrl/Cmd+F focuses search. Changes apply live and save to **`config/ember/menu.json`**, resolved through Fabric Loader. Writes are debounced, serialized from client-thread snapshots, and atomically replaced where supported. Invalid input is clamped; malformed files load defaults and are preserved until the menu next saves preferences. Existing clock/wallpaper preferences migrate on first use. Menu preferences are separate from gameplay appearance profiles.
 
 ## Rendering and assets
 

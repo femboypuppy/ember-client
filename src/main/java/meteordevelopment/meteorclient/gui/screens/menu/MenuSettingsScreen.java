@@ -53,6 +53,7 @@ public final class MenuSettingsScreen extends MenuScreen {
         String savedQuery=query;search=new MenuControl.Input("Search settings",px+17,py+88,181,34,false,this::searchChanged);search.value(savedQuery);
         for(int i=0;i<7;i++){Section page=SECTIONS[i];sidebar[i]=new MenuControl.Button(page.title,px+13,py+143+i*42,190,35,()->select(page));sidebar[i].enabled=()->!accounts.busy&&matches(page);}
         focused=null;buildContent();
+        if(modal){String saved=credential==null?"":credential.value();buildSheet();credential.value(saved);}
     }
     private boolean matches(Section page){return matched[page.ordinal()];}
     private void searchChanged(String value){query=value;String needle=query.toLowerCase(java.util.Locale.ROOT);for(Section page:SECTIONS)matched[page.ordinal()]=needle.isBlank()||(MenuLanguage.text(page.title)+" "+MenuLanguage.text(page.description)).toLowerCase(java.util.Locale.ROOT).contains(needle);if(!matches(section))for(Section page:SECTIONS)if(matches(page)){select(page);break;}}

@@ -58,7 +58,7 @@ public final class MenuCanvas {
         }
         return label;
     }
-    public double width(String value,double height) { return label(value,false).width*height/12; }
+    public double width(String value,double height) { return label(value,false).width*height/MenuTheme.BODY_CAP_HEIGHT; }
     public void text(String value,double x,double y,double height,int color) { text(value,x,y,height,color,false,false); }
     public void center(String value,double x,double y,double height,int color) { text(value,x,y,height,color,true,false); }
     public void clock(String value,double x,double y,double height,int color) { text(value,x,y,height,color,true,true); }
@@ -66,7 +66,7 @@ public final class MenuCanvas {
         if(value==null||value.isEmpty()||opacity<.001)return;
         if((MenuTheme.alpha(color,opacity)>>>24)==0)return;
         // Inter cap heights are 12/70 at the provider sizes; heights here mean visible pixels.
-        Label label=label(value,clock);double scale=height/(clock?70:12);
+        Label label=label(value,clock);double scale=height/(clock?MenuTheme.CLOCK_CAP_HEIGHT:MenuTheme.BODY_CAP_HEIGHT);
         var m=context.getMatrices();m.pushMatrix();
         m.translate((float)(x-(center?label.width*scale*.5:0)),(float)y);m.scale((float)scale,(float)scale);
         context.drawText(MinecraftClient.getInstance().textRenderer,label.text,0,0,MenuTheme.alpha(color,opacity),false);
