@@ -123,7 +123,7 @@ public abstract class MenuControl {
         public Wallpaper(MenuConfig.Wallpaper wallpaper,double x,double y,double w){super(wallpaper.key,x,y,w,132);this.wallpaper=wallpaper;}
         @Override protected void paint(MenuCanvas c,double dt){boolean selected=ConfigManager.get().wallpaper==wallpaper;if(selected||focused)c.border(x-2,y-2,w+4,100,12,MenuTheme.accent());
             WallpaperRenderer.thumbnail(c,wallpaper,x,y,w,96,10);c.clippedText(MenuLanguage.text(wallpaper.key),x+3,y+106,13,w-6,MenuTheme.text());
-            if(wallpaper==MenuConfig.Wallpaper.CHROME_LIVE){c.round(x+8,y+8,42,18,9,0xA6000000);c.center("LIVE",x+29,y+12,9,0xFFFFFFFF);}
+            if(wallpaper.live){c.round(x+8,y+8,42,18,9,0xA6000000);c.center("LIVE",x+29,y+12,9,0xFFFFFFFF);}
         }
         @Override public boolean click(double mx,double my){ConfigManager.get().wallpaper=wallpaper;ConfigManager.changed();MenuAudio.click();return true;}
         @Override public boolean key(KeyInput input){if(input.key()==GLFW_KEY_SPACE||input.key()==GLFW_KEY_ENTER){click(0,0);return true;}return false;}
@@ -132,7 +132,7 @@ public abstract class MenuControl {
         private double hue,saturation,brightness;private boolean hueDrag;
         public ColorPicker(double x,double y,double w){super("Accent color",x,y,w,152);float[] hsb=java.awt.Color.RGBtoHSB((ConfigManager.get().accent>>16)&255,(ConfigManager.get().accent>>8)&255,ConfigManager.get().accent&255,null);hue=hsb[0];saturation=hsb[1];brightness=hsb[2];}
         @Override protected void paint(MenuCanvas c,double dt){c.text(label,x+16,y+8,15,MenuTheme.text());double sx=x+16,sy=y+35,sw=w-105;
-            for(int i=0;i<48;i++){int color=java.awt.Color.HSBtoRGB((float)hue,i/47f,1);c.context.fillGradient((int)(sx+i*sw/48),(int)sy,(int)Math.ceil(sx+(i+1)*sw/48),(int)(sy+90),MenuTheme.alpha(color,c.opacity),MenuTheme.alpha(0xFF000000,c.opacity));}
+            for(int i=0;i<48;i++){int color=java.awt.Color.HSBtoRGB((float)hue,i/47f,1);c.gradient(sx+i*sw/48,sy,sw/48,90,color,0xFF000000);}
             double cx=sx+saturation*sw,cy=sy+(1-brightness)*90;c.round(cx-5,cy-5,10,10,5,0xFFFFFFFF);c.round(cx-3,cy-3,6,6,3,MenuTheme.accent());
             for(int i=0;i<48;i++)c.rect(x+w-65,sy+i*90/48.0,24,Math.ceil(90/48.0),java.awt.Color.HSBtoRGB(i/47f,1,1));
             c.border(x+w-68,sy+hue*90-3,30,6,3,0xFFFFFFFF);

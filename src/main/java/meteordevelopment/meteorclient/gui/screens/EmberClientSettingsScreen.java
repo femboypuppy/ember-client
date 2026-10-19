@@ -263,7 +263,7 @@ public class EmberClientSettingsScreen extends WidgetScreen {
             style.toString(), () -> Config.get().startMenu.set(style), Config.get().startMenu.get() == style, dt);
         y += 46;
         var menu = meteordevelopment.meteorclient.gui.screens.menu.ConfigManager.get();
-        double wallpaperWidth = contentW / 3;
+        double wallpaperWidth = contentW / meteordevelopment.meteorclient.gui.screens.menu.MenuConfig.Wallpaper.values().length;
         for (var wallpaper : meteordevelopment.meteorclient.gui.screens.menu.MenuConfig.Wallpaper.values()) action(r, contentX + wallpaper.ordinal() * wallpaperWidth, y, wallpaperWidth - 5, 34,
             meteordevelopment.meteorclient.gui.screens.menu.MenuLanguage.text(wallpaper.key), () -> { menu.wallpaper = wallpaper; meteordevelopment.meteorclient.gui.screens.menu.ConfigManager.changed(); }, menu.wallpaper == wallpaper, dt);
         y += 46;

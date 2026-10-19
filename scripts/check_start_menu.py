@@ -1,6 +1,6 @@
 """Exercise production animation/config code; native Screens compile against Minecraft itself."""
 from pathlib import Path
-import json, os, shutil, struct, subprocess, tempfile
+import json, os, re, shutil, struct, subprocess, tempfile
 ROOT=Path(__file__).resolve().parents[1]
 JAVA=Path(os.environ['JAVA_HOME'])/'bin' if os.environ.get('JAVA_HOME') else Path(shutil.which('java')).parent
 SOURCE=ROOT/'src/main/java/meteordevelopment/meteorclient/gui/screens/menu'
@@ -10,7 +10,7 @@ public class MenuChecks {
  static void near(double a,double b,double e,String m){check(Math.abs(a-b)<e,m+": "+a+" != "+b);}
  public static void main(String[] args)throws Exception{
   if(args[0].equals("read")){
-   var c=ConfigManager.get();check(c.wallpaper==MenuConfig.Wallpaper.MIDNIGHT&&c.clock24&&c.reduceMotion,"Preferences restored in fresh JVM");
+   var c=ConfigManager.get();check(c.wallpaper==MenuConfig.Wallpaper.SUMMIT&&c.clock24&&c.reduceMotion,"Preferences restored in fresh JVM");
    near(c.musicVolume,.27,1e-10,"Volume round trip");check(c.accent==0x123ABC&&c.language.equals("fr_fr"),"Color/language round trip");check(!c.motion(),"Reduced motion saved");
    System.out.println("Fresh-session restore passed");return;
   }
@@ -32,8 +32,11 @@ public class MenuChecks {
   }
   var invalid=new MenuConfig();invalid.uiScale=Double.NaN;invalid.musicVolume=Double.POSITIVE_INFINITY;invalid.wallpaper=null;invalid.language=null;invalid.blurIntensity=-9;invalid.fpsLimit=9999;invalid.validate();
   check(invalid.uiScale==1&&invalid.musicVolume==.45&&invalid.blurIntensity==0&&invalid.fpsLimit==240,"Validate damaged numbers");check(invalid.wallpaper!=null&&invalid.language.equals("system"),"Validate unknown enum/language");
-  Path damaged=ConfigManager.PATH.resolveSibling("damaged.json");Files.createDirectories(damaged.getParent());Files.writeString(damaged,"{broken");check(ConfigManager.load(damaged).wallpaper==MenuConfig.Wallpaper.CHROME_LIVE,"Malformed config fallback");check(Files.readString(damaged).equals("{broken"),"Malformed file preserved");
-  var c=ConfigManager.get();c.clock24=true;c.wallpaper=MenuConfig.Wallpaper.MIDNIGHT;c.reduceMotion=true;c.musicVolume=.27;c.accent=0x123ABC;c.language="fr_fr";ConfigManager.init();ConfigManager.changed();ConfigManager.flush();
+  Path damaged=ConfigManager.PATH.resolveSibling("damaged.json");Files.createDirectories(damaged.getParent());Files.writeString(damaged,"{broken");check(ConfigManager.load(damaged).wallpaper==MenuConfig.Wallpaper.LIVE,"Malformed config fallback");check(Files.readString(damaged).equals("{broken"),"Malformed file preserved");
+  String[][] renamed={{"CHROME_LIVE","LIVE"},{"CHROME","OBSIDIAN"},{"MIDNIGHT","SUMMIT"},{"SILK","SILK"}};
+  for(String[] pair:renamed){Path old=ConfigManager.PATH.resolveSibling("old-"+pair[0]+".json");Files.writeString(old,"{\"wallpaper\":\""+pair[0]+"\",\"clock24\":true}");var loaded=ConfigManager.load(old);check(loaded.wallpaper.name().equals(pair[1])&&loaded.clock24,"Saved wallpaper "+pair[0]+" migrates");}
+  check(MenuConfig.Wallpaper.LIVE.live&&MenuConfig.Wallpaper.LIVE.file.equals(MenuConfig.Wallpaper.NEBULA.file)&&!MenuConfig.Wallpaper.NEBULA.live,"Live shares Nebula art");
+  var c=ConfigManager.get();c.clock24=true;c.wallpaper=MenuConfig.Wallpaper.SUMMIT;c.reduceMotion=true;c.musicVolume=.27;c.accent=0x123ABC;c.language="fr_fr";ConfigManager.init();ConfigManager.changed();ConfigManager.flush();
   long deadline=System.nanoTime()+5_000_000_000L;while(!Files.exists(ConfigManager.PATH)&&System.nanoTime()<deadline)Thread.sleep(10);check(Files.exists(ConfigManager.PATH),"Atomic write completed");
   check(!Files.readString(ConfigManager.PATH).contains("credential"),"No account credentials in menu JSON");System.out.println("Animation, dock and atomic persistence passed");
  }
@@ -53,9 +56,17 @@ def main():
   subprocess.run([str(JAVA/'javac'),'-encoding','UTF-8','-cp',cp,'-d',str(classes),str(stub),str(harness),*sources],check=True)
   for phase in ('write','read'):subprocess.run([str(JAVA/'java'),'-Dtest.config='+str(temp/'config'),'-cp',str(classes)+os.pathsep+cp,'MenuChecks',phase],check=True)
  assets=ROOT/'src/main/resources/assets/ember'
- for name in ('chrome','midnight','chrome_blur','midnight_blur'):
-  data=(assets/f'textures/menu/{name}.png').read_bytes();assert data[:8]==b'\x89PNG\r\n\x1a\n';w,h=struct.unpack('>II',data[16:24]);assert w>0 and h>0
-  assert (w,h)==((320,180) if name.endswith('_blur') else (2560,1440))
+ sizes={'':(2560,1440),'_blur':(480,270),'_thumb':(384,216)}
+ textures=[(f'textures/menu/{art}{suffix}.png',size) for art in ('nebula','silk','obsidian','summit') for suffix,size in sizes.items()]
+ textures+=[(f'textures/menu/icon/{icon}{suffix}.png',(n,n)) for icon in ('play','accounts','settings','display','power') for suffix,n in (('',128),('_64',64))]
+ textures+=[('textures/menu/ui/corners.png',(sum(s+2 for s in (4,6,8,12,16,24,32,48,64,96,128)),130)),('textures/menu/ui/shadow.png',(256,256))]
+ for name,size in textures:
+  data=(assets/name).read_bytes();assert data[:8]==b'\x89PNG\r\n\x1a\n',name;assert struct.unpack('>II',data[16:24])==size,name
+  # Linear filtering is what keeps scaled GUI art smooth instead of showing nearest-neighbour blocks.
+  assert json.loads((assets/(name+'.mcmeta')).read_text())['texture']['blur'] is True,name
+ for java in ('MenuCanvas','WallpaperRenderer'):
+  for path in re.findall(r'"(textures/menu/[a-z_/]+)',(SOURCE/(java+'.java')).read_text(encoding='utf-8')):assert any(name.startswith(path) for name,_ in textures),path
+ assert '{4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128}' in (SOURCE/'MenuCanvas.java').read_text(encoding='utf-8'),'Corner sizes match generator'
  for name in ('ui','clock'):
   provider=json.loads((assets/f'font/{name}.json').read_text())['providers'][0];file=provider['file'].removeprefix('ember:')
   assert provider['type']=='ttf' and (assets/'font'/file).is_file();assert (assets/'font'/file).read_bytes()[:4] in (b'\x00\x01\x00\x00',b'OTTO')

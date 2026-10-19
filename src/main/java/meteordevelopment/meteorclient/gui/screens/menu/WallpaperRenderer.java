@@ -1,62 +1,82 @@
 package meteordevelopment.meteorclient.gui.screens.menu;
 
-import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.util.Identifier;
+import java.util.ArrayList;
+import java.util.List;
 
-/** Resource-managed offline wallpaper, small prefiltered blur, and shared parallax coordinates. */
+/** Resource-managed offline wallpapers, small prefiltered blur copies, and shared parallax coordinates. */
 public final class WallpaperRenderer {
-    private static final Identifier[] SHARP={Identifier.of("ember","textures/menu/chrome.png"),Identifier.of("ember","textures/menu/chrome.png"),Identifier.of("ember","textures/menu/midnight.png")};
-    private static final Identifier[] BLUR={Identifier.of("ember","textures/menu/chrome_blur.png"),Identifier.of("ember","textures/menu/chrome_blur.png"),Identifier.of("ember","textures/menu/midnight_blur.png")};
-    // Live/static Chrome share artwork, so a reversible two-image blend handles rapid selections.
-    private double midnight=ConfigManager.get().wallpaper==MenuConfig.Wallpaper.MIDNIGHT?1:0;
-    private double live=ConfigManager.get().wallpaper==MenuConfig.Wallpaper.CHROME_LIVE?1:0;
-    private double panX,panY,time,width,height,coverX,coverY,coverW,coverH;
-    public void update(double w,double h,double mouseX,double mouseY,double dt) {
-        var c=ConfigManager.get();width=w;height=h;
-        midnight=MenuAnimation.smooth(midnight,c.wallpaper==MenuConfig.Wallpaper.MIDNIGHT?1:0,dt*c.animationSpeed,c.motion()?.16:.055);
-        live=MenuAnimation.smooth(live,c.wallpaper==MenuConfig.Wallpaper.CHROME_LIVE?1:0,dt*c.animationSpeed,.2);
-        if(c.motion())time+=dt*c.animationSpeed;
-        double tx=c.motion()&&c.parallax?(mouseX/w-.5)*14:0,ty=c.motion()&&c.parallax?(mouseY/h-.5)*10:0;
-        if(c.motion()){panX=MenuAnimation.smooth(panX,tx,dt,.35);panY=MenuAnimation.smooth(panY,ty,dt,.35);}else{panX=panY=0;}
-        double zoom=1.06+(c.motion()?Math.sin(time*.12)*.012*live:0);
-        double scale=Math.max(w/2560,h/1440)*zoom;coverW=2560*scale;coverH=1440*scale;
-        coverX=(w-coverW)*.5+panX;coverY=(h-coverH)*.5+panY;
-        if(c.motion()){coverX+=Math.sin(time*.09)*7*live;coverY+=Math.cos(time*.07)*4*live;}
+    private static final MenuConfig.Wallpaper[] WALLPAPERS = MenuConfig.Wallpaper.values();
+    private static final String[] ART;
+    private static final int[] ART_OF = new int[WALLPAPERS.length];
+    private static final Identifier[] SHARP, BLUR, THUMB;
+    static {
+        // Wallpapers that share artwork (Live/Nebula) share one texture set and one blend weight.
+        List<String> art = new ArrayList<>();
+        for (var wallpaper : WALLPAPERS) {
+            if (!art.contains(wallpaper.file)) art.add(wallpaper.file);
+            ART_OF[wallpaper.ordinal()] = art.indexOf(wallpaper.file);
+        }
+        ART = art.toArray(String[]::new);
+        SHARP = new Identifier[ART.length]; BLUR = new Identifier[ART.length]; THUMB = new Identifier[ART.length];
+        for (int i = 0; i < ART.length; i++) {
+            SHARP[i] = Identifier.of("ember", "textures/menu/" + ART[i] + ".png");
+            BLUR[i] = Identifier.of("ember", "textures/menu/" + ART[i] + "_blur.png");
+            THUMB[i] = Identifier.of("ember", "textures/menu/" + ART[i] + "_thumb.png");
+        }
     }
-    public void draw(MenuCanvas c,double backgroundBlur) {
-        if(midnight<.999)full(c,MenuConfig.Wallpaper.CHROME,1,backgroundBlur);
-        if(midnight>.001)full(c,MenuConfig.Wallpaper.MIDNIGHT,midnight>.999?1:midnight,backgroundBlur);
-        c.context.fillGradient(0,0,(int)width,(int)(height*.45),0x45000000,0x00000000);
-        c.context.fillGradient(0,(int)(height*.45),(int)width,(int)height,0x00000000,0x99000000);
+    private static final double ART_W = 2560, ART_H = 1440;
+    // Every weight eases toward the selection at the same rate, so they always sum to 1 and rapid
+    // selections blend continuously instead of jumping.
+    private final double[] weight = new double[ART.length];
+    private double live, panX, panY, time, width, height, coverX, coverY, coverW, coverH;
+
+    public WallpaperRenderer() {
+        var wallpaper = ConfigManager.get().wallpaper;
+        weight[ART_OF[wallpaper.ordinal()]] = 1;
+        live = wallpaper.live ? 1 : 0;
+    }
+    public void update(double w, double h, double mouseX, double mouseY, double dt) {
+        var c = ConfigManager.get(); width = w; height = h;
+        int selected = ART_OF[c.wallpaper.ordinal()];
+        for (int i = 0; i < ART.length; i++) weight[i] = MenuAnimation.smooth(weight[i], i == selected ? 1 : 0, dt * c.animationSpeed, c.motion() ? .16 : .055);
+        live = MenuAnimation.smooth(live, c.wallpaper.live ? 1 : 0, dt * c.animationSpeed, .2);
+        if (c.motion()) time += dt * c.animationSpeed;
+        double tx = c.motion() && c.parallax ? (mouseX / w - .5) * 14 : 0, ty = c.motion() && c.parallax ? (mouseY / h - .5) * 10 : 0;
+        if (c.motion()) { panX = MenuAnimation.smooth(panX, tx, dt, .35); panY = MenuAnimation.smooth(panY, ty, dt, .35); } else { panX = panY = 0; }
+        double zoom = 1.06 + (c.motion() ? Math.sin(time * .12) * .012 * live : 0);
+        double scale = Math.max(w / ART_W, h / ART_H) * zoom; coverW = ART_W * scale; coverH = ART_H * scale;
+        coverX = (w - coverW) * .5 + panX; coverY = (h - coverH) * .5 + panY;
+        if (c.motion()) { coverX += Math.sin(time * .09) * 7 * live; coverY += Math.cos(time * .07) * 4 * live; }
+    }
+    public void draw(MenuCanvas c, double backgroundBlur) {
+        layers(c, SHARP, 0, 0, width, height, 0, 1);
+        if (ConfigManager.get().blur && backgroundBlur > .001) layers(c, BLUR, 0, 0, width, height, 0, backgroundBlur * ConfigManager.get().blurIntensity);
+        c.gradient(0, 0, width, height * .45, 0x45000000, 0x00000000);
+        c.gradient(0, height * .45, width, height * .55, 0x00000000, 0x99000000);
         // Soft vignette without a framebuffer, custom pipeline or per-frame image allocation.
-        for(int i=0;i<16;i++){double strip=width*.018;int color=MenuTheme.alpha(0x14000000,Math.pow(1-i/16.0,2));c.rect(i*strip,0,strip,height,color);c.rect(width-(i+1)*strip,0,strip,height,color);}
+        for (int i = 0; i < 16; i++) { double strip = width * .018; int color = MenuTheme.alpha(0x14000000, Math.pow(1 - i / 16.0, 2)); c.rect(i * strip, 0, strip, height, color); c.rect(width - (i + 1) * strip, 0, strip, height, color); }
     }
-    private void full(MenuCanvas c,MenuConfig.Wallpaper wallpaper,double alpha,double blur) {
-        region(c,wallpaper,false,0,0,width,height,alpha);
-        if(ConfigManager.get().blur&&blur>.001)region(c,wallpaper,true,0,0,width,height,alpha*blur*ConfigManager.get().blurIntensity);
+    /**
+     * Composites every artwork with a nonzero weight. Layer j is drawn at weight_j / (sum of weights up to j),
+     * which reproduces the exact weighted average of opaque images for any number of overlapping fades.
+     */
+    private void layers(MenuCanvas c, Identifier[] set, double x, double y, double w, double h, double radius, double alpha) {
+        double sum = 0;
+        for (int i = 0; i < ART.length; i++) {
+            if (weight[i] < .001) continue;
+            sum += weight[i];
+            double layer = weight[i] / sum;
+            c.cover(set[i], x, y, w, h, radius, coverX, coverY, coverW, coverH, alpha * (layer > .999 ? 1 : layer));
+        }
     }
-    private void region(MenuCanvas c,MenuConfig.Wallpaper wallpaper,boolean blur,double x,double y,double w,double h,double alpha) {
-        int tw=blur?320:2560,th=blur?180:1440;
-        float u=(float)((x-coverX)/coverW*tw),v=(float)((y-coverY)/coverH*th);
-        int rw=Math.max(1,(int)Math.ceil(w/coverW*tw)),rh=Math.max(1,(int)Math.ceil(h/coverH*th));
-        c.context.drawTexture(RenderPipelines.GUI_TEXTURED,(blur?BLUR:SHARP)[wallpaper.ordinal()],(int)x,(int)y,u,v,(int)Math.ceil(w),(int)Math.ceil(h),rw,rh,tw,th,MenuTheme.alpha(0xFFFFFFFF,alpha*c.opacity));
+    /** Blurred wallpaper behind a rounded glass panel, aligned with the full-screen wallpaper. */
+    public void sample(MenuCanvas c, double x, double y, double w, double h, double radius, double alpha) {
+        if (alpha > .001) layers(c, BLUR, x, y, w, h, radius, alpha);
     }
-    public void sample(MenuCanvas c,double x,double y,double w,double h,double radius,double alpha) {
-        if(alpha<=.001)return;
-        if(midnight<.999)roundedSample(c,MenuConfig.Wallpaper.CHROME,x,y,w,h,radius,alpha);
-        if(midnight>.001)roundedSample(c,MenuConfig.Wallpaper.MIDNIGHT,x,y,w,h,radius,alpha*(midnight>.999?1:midnight));
-    }
-    private void roundedSample(MenuCanvas c,MenuConfig.Wallpaper wallpaper,double x,double y,double w,double h,double radius,double alpha) {
-        double r=Math.min(radius,Math.min(w,h)*.5);region(c,wallpaper,true,x,y+r,w,h-2*r,alpha);
-        int rows=Math.max(1,(int)Math.ceil(r));
-        for(int i=0;i<rows;i++){double a=i*r/rows,b=(i+1)*r/rows,dy=r-(a+b)*.5,inset=r-Math.sqrt(Math.max(0,r*r-dy*dy));region(c,wallpaper,true,x+inset,y+a,w-2*inset,b-a,alpha);region(c,wallpaper,true,x+inset,y+h-b,w-2*inset,b-a,alpha);}
-    }
-    public static void thumbnail(MenuCanvas c,MenuConfig.Wallpaper wallpaper,double x,double y,double w,double h,double radius) {
-        int tw=2560,th=1440;double sourceRatio=tw/(double)th,ratio=w/h;
-        int rw=ratio>sourceRatio?tw:(int)(th*ratio),rh=ratio>sourceRatio?(int)(tw/ratio):th;
-        float u=(tw-rw)*.5f,v=(th-rh)*.5f;
-        double r=Math.min(radius,h/2);int rows=(int)Math.ceil(h);
-        for(int i=0;i<rows;i++){double dy=i<r?r-i-.5:i>=h-r?i+.5-(h-r):0;double inset=dy>0?r-Math.sqrt(Math.max(0,r*r-dy*dy)):0;
-            c.context.drawTexture(RenderPipelines.GUI_TEXTURED,SHARP[wallpaper.ordinal()],(int)(x+inset),(int)y+i,u+(float)(inset/w*rw),v+(float)(i/h*rh),Math.max(1,(int)(w-2*inset)),1,Math.max(1,(int)(rw*(1-2*inset/w))),Math.max(1,(int)(rh/h)),tw,th,MenuTheme.alpha(0xFFFFFFFF,c.opacity));}
+    public static void thumbnail(MenuCanvas c, MenuConfig.Wallpaper wallpaper, double x, double y, double w, double h, double radius) {
+        // Aspect-fill the 16:9 thumbnail into the tile, cropping the overflow evenly.
+        double cw = Math.max(w, h * ART_W / ART_H), ch = cw * ART_H / ART_W;
+        c.cover(THUMB[ART_OF[wallpaper.ordinal()]], x, y, w, h, radius, x + (w - cw) * .5, y + (h - ch) * .5, cw, ch, 1);
     }
 }

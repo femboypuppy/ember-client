@@ -4,7 +4,7 @@ package meteordevelopment.meteorclient.gui.screens.menu;
 public final class MenuTheme {
     public static final double WIDTH = 1280, HEIGHT = 720, RADIUS = 20, ROW = 54;
     public static final double DOCK_ICON = 44, DOCK_GAP = 16, DOCK_HEIGHT = 76, DOCK_BOTTOM = 126;
-    public static final double BODY_CAP_HEIGHT = 12, CLOCK_CAP_HEIGHT = 70, CLOCK_SIZE = 96, CLOCK_INTRO_SECONDS = .65, DOCK_INTRO_SECONDS = .55;
+    public static final double BODY_CAP_HEIGHT = 12, CLOCK_CAP_HEIGHT = 70, CLOCK_SIZE = 86, CLOCK_INTRO_SECONDS = .65, DOCK_INTRO_SECONDS = .55;
     public static final double SETTINGS_OPEN_TAU = .18, SETTINGS_CLOSE_TAU = .10, TOOLTIP_TAU = .09;
     public static final int WHITE = 0xFFF7F8FC, DIM = 0xFFBFC3D0, RED = 0xFFFF686E;
     private MenuTheme() {}

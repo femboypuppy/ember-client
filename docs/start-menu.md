@@ -9,7 +9,7 @@ The dock magnifies the hovered icon and its neighbors, fades tooltips, bounces o
 ## System Settings
 
 - **General:** 12/24-hour time, date, menu-only System/English/French language, Minecraft options.
-- **Appearance:** Live Chrome, static Chrome and Midnight thumbnails; HSV accent picker; blur amount; UI scale; light/dark glass.
+- **Appearance:** Nebula Live, Nebula, Silk, Obsidian and Summit thumbnails; HSV accent picker; blur amount; UI scale; light/dark glass.
 - **Animations:** enable animations, speed, wallpaper parallax, dock magnification.
 - **Audio:** Minecraft menu soundtrack and volume; UI click sounds. Minecraft's global sound preferences remain in their own store.
 - **Performance:** 30-240 menu FPS cap, blur, reduced motion. Global FPS and minimized/AFK limits still apply; VSync can impose a lower cap.
@@ -23,15 +23,21 @@ The sidebar search filters sections. Content scrolls in compact windows. Tab foc
 All new assets live under `src/main/resources/assets/ember/`:
 
 - `font/ui.json`, `font/inter.ttf`: native Inter regular font, 16 logical-pixel base, 2x oversampling.
-- `font/clock.json`, `font/inter_display_light.ttf`: native Inter Display Light, 96 logical-pixel base, 3x oversampling.
+- `font/clock.json`, `font/inter_display_semibold.ttf`: native Inter Display SemiBold, 96 logical-pixel base, 3x oversampling.
 - `font/ofl.txt`: Inter license. SF Pro is not bundled.
-- `textures/menu/chrome.png`, `midnight.png`: bundled 2560 x 1440 wallpapers.
-- `textures/menu/chrome_blur.png`, `midnight_blur.png`: 320 x 180 prefiltered versions, sampled behind rounded glass panels and during settings transitions.
+- `textures/menu/nebula.png`, `silk.png`, `obsidian.png`, `summit.png`: bundled 2560 x 1440 wallpapers.
+- `textures/menu/<art>_blur.png`: 480 x 270 prefiltered versions, sampled behind rounded glass panels and during settings transitions.
+- `textures/menu/<art>_thumb.png`: 384 x 216 picker thumbnails.
+- `textures/menu/icon/<action>.png`, `<action>_64.png`: white dock glyph masks at 128 and 64 pixels, tinted at draw time.
+- `textures/menu/ui/corners.png`: antialiased quarter-disc masks (4-128 px) for every rounded shape; `ui/shadow.png`: a blurred rounded rectangle drawn as a nine-slice soft shadow.
+- Every menu texture has a `.png.mcmeta` with `"blur": true`, so Minecraft samples it with linear filtering instead of nearest-neighbour blocks. `scripts/generate_menu_assets.py` regenerates all of them.
 - `textures/menu/credits.md`: source links and wallpaper licensing.
 - `menu_lang/en_us.json`, `fr_fr.json`: menu text (English source labels are the fallback).
 - `sounds.json`: `ember:ui.click` aliases Minecraft's existing UI click event; no external sound download is required.
 
-**Live Chrome** animates the bundled chrome image with slow breathing/translation; it does not decode a video. Static wallpapers still support separately controlled mouse parallax. Wallpaper switching crossfades cached resource identifiers; vignette, shadows, corners and borders use native GUI commands. Glass is a cheap wallpaper-based approximation, not real-time background refraction. Disabling blur removes filtered sampling and leaves tinted panels. No framebuffer capture, raw GL call or old RenderSystem shader binding is required.
+**Nebula Live** animates the Nebula image with slow breathing/translation; it does not decode a video. Static wallpapers still support separately controlled mouse parallax. Wallpaper switching crossfades cached resource identifiers; vignette, shadows, corners and borders use native GUI commands and mask textures. Glass is a cheap wallpaper-based approximation, not real-time background refraction. Disabling blur removes filtered sampling and leaves tinted panels. No framebuffer capture, raw GL call or old RenderSystem shader binding is required.
+
+Shapes are placed on the window's physical pixel grid rather than the GUI-scaled grid: each `MenuCanvas` primitive reads the current matrix, multiplies by `Window.getScaleFactor()`, and draws integer physical-pixel quads under a `1/scale` matrix. Rounded corners use the mask atlas; textured rounded regions (glass samples, thumbnails) are drawn row by row in their corners with coverage-faded edge pixels. Because Minecraft orders overlapping GUI elements by bounds rounded to the GUI grid, each primitive starts a new root layer (`DrawContext.createNewRootLayer()`) so painter's order stays exact.
 
 Text height is normalized to the bundled Inter cap heights (12 body / 70 clock), so small-window labels retain their intended visible size. The providers use vertical shifts of 5 (body) and 64 (clock) to align Inter cap heights with the top-based layout despite Minecraft's fixed text baseline. Font JSON IDs are `ember:ui` and `ember:clock`. In 1.21.11, `Style.withFont` takes `new StyleSpriteSource.Font(Identifier.of(...))`; DrawContext matrices are a `Matrix3x2fStack`. Text uses `drawText(TextRenderer, Text, x, y, color, false)`. Texture commands use `RenderPipelines.GUI_TEXTURED` and the current `drawTexture` overload with source region and texture dimensions. Font providers automatically resolve `ember:inter.ttf` below `assets/ember/font/`.
 
@@ -63,8 +69,8 @@ The headless menu check runs production springs/dock/config code, compares 15/30
 - **Colors/layout/timing:** `MenuTheme.java`, `Dock.java`, `EmberTitleScreen.java`.
 - **Defaults/ranges:** `MenuConfig.java`.
 - **Settings sections/controls:** `MenuSettingsScreen.java`, `MenuControl.java`.
-- **Extra wallpapers:** add an enum item and cached identifiers in `WallpaperRenderer`, add matching sharp/blur resources and localized labels, then adjust the picker layout to fit additional tiles.
-- **Wallpaper art:** replace the two sharp PNGs at their existing dimensions; regenerate each 320 x 180 blur image with Lanczos downsampling and a Gaussian blur around 4 pixels.
+- **Extra wallpapers:** add a `MenuConfig.Wallpaper` entry (texture identifiers are derived from its art file name), its art name to `ART` in `scripts/generate_menu_assets.py` with a matching source JPG, and `menu_lang` labels; the picker wraps to three tiles per row.
+- **Wallpaper art:** put 2560 x 1440 JPGs named after the art files in a folder and run `python scripts/generate_menu_assets.py --wallpapers <folder>` (needs Pillow) to rebuild the sharp, blur and thumbnail PNGs.
 - **Typography:** replace the licensed TTF files or edit native font providers; retain an appropriate font license and Minecraft fallback.
 - **Click sounds:** replace the event in `sounds.json`, or add `assets/ember/sounds/menu/click.ogg` and a file sound named `ember:menu/click`.
 - **Additional languages:** add `menu_lang/<locale>.json` and extend `MenuLanguage.locale()` and the language segmented control.

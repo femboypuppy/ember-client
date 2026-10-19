@@ -16,6 +16,7 @@ ORBIT = str(sorted(orbit_jars)[0])
 stubs = dict(shared_stubs)
 # The legacy gear page now delegates menu-only preferences to the new store.
 stubs[P+'gui/screens/menu/MenuConfig.java']=(ROOT/'src/main/java'/(P+'gui/screens/menu/MenuConfig.java')).read_text(encoding='utf-8')
+stubs['com/google/gson/annotations/SerializedName.java']='package com.google.gson.annotations;public @interface SerializedName{String value();String[] alternate() default {};}'
 stubs[P+'gui/screens/menu/ConfigManager.java']='package meteordevelopment.meteorclient.gui.screens.menu;public class ConfigManager{static final MenuConfig CONFIG=new MenuConfig();public static MenuConfig get(){return CONFIG;}public static void changed(){}}'
 stubs[P+'gui/screens/menu/MenuLanguage.java']='package meteordevelopment.meteorclient.gui.screens.menu;public class MenuLanguage{public static String text(String text){return text;}}'
 

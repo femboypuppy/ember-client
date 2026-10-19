@@ -71,9 +71,9 @@ public final class MenuSettingsScreen extends MenuScreen {
                 y+=12;y=row(y,button("Minecraft options",y,()->leaveFor(new OptionsScreen(this,client.options))));
             }
             case APPEARANCE->{
-                info(y,"Wallpaper");y+=38;double tile=(cw-40)/3;
-                for(int i=0;i<3;i++)content.add(new MenuControl.Wallpaper(MenuConfig.Wallpaper.values()[i],cx+8+i*(tile+12),y,tile));
-                y+=150;y=row(y,new MenuControl.ColorPicker(cx,y,cw));
+                info(y,"Wallpaper");y+=38;double tile=(cw-40)/3;var wallpapers=MenuConfig.Wallpaper.values();
+                for(int i=0;i<wallpapers.length;i++)content.add(new MenuControl.Wallpaper(wallpapers[i],cx+8+(i%3)*(tile+12),y+(i/3)*142,tile));
+                y+=142*((wallpapers.length-1)/3)+150;y=row(y,new MenuControl.ColorPicker(cx,y,cw));
                 y=row(y,new MenuControl.Slider("Blur intensity",cx,y,cw,0,1,.01,()->c.blurIntensity,v->c.blurIntensity=v));
                 y=row(y,new MenuControl.Slider("UI scale",cx,y,cw,.8,1.25,.01,()->c.uiScale,v->c.uiScale=v));
                 y=row(y,new MenuControl.Segments("Glass tint",cx,y,cw,new String[]{"Dark","Light"},()->c.lightGlass?1:0,v->c.lightGlass=v==1));
@@ -113,7 +113,8 @@ public final class MenuSettingsScreen extends MenuScreen {
             case ABOUT->{
                 info(y,"EMBER CLIENT","Client version: "+MeteorClient.VERSION,"Minecraft: "+FabricLoader.getInstance().getModContainer("minecraft").orElseThrow().getMetadata().getVersion().getFriendlyString(),
                     "Mod version: "+MeteorClient.MOD_META.getVersion().getFriendlyString(),"Fabric · Yarn mappings · Java 21");y+=175;
-                info(y,"Typography: Inter / Rasmus Andersson (OFL)","Chrome wallpaper: Logan Voss / Unsplash","Midnight wallpaper: Fausto Garcia-Menendez / Unsplash");y+=110;
+                info(y,"Typography: Inter / Rasmus Andersson (OFL)","Nebula wallpaper: BoliviaInteligente / Unsplash","Silk wallpaper: Pawel Czerwinski / Unsplash",
+                    "Obsidian wallpaper: Philip Oroni / Unsplash","Summit wallpaper: Benjamin Voros / Unsplash");y+=168;
                 y=row(y,button("Use classic Minecraft menu",y,()->{Config.get().startMenu.set(StartMenuLayout.Style.Classic);Config.get().save();leaveFor(new TitleScreen());}));
             }
         }

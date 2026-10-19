@@ -1,11 +1,13 @@
 package meteordevelopment.meteorclient.gui.screens.menu;
 
+import com.google.gson.annotations.SerializedName;
+
 /** Menu-only preferences. Accounts and Minecraft's own options stay in their existing stores. */
 public final class MenuConfig {
     public int schema = 1;
     public boolean clock24 = false, showDate = true;
     public String language = "system";
-    public Wallpaper wallpaper = Wallpaper.CHROME_LIVE;
+    public Wallpaper wallpaper = Wallpaper.LIVE;
     public int accent = 0xB49AFF;
     public double blurIntensity = .65, uiScale = 1;
     public boolean lightGlass = false, animations = true, parallax = true, magnification = true;
@@ -15,17 +17,21 @@ public final class MenuConfig {
     public int fpsLimit = 120;
     public boolean blur = true, reduceMotion = false;
 
+    /** Selectable wallpapers. Live shares Nebula's artwork and adds slow drift; older saved names map to the closest new art. */
     public enum Wallpaper {
-        CHROME_LIVE("chrome", "wallpaper.live", "Logan Voss"),
-        CHROME("chrome", "wallpaper.chrome", "Logan Voss"),
-        MIDNIGHT("midnight", "wallpaper.midnight", "Fausto Garcia-Menendez");
+        @SerializedName(value = "LIVE", alternate = "CHROME_LIVE") LIVE("nebula", "wallpaper.live", "BoliviaInteligente", true),
+        NEBULA("nebula", "wallpaper.nebula", "BoliviaInteligente", false),
+        SILK("silk", "wallpaper.silk", "Pawel Czerwinski", false),
+        @SerializedName(value = "OBSIDIAN", alternate = "CHROME") OBSIDIAN("obsidian", "wallpaper.obsidian", "Philip Oroni", false),
+        @SerializedName(value = "SUMMIT", alternate = "MIDNIGHT") SUMMIT("summit", "wallpaper.summit", "Benjamin Voros", false);
         public final String file, key, artist;
-        Wallpaper(String file, String key, String artist) { this.file = file; this.key = key; this.artist = artist; }
+        public final boolean live;
+        Wallpaper(String file, String key, String artist, boolean live) { this.file = file; this.key = key; this.artist = artist; this.live = live; }
     }
 
     public void validate() {
         schema = 1;
-        if (wallpaper == null) wallpaper = Wallpaper.CHROME_LIVE;
+        if (wallpaper == null) wallpaper = Wallpaper.LIVE;
         if (!"en_us".equals(language) && !"fr_fr".equals(language)) language = "system";
         accent &= 0xFFFFFF;
         blurIntensity = finite(blurIntensity, .65, 0, 1);

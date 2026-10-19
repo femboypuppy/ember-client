@@ -41,7 +41,7 @@ public final class EmberTitleScreen extends MenuScreen {
         if(!locked){unlockAge=1;dockIntro.snap(1);}
         if(!migrated && Config.get()!=null && !java.nio.file.Files.exists(ConfigManager.PATH)){
             migrated=true;var cfg=ConfigManager.get();cfg.clock24=Config.get().startClock24.get();
-            if(Config.get().startWallpaper.get()==StartMenuLayout.Wallpaper.Midnight)cfg.wallpaper=MenuConfig.Wallpaper.MIDNIGHT;
+            if(Config.get().startWallpaper.get()==StartMenuLayout.Wallpaper.Midnight)cfg.wallpaper=MenuConfig.Wallpaper.SUMMIT;
             ConfigManager.changed();
         }
     }
@@ -71,10 +71,9 @@ public final class EmberTitleScreen extends MenuScreen {
         if(cfg.motion())dockIntro.update(reveal,delta*cfg.animationSpeed,2.6,.65);else dockIntro.snap(reveal);
         double old=c.opacity;c.opacity*=clockFade*(1-dim*.55);
         updateClock();
-        c.text("EMBER",29,25,18,MenuTheme.WHITE);
         c.round(width-150,20,120,36,12,0x17FFFFFF);c.center(MenuLanguage.text("Accounts"),width-90,30,14,MenuTheme.WHITE);
         double clockY=height*.17-(cfg.motion()?(1-clockFade)*12:0);
-        if(cfg.showDate)c.center(date,width*.5,clockY-31,19,MenuTheme.WHITE);
+        if(cfg.showDate)c.center(date,width*.5,clockY-35,19,MenuTheme.WHITE);
         c.clock(time,width*.5,clockY,MenuTheme.CLOCK_SIZE,MenuTheme.WHITE);
         c.opacity=old*Math.clamp(reveal,0,1)*(1-dim*.5);
         dock.update(width,height,mx,my,delta,dockIntro.value,interactive&&!locked&&!playSheet&&outgoing==null,cfg.motion(),cfg.magnification,cfg.animationSpeed);
