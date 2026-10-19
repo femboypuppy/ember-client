@@ -108,3 +108,29 @@ with tempfile.TemporaryDirectory(prefix='ember-nametags-') as directory:
     subprocess.run([str(java/'java'), '-Djava.awt.headless=true', '-Dember.test.font='+str(ROOT/'src/main/resources/assets/ember-client/fonts/Inter.ttf'),
                     '-cp',str(work/'out'),'NametagChecks',str(ROOT/'build/nametag-preview')], check=True)
     subprocess.run([str(java/'java'), '-cp',str(work/'out'),'MigrationChecks'], check=True)
+
+# Exercise the actual shared shape tessellator against the UI pipeline's face culling.
+geometry_renderer = """package meteordevelopment.meteorclient.renderer;
+import meteordevelopment.meteorclient.utils.render.color.Color;
+public class Renderer2D{
+ public static int triangles;public static double area;
+ public void triangle(double ax,double ay,double bx,double by,double cx,double cy,Color c){triangle(ax,ay,bx,by,cx,cy,c,c,c);}
+ public void triangle(double ax,double ay,double bx,double by,double cx,double cy,Color a,Color b,Color c){double cross=(bx-ax)*(cy-ay)-(by-ay)*(cx-ax);if(!Double.isFinite(cross)||cross>1e-8)throw new AssertionError("Back-facing UI triangle: "+cross);area-=cross*.5;triangles++;}
+ public void quad(double x,double y,double w,double h,Color c){}
+ public void texQuad(double x,double y,double w,double h,double rotation,double u,double v,double uu,double vv,Color c){}
+}"""
+geometry_check = """import meteordevelopment.meteorclient.utils.render.*;import meteordevelopment.meteorclient.renderer.Renderer2D;import meteordevelopment.meteorclient.utils.render.color.Color;
+public class ShapeChecks{public static void main(String[] args){var r=new Renderer2D();var c=new Color(15,18,25,210);for(double radius:new double[]{0,1,8,11,100}){Renderer2D.area=0;EmberShapes.roundedGradient(r,-100,-60,200,60,radius,c,c);if(Renderer2D.area<11000 || Renderer2D.area>12000.01)throw new AssertionError("Incomplete gradient fill: "+Renderer2D.area);EmberShapes.roundedOutline(r,-100,-60,200,60,radius,.65,c,false);}if(Renderer2D.triangles==0)throw new AssertionError("No geometry");System.out.println("Nametag geometry passed: actual gradient and outline triangles face the UI camera, including rounded shadows.");}}
+"""
+with tempfile.TemporaryDirectory(prefix='ember-nametag-geometry-') as directory:
+    work = Path(directory)
+    for name, source in {P+'utils/render/color/Color.java': stubs[P+'utils/render/color/Color.java'],
+                         P+'renderer/Renderer2D.java': geometry_renderer, 'ShapeChecks.java': geometry_check}.items():
+        file = work/name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(source, encoding='utf-8')
+    destination = work/(P+'utils/render/EmberShapes.java')
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT/'src/main/java'/(P+'utils/render/EmberShapes.java'), destination)
+    subprocess.run([str(java/'javac'), '-encoding', 'UTF-8', '-d', str(work/'out'), *map(str, work.rglob('*.java'))], check=True)
+    subprocess.run([str(java/'java'), '-cp', str(work/'out'), 'ShapeChecks'], check=True)

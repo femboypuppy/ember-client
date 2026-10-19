@@ -26,12 +26,13 @@ public final class EmberShapes {
             double px = x + (corner == 0 || corner == 3 ? w - radius : radius) + Math.cos(angle) * radius;
             double py = y + (corner < 2 ? h - radius : radius) + Math.sin(angle) * radius;
             if (corner == 0 && step == 0) { firstX = px; firstY = py; }
-            else r.triangle(x + w / 2, y + h / 2, lastX, lastY, px, py, middle,
-                interpolate(top, bottom, (lastY - y) / h), interpolate(top, bottom, (py - y) / h));
+            // Match Renderer2D.quad's winding: the UI pipeline culls back faces.
+            else r.triangle(x + w / 2, y + h / 2, px, py, lastX, lastY, middle,
+                interpolate(top, bottom, (py - y) / h), interpolate(top, bottom, (lastY - y) / h));
             lastX = px; lastY = py;
         }
-        r.triangle(x + w / 2, y + h / 2, lastX, lastY, firstX, firstY, middle,
-            interpolate(top, bottom, (lastY - y) / h), interpolate(top, bottom, (firstY - y) / h));
+        r.triangle(x + w / 2, y + h / 2, firstX, firstY, lastX, lastY, middle,
+            interpolate(top, bottom, (firstY - y) / h), interpolate(top, bottom, (lastY - y) / h));
     }
 
     private static Color interpolate(Color top, Color bottom, double t) {
@@ -53,7 +54,7 @@ public final class EmberShapes {
             double bx = cx + Math.cos(b) * rad, by = cy + Math.sin(b) * rad;
             double ix = cx + Math.cos(a) * inner, iy = cy + Math.sin(a) * inner;
             double jx = cx + Math.cos(b) * inner, jy = cy + Math.sin(b) * inner;
-            r.triangle(ax, ay, bx, by, ix, iy, c); r.triangle(bx, by, jx, jy, ix, iy, c);
+            r.triangle(ax, ay, ix, iy, bx, by, c); r.triangle(bx, by, ix, iy, jx, jy, c);
         }
         double horizontal = corners ? Math.max(0, w * .27 - rad) : Math.max(0, (w - rad * 2) / 2);
         double vertical = corners ? Math.max(0, h * .20 - rad) : Math.max(0, (h - rad * 2) / 2);

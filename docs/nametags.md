@@ -13,3 +13,5 @@ Long names are truncated by Unicode code point within their reserved space. The 
 Old configs that stored equipment options under Players are migrated on load. Explicit values in the new Equipment group take priority. New style settings live in module configs and are included when sharing modules.
 
 The card renderer reuses Ember's existing font atlases and blurred scene. It never rasterizes a new font or captures another framebuffer per player. Shape and text passes are bounded for each tag, and the existing range/count culling controls remain available. `scripts/check_nametags.py` covers layout limits, independent font measurement scopes, projected glass transforms, detail switches, Unicode truncation, and config migration.
+
+The shared rounded gradient and outline triangles use the UI pipeline's front-facing winding, so solid cards, corner strokes, and soft shadows remain visible with face culling enabled. The checks exercise the actual tessellator as well as the card painter.
