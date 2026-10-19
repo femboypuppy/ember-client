@@ -1,20 +1,28 @@
 package meteordevelopment.meteorclient.systems.modules.donut;
 
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import meteordevelopment.meteorclient.MeteorClient;
+import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
+import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
+import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.systems.hud.elements.EmberNotificationsHud;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.EmberAnim;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.client.render.Camera;
 import net.minecraft.registry.BuiltinRegistries;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.RegistryWrapper;
@@ -22,8 +30,10 @@ import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.random.CheckedRandom;
 import net.minecraft.util.math.random.ChunkRandom;
 import net.minecraft.util.math.random.RandomSplitter;
@@ -31,7 +41,9 @@ import net.minecraft.util.math.random.Xoroshiro128PlusPlusRandom;
 import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.biome.BiomeKeys;
+import net.minecraft.world.chunk.ChunkSection;
 import net.minecraft.world.chunk.ChunkStatus;
+import net.minecraft.world.chunk.PalettedContainer;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.gen.GenerationStep;
 import net.minecraft.world.gen.feature.OrePlacedFeatures;
@@ -39,133 +51,575 @@ import net.minecraft.world.gen.feature.PlacedFeature;
 import net.minecraft.world.gen.feature.util.PlacedFeatureIndexer;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * Shows where ancient debris generated, worked out from the world seed the way the game places it: every nether
- * chunk runs the same seeded random for its two debris features (a small and a large scatter), so the seed gives
- * every spot without seeing a single block. Spots the loaded terrain rules out (mined, or open to air, which debris
- * never generates next to) are dropped.
+ * Finds ancient debris through anti-xray, no seed needed.
  *
- * A wrong seed draws convincing nonsense, so the seed is checked against the nether's bedrock, which is also
- * generated from it: the floor and roof patterns either match nearly block for block, or about half the time.
+ * A chunk is sent as 16x16x16 sections, and each section carries a palette: the list of block types it uses. Paper's
+ * anti-xray swaps hidden blocks for netherrack but sends the palette as it is, so a section whose list still names
+ * ancient debris has at least one real piece inside. Those sections are drawn as areas. Debris the server shows for
+ * real (you mined next to it) is drawn as an exact block.
+ *
+ * With the world seed, the areas also check the seed: the right one puts its debris in exactly the listed sections,
+ * and then each area shows its exact blocks.
  */
 public class NetheriteFinder extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
 
-    private final Setting<String> seed = sgGeneral.add(new StringSetting.Builder()
-        .name("seed")
-        .description("The server's world seed. DonutSMP doesn't publish theirs: paste one here and the seed check says if it's right.")
-        .defaultValue("")
-        .placeholder("world seed")
-        .wide()
-        .onChanged(v -> reset())
-        .build()
-    );
-
     private final Setting<Integer> range = sgGeneral.add(new IntSetting.Builder()
         .name("range")
-        .description("How many chunks around you to show debris in.")
+        .description("How many chunks around you to show areas in.")
         .defaultValue(8)
         .range(1, 24)
         .sliderRange(1, 16)
         .build()
     );
 
-    private final Setting<Boolean> needMatch = sgGeneral.add(new BoolSetting.Builder()
-        .name("only-if-seed-matches")
-        .description("Only show debris once the seed is proven: the nether's bedrock matches it and so does real debris you've seen (2-3 pieces, mined or in the open).")
-        .defaultValue(true)
+    private final Setting<Integer> maxAreas = sgGeneral.add(new IntSetting.Builder()
+        .name("max-areas")
+        .description("Most areas drawn at once, nearest first.")
+        .defaultValue(24)
+        .range(1, 500)
+        .sliderRange(1, 100)
         .build()
     );
 
-    private final Setting<SettingColor> predictedColor = sgRender.add(new ColorSetting.Builder()
-        .name("predicted-color")
-        .description("Where debris should be. Anti-xray can hide it, so it may look like netherrack until you dig.")
-        .defaultValue(new SettingColor(255, 120, 60, 200))
+    private final Setting<String> seed = sgGeneral.add(new StringSetting.Builder()
+        .name("seed")
+        .description("Optional. The world seed: if the areas agree with it, every area shows its exact debris blocks. A wrong seed is ignored.")
+        .defaultValue("")
+        .placeholder("world seed (optional)")
+        .wide()
+        .onChanged(v -> resetSeed())
+        .build()
+    );
+
+    private final Setting<SettingColor> areaColor = sgRender.add(new ColorSetting.Builder()
+        .name("area-color")
+        .description("Areas with at least one ancient debris inside.")
+        .defaultValue(new SettingColor(255, 128, 44, 210))
         .build()
     );
 
     private final Setting<SettingColor> foundColor = sgRender.add(new ColorSetting.Builder()
         .name("found-color")
-        .description("Debris you can already see in the world.")
-        .defaultValue(new SettingColor(120, 255, 140, 230))
+        .description("Debris the server has shown you: a real block.")
+        .defaultValue(new SettingColor(110, 255, 160, 235))
+        .build()
+    );
+
+    private final Setting<SettingColor> pinnedColor = sgRender.add(new ColorSetting.Builder()
+        .name("exact-color")
+        .description("Exact debris spots from a seed that matches the areas.")
+        .defaultValue(new SettingColor(255, 222, 110, 235))
         .build()
     );
 
     private final Setting<Boolean> tracers = sgRender.add(new BoolSetting.Builder()
         .name("tracers")
-        .description("Line to the nearest few debris spots.")
+        .description("Lines to the nearest finds.")
         .defaultValue(true)
         .build()
     );
 
-    /** Decorator step of both debris features, and their index in it (worked out once from vanilla's registries). */
-    private static final int STEP = GenerationStep.Feature.UNDERGROUND_DECORATION.ordinal();
-    private static int largeIndex = -1, smallIndex = -1;
+    private final Setting<Boolean> lookAtInfo = sgRender.add(new BoolSetting.Builder()
+        .name("look-at-info")
+        .description("Look at an area or block to see what it is and how far.")
+        .defaultValue(true)
+        .build()
+    );
 
-    private static final int MAX_TRACERS = 6;
-    private static final int SEED_UNKNOWN = 0, SEED_GOOD = 1, SEED_BAD = 2;
+    private final Setting<Double> infoScale = sgRender.add(new DoubleSetting.Builder()
+        .name("info-scale")
+        .description("Size of the look-at info.")
+        .defaultValue(1)
+        .range(0.5, 2)
+        .sliderRange(0.6, 1.6)
+        .visible(lookAtInfo::get)
+        .build()
+    );
+
+    /** Debris only generates from Y 6 (the large one's lowest spread) to 121; above section 7 there's none. */
+    private static final int MIN_Y = 6, MAX_Y = 121, TOP_SECTION = 7;
+    private static final int MAX_TRACERS = 4, MAX_BLOCKS = 64;
+    private static final double LOOK_ANGLE = 5;
+
+    /** One section the server listed ancient debris in, shrunk to the blocks that could be hiding it. */
+    private record Area(int cx, int sy, int cz, int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        double centerX() { return (minX + maxX + 1) / 2.0; }
+        double centerY() { return (minY + maxY + 1) / 2.0; }
+        double centerZ() { return (minZ + maxZ + 1) / 2.0; }
+
+        boolean contains(Vec3d p) {
+            return p.x >= minX && p.x <= maxX + 1 && p.y >= minY && p.y <= maxY + 1 && p.z >= minZ && p.z <= maxZ + 1;
+        }
+    }
+
+    private final Long2ObjectOpenHashMap<Area> areas = new Long2ObjectOpenHashMap<>();
+    /** Per chunk: sections listing debris, and sections whose list could be read at all (huge lists name every block). */
+    private final Long2IntOpenHashMap listed = new Long2IntOpenHashMap(), readable = new Long2IntOpenHashMap();
+    /** Real debris blocks the server has sent. */
+    private final Set<BlockPos> found = new LinkedHashSet<>();
+
+    private List<Area> shownAreas = List.of();
+    private List<BlockPos> shownFound = List.of(), shownPinned = List.of();
+    private World lastWorld;
+    private int timer;
+    private long ticks;
+
+    public NetheriteFinder() {
+        super(Categories.Donut, "netherite-finder", "Shows areas with ancient debris through anti-xray, and the exact blocks once you get close or have the seed.");
+    }
+
+    @Override
+    public void onActivate() {
+        clearWorld();
+        resetSeed();
+        // Chunks already here were read before the module was on.
+        if (mc.world != null && mc.world.getRegistryKey() == World.NETHER) {
+            for (net.minecraft.world.chunk.Chunk chunk : meteordevelopment.meteorclient.utils.Utils.chunks()) {
+                if (chunk instanceof WorldChunk c) readChunk(c);
+            }
+        }
+        lastWorld = mc.world;
+    }
+
+    @Override
+    public void onDeactivate() {
+        FindBeacon.withdraw(this);
+    }
+
+    private void clearWorld() {
+        areas.clear();
+        listed.clear();
+        readable.clear();
+        found.clear();
+        mined.clear();
+        shownAreas = List.of();
+        shownFound = List.of();
+        shownPinned = List.of();
+        bedrockChecked.clear();
+        bedrockMatch = bedrockTotal = 0;
+        seedState = SEED_UNKNOWN;
+        if (pinState != PIN_SEARCHING) pinState = PIN_UNKNOWN;
+        statSections = statListed = statLogged = 0;
+    }
+
+    @EventHandler
+    private void onGameJoined(GameJoinedEvent event) {
+        clearWorld();
+    }
+
+    // Reading the server's chunks.
+
+    @EventHandler
+    private void onChunkData(ChunkDataEvent event) {
+        if (mc.world == null || mc.world.getRegistryKey() != World.NETHER) return;
+        readChunk(event.chunk());
+    }
+
+    private void readChunk(WorldChunk chunk) {
+        int cx = chunk.getPos().x, cz = chunk.getPos().z;
+        long key = chunk.getPos().toLong();
+        if (arrived.size() > 50_000) arrived.clear();
+        arrived.put(key, ticks);
+        for (int sy = 0; sy <= TOP_SECTION; sy++) {
+            areas.remove(ChunkSectionPos.asLong(cx, sy, cz));
+            mined.remove(ChunkSectionPos.asLong(cx, sy, cz));
+        }
+        // A reload resends what the server has now: debris seen before stays known unless it's gone for real.
+        found.removeIf(p -> p.getX() >> 4 == cx && p.getZ() >> 4 == cz && !mightBeDebris(chunk.getBlockState(p)));
+
+        ChunkSection[] sections = chunk.getSectionArray();
+        int bottom = chunk.getBottomSectionCoord(), hit = 0, read = 0;
+        for (int i = 0; i < sections.length; i++) {
+            int sy = bottom + i;
+            if (sy < 0 || sy > TOP_SECTION) continue;
+            PalettedContainer<BlockState> blocks = sections[i].getBlockStateContainer();
+            // The global palette answers yes to everything, so it can't tell.
+            if (blocks.hasAny(s -> false)) continue;
+            read |= 1 << sy;
+            statSections++;
+            if (!blocks.hasAny(s -> s.isOf(Blocks.ANCIENT_DEBRIS))) continue;
+            hit |= 1 << sy;
+            statListed++;
+            Area area = scan(chunk, sy);
+            if (area != null) areas.put(ChunkSectionPos.asLong(cx, sy, cz), area);
+        }
+        listed.put(key, hit);
+        readable.put(key, read);
+
+        if (statLogged < 4 && hit != 0) {
+            statLogged++;
+            MeteorClient.LOG.info("[Ember Netherite] Chunk {}, {}: debris listed in sections {} ({} of {} sections so far)", cx, cz,
+                Integer.toBinaryString(hit), statListed, statSections);
+        }
+        if (areas.size() > 50_000) areas.clear();
+    }
 
     /**
-     * The bedrock only fixes the low 48 bits of the seed (it uses the old Java random), debris uses all 64. So the
-     * seed is only trusted once real debris sits where it says, and the top 16 bits get searched if it doesn't.
+     * Debris in view, plus the box of blocks that could be hiding one: netherrack (what anti-xray shows instead) with no
+     * air beside it, since debris never generates next to air.
+     *
+     * @return null when nothing in the section could still be debris: the listed one was mined while the chunk stayed loaded
      */
-    private static final int DEBRIS_UNKNOWN = 0, DEBRIS_GOOD = 1, DEBRIS_SEARCHING = 2, DEBRIS_RANDOM = 3;
-    private static final int NEED_DEBRIS = 2;
-    /** Real debris: open to air (anti-xray shows those as they are) or revealed by a block update. */
-    private final java.util.Set<BlockPos> realDebris = new java.util.LinkedHashSet<>();
-    private int debrisState = DEBRIS_UNKNOWN, explainedCount, checkedCount;
+    private Area scan(WorldChunk chunk, int sy) {
+        int x0 = chunk.getPos().getStartX(), z0 = chunk.getPos().getStartZ();
+        int y0 = Math.max(sy << 4, MIN_Y), y1 = Math.min((sy << 4) + 15, MAX_Y);
+        int minX = Integer.MAX_VALUE, minY = 0, minZ = 0, maxX = 0, maxY = 0, maxZ = 0;
+        BlockPos.Mutable pos = new BlockPos.Mutable(), side = new BlockPos.Mutable();
+        for (int y = y0; y <= y1; y++) {
+            for (int x = x0; x < x0 + 16; x++) {
+                for (int z = z0; z < z0 + 16; z++) {
+                    BlockState state = chunk.getBlockState(pos.set(x, y, z));
+                    boolean debris = state.isOf(Blocks.ANCIENT_DEBRIS);
+                    if (debris) found.add(pos.toImmutable());
+                    else if (!state.isOf(Blocks.NETHERRACK) || touchesAir(chunk, pos, side)) continue;
+                    if (minX == Integer.MAX_VALUE) {
+                        minX = maxX = x;
+                        minY = maxY = y;
+                        minZ = maxZ = z;
+                    } else {
+                        minX = Math.min(minX, x);
+                        maxX = Math.max(maxX, x);
+                        minY = Math.min(minY, y);
+                        maxY = Math.max(maxY, y);
+                        minZ = Math.min(minZ, z);
+                        maxZ = Math.max(maxZ, z);
+                    }
+                }
+            }
+        }
+        if (minX == Integer.MAX_VALUE) return null;
+        return new Area(chunk.getPos().x, sy, chunk.getPos().z, minX, minY, minZ, maxX, maxY, maxZ);
+    }
+
+    /** Next to air, looking only inside this chunk (blocks over the edge count as solid). */
+    private static boolean touchesAir(WorldChunk chunk, BlockPos pos, BlockPos.Mutable side) {
+        int x0 = chunk.getPos().getStartX(), z0 = chunk.getPos().getStartZ();
+        for (Direction d : Direction.values()) {
+            side.set(pos, d);
+            if (side.getX() < x0 || side.getX() > x0 + 15 || side.getZ() < z0 || side.getZ() > z0 + 15) continue;
+            if (chunk.getBlockState(side).isAir()) return true;
+        }
+        return false;
+    }
+
+    private static boolean mightBeDebris(BlockState state) {
+        return state.isOf(Blocks.ANCIENT_DEBRIS) || state.isOf(Blocks.NETHERRACK);
+    }
+
+    /** Debris the server reveals when someone digs near it, and debris that got mined. */
+    @EventHandler
+    private void onBlockUpdate(BlockUpdateEvent event) {
+        if (mc.world == null || mc.world.getRegistryKey() != World.NETHER) return;
+        if (event.newState.isOf(Blocks.ANCIENT_DEBRIS)) {
+            if (found.size() < 5000) found.add(event.pos.toImmutable());
+        } else if (event.oldState.isOf(Blocks.ANCIENT_DEBRIS) || found.contains(event.pos)) {
+            found.remove(event.pos);
+            // The server's list only updates when the chunk is sent again, so this area may be empty now.
+            mined.add(ChunkSectionPos.asLong(event.pos.getX() >> 4, event.pos.getY() >> 4, event.pos.getZ() >> 4));
+        }
+    }
+
+    /** Sections someone mined debris in since the server last sent them. */
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet mined = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+
+    /** Mined in, and no debris known to be left: the listing may be out of date. */
+    private boolean maybeEmpty(Area a) {
+        if (!mined.contains(ChunkSectionPos.asLong(a.cx, a.sy, a.cz))) return false;
+        for (BlockPos pos : found) if (inArea(a, pos)) return false;
+        for (BlockPos pos : shownPinned) if (inArea(a, pos)) return false;
+        return true;
+    }
+
+    // What to draw, worked out a few times a second.
+
+    @EventHandler
+    private void onTick(TickEvent.Post event) {
+        ticks++;
+        if (mc.world != lastWorld) {
+            clearWorld();
+            lastWorld = mc.world;
+        }
+        if (mc.player == null || mc.world == null || ++timer < 10) return;
+        timer = 0;
+        if (mc.world.getRegistryKey() != World.NETHER) {
+            shownAreas = List.of();
+            shownFound = List.of();
+            shownPinned = List.of();
+            return;
+        }
+
+        if (seedSet && indexesReady()) {
+            checkSeed();
+            checkPins();
+        }
+
+        BlockPos me = mc.player.getBlockPos();
+        int r = range.get() * 16;
+        long rangeSq = (long) r * r;
+
+        List<Area> near = new ArrayList<>();
+        for (Area area : areas.values()) {
+            double dx = area.centerX() - mc.player.getX(), dz = area.centerZ() - mc.player.getZ();
+            if (dx * dx + dz * dz <= rangeSq) near.add(area);
+        }
+        near.sort(Comparator.comparingDouble(a -> distanceSq(a, mc.player.getEyePos())));
+        if (near.size() > maxAreas.get()) near = new ArrayList<>(near.subList(0, maxAreas.get()));
+
+        List<BlockPos> foundNear = new ArrayList<>();
+        for (BlockPos pos : found) {
+            if (horizontalSq(pos, me) <= rangeSq) foundNear.add(pos);
+        }
+        foundNear.sort(Comparator.comparingDouble(p -> p.getSquaredDistance(me)));
+
+        Set<BlockPos> pinnedSet = new LinkedHashSet<>();
+        if (pinState == PIN_GOOD) {
+            ChunkPos here = mc.player.getChunkPos();
+            int rc = range.get();
+            for (int dx = -rc; dx <= rc; dx++) {
+                for (int dz = -rc; dz <= rc; dz++) {
+                    int[] spots = predicted.computeIfAbsent(ChunkPos.toLong(here.x + dx, here.z + dz), k -> predict(seedValue, ChunkPos.getPackedX(k), ChunkPos.getPackedZ(k)));
+                    for (int i = 0; i < spots.length; i += 3) {
+                        BlockPos pos = new BlockPos(spots[i], spots[i + 1], spots[i + 2]);
+                        if (!found.contains(pos) && isListed(pos) && canHold(pos)) pinnedSet.add(pos);
+                    }
+                }
+            }
+            if (predicted.size() > 20_000) predicted.clear();
+        }
+        List<BlockPos> pinned = new ArrayList<>(pinnedSet);
+        pinned.sort(Comparator.comparingDouble(p -> p.getSquaredDistance(me)));
+
+        shownAreas = near;
+        shownFound = foundNear.size() > MAX_BLOCKS ? foundNear.subList(0, MAX_BLOCKS) : foundNear;
+        shownPinned = pinned.size() > MAX_BLOCKS ? pinned.subList(0, MAX_BLOCKS) : pinned;
+    }
+
+    private boolean isListed(BlockPos pos) {
+        int sy = pos.getY() >> 4;
+        return sy >= 0 && sy <= TOP_SECTION && (listed.get(ChunkPos.toLong(pos.getX() >> 4, pos.getZ() >> 4)) & (1 << sy)) != 0;
+    }
+
+    private boolean isReadable(BlockPos pos) {
+        int sy = pos.getY() >> 4;
+        return sy >= 0 && sy <= TOP_SECTION && (readable.get(ChunkPos.toLong(pos.getX() >> 4, pos.getZ() >> 4)) & (1 << sy)) != 0;
+    }
+
+    /** Shows as debris, or as netherrack with no air beside it (anti-xray's stand-in for a hidden block). */
+    private boolean canHold(BlockPos pos) {
+        BlockState state = mc.world.getBlockState(pos);
+        if (state.isOf(Blocks.ANCIENT_DEBRIS)) return true;
+        if (!state.isOf(Blocks.NETHERRACK)) return false;
+        for (Direction d : Direction.values()) {
+            if (mc.world.getBlockState(pos.offset(d)).isAir()) return false;
+        }
+        return true;
+    }
+
+    private static double distanceSq(Area a, Vec3d p) {
+        double dx = MathHelper.clamp(p.x, a.minX, a.maxX + 1) - p.x;
+        double dy = MathHelper.clamp(p.y, a.minY, a.maxY + 1) - p.y;
+        double dz = MathHelper.clamp(p.z, a.minZ, a.maxZ + 1) - p.z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private static long horizontalSq(BlockPos a, BlockPos b) {
+        long dx = a.getX() - b.getX(), dz = a.getZ() - b.getZ();
+        return dx * dx + dz * dz;
+    }
+
+    // Drawing: areas as corner brackets, blocks as solid boxes.
+
+    private Object hovered;
+    private Object infoTarget;
+    private float hoverAnim;
+    private final EmberAnim.Clock clock = new EmberAnim.Clock();
+
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        if (mc.player == null) return;
+        Color area = areaColor.get(), foundLine = foundColor.get(), pinnedLine = pinnedColor.get();
+
+        for (Area a : shownAreas) brackets(event, a, maybeEmpty(a) ? FindBeacon.alpha(area, area.a / 3) : area);
+        for (BlockPos pos : shownPinned) event.renderer.box(pos, FindBeacon.alpha(pinnedLine, pinnedLine.a / 3), pinnedLine, ShapeMode.Both, 0);
+        for (BlockPos pos : shownFound) event.renderer.box(pos, FindBeacon.alpha(foundLine, foundLine.a / 3), foundLine, ShapeMode.Both, 0);
+
+        Camera camera = mc.gameRenderer.getCamera();
+        Vec3d cam = camera.getCameraPos();
+        Vec3d look = Vec3d.fromPolar(camera.getPitch(), camera.getYaw());
+
+        if (tracers.get()) {
+            // Real blocks first, then exact spots, then the nearest areas.
+            List<Vec3d> targets = new ArrayList<>();
+            for (BlockPos pos : shownFound) targets.add(Vec3d.ofCenter(pos));
+            for (BlockPos pos : shownPinned) targets.add(Vec3d.ofCenter(pos));
+            for (Area a : shownAreas) {
+                if (targets.size() >= MAX_TRACERS) break;
+                if (!a.contains(cam)) targets.add(new Vec3d(a.centerX(), a.centerY(), a.centerZ()));
+            }
+            for (int i = 0; i < targets.size() && i < MAX_TRACERS; i++) {
+                Vec3d t = targets.get(i);
+                Color c = i < shownFound.size() ? foundLine : i < shownFound.size() + shownPinned.size() ? pinnedLine : area;
+                event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, t.x, t.y, t.z, c);
+            }
+        }
+
+        // What the crosshair is on: a block beats an area, the area you're in beats the rest.
+        Object best = null;
+        double bestAngle = lookAtInfo.get() ? LOOK_ANGLE : -1;
+        for (BlockPos pos : shownFound) {
+            double angle = angle(cam, look, Vec3d.ofCenter(pos));
+            if (angle < bestAngle) {
+                bestAngle = angle;
+                best = pos;
+            }
+        }
+        for (BlockPos pos : shownPinned) {
+            double angle = angle(cam, look, Vec3d.ofCenter(pos));
+            if (angle < bestAngle) {
+                bestAngle = angle;
+                best = pos;
+            }
+        }
+        if (best == null && lookAtInfo.get()) {
+            for (Area a : shownAreas) {
+                double angle = a.contains(cam) ? 0 : angle(cam, look, new Vec3d(a.centerX(), a.centerY(), a.centerZ()));
+                if (angle < bestAngle) {
+                    bestAngle = angle;
+                    best = a;
+                }
+            }
+        }
+        if (best != null) {
+            FindBeacon.offer(this, bestAngle);
+            infoTarget = best;
+        } else {
+            FindBeacon.withdraw(this);
+        }
+        hovered = best;
+    }
+
+    /** Short lines at the eight corners, plus a faint fill. */
+    private static void brackets(Render3DEvent event, Area a, Color color) {
+        double x0 = a.minX, y0 = a.minY, z0 = a.minZ, x1 = a.maxX + 1, y1 = a.maxY + 1, z1 = a.maxZ + 1;
+        event.renderer.box(x0, y0, z0, x1, y1, z1, FindBeacon.alpha(color, color.a / 14), color, ShapeMode.Sides, 0);
+        double lx = Math.min(3, (x1 - x0) / 3), ly = Math.min(3, (y1 - y0) / 3), lz = Math.min(3, (z1 - z0) / 3);
+        for (int i = 0; i < 8; i++) {
+            double x = (i & 1) == 0 ? x0 : x1, y = (i & 2) == 0 ? y0 : y1, z = (i & 4) == 0 ? z0 : z1;
+            double sx = x == x0 ? lx : -lx, sy = y == y0 ? ly : -ly, sz = z == z0 ? lz : -lz;
+            event.renderer.line(x, y, z, x + sx, y, z, color);
+            event.renderer.line(x, y, z, x, y + sy, z, color);
+            event.renderer.line(x, y, z, x, y, z + sz, color);
+        }
+    }
+
+    private static double angle(Vec3d cam, Vec3d look, Vec3d target) {
+        Vec3d to = target.subtract(cam);
+        double length = to.length();
+        if (length < 0.5) return 0;
+        return Math.toDegrees(Math.acos(MathHelper.clamp(look.dotProduct(to) / length, -1, 1)));
+    }
+
+    @EventHandler
+    private void onRender2D(Render2DEvent event) {
+        float dt = clock.tick();
+        boolean show = hovered != null && FindBeacon.shows(this) && mc.currentScreen == null && !mc.options.hudHidden;
+        hoverAnim = EmberAnim.approach(hoverAnim, show ? 1f : 0f, dt, 0.07);
+        Object target = infoTarget;
+        if (target == null || hoverAnim <= 0.01f || mc.player == null || mc.currentScreen != null || mc.options.hudHidden) return;
+
+        Vec3d eye = mc.player.getEyePos();
+        Color color;
+        String verdict, where, reason;
+        if (target instanceof Area a) {
+            boolean inside = a.contains(eye);
+            int exact = 0;
+            for (BlockPos pos : shownPinned) if (inArea(a, pos)) exact++;
+            for (BlockPos pos : shownFound) if (inArea(a, pos)) exact++;
+            color = areaColor.get();
+            verdict = inside ? "YOU'RE IN A DEBRIS AREA" : "DEBRIS AREA";
+            where = inside ? "Y " + a.minY + "-" + a.maxY : Math.round(Math.sqrt(distanceSq(a, eye))) + "m  ·  " + FindBeacon.dig(a.centerY());
+            reason = exact > 0 ? exact + " exact " + (exact == 1 ? "spot" : "spots") + " marked inside"
+                : maybeEmpty(a) ? "Debris was just mined here: there may be none left"
+                : "At least 1 ancient debris in here  ·  mine through it, it shows when you're 2 blocks away";
+        } else {
+            BlockPos pos = (BlockPos) target;
+            boolean real = found.contains(pos);
+            color = real ? foundColor.get() : pinnedColor.get();
+            verdict = "ANCIENT DEBRIS";
+            where = Math.round(Math.sqrt(pos.getSquaredDistance(eye))) + "m  ·  " + FindBeacon.dig(pos.getY() + 0.5);
+            reason = real ? "Real block: the server showed it" : "Exact spot from the seed (" + pinPercent + "% match)";
+        }
+
+        HudRenderer r = HudRenderer.INSTANCE;
+        r.begin(event.drawContext);
+        try {
+            FindBeacon.info(r, color, verdict, where, reason, hoverAnim, infoScale.get());
+        } finally {
+            r.end();
+        }
+    }
+
+    private static boolean inArea(Area a, BlockPos pos) {
+        return pos.getX() >= a.minX && pos.getX() <= a.maxX && pos.getY() >= a.minY && pos.getY() <= a.maxY && pos.getZ() >= a.minZ && pos.getZ() <= a.maxZ;
+    }
+
+    @Override
+    public String getInfoString() {
+        if (mc.world != null && mc.world.getRegistryKey() != World.NETHER) return "nether only";
+        String text = shownAreas.size() + (shownAreas.size() == 1 ? " area" : " areas");
+        int exact = shownFound.size() + shownPinned.size();
+        if (exact > 0) text += " · " + exact + " exact";
+        if (pinState == PIN_SEARCHING) text += " · checking seed";
+        return text;
+    }
+
+    // The optional seed. The bedrock checks its low 48 bits (it uses the old Java random); the areas check the rest,
+    // and fix the top 16 bits if they're off.
+
+    private static final int SEED_UNKNOWN = 0, SEED_GOOD = 1, SEED_BAD = 2;
+    private static final int PIN_UNKNOWN = 0, PIN_GOOD = 1, PIN_SEARCHING = 2, PIN_NONE = 3;
+    private static final int STEP = GenerationStep.Feature.UNDERGROUND_DECORATION.ordinal();
+    private static int largeIndex = -1, smallIndex = -1;
+    /** Index shift found by the search: a server on another version can list the features differently. */
+    private static int indexShift;
+
+    private long seedValue;
+    private boolean seedSet;
+    private int seedState = SEED_UNKNOWN;
+    private volatile int pinState = PIN_UNKNOWN;
+    private int pinPercent;
+    private long pinCheckAt;
+    private long bedrockMatch, bedrockTotal;
+    private final Long2ObjectOpenHashMap<Boolean> bedrockChecked = new Long2ObjectOpenHashMap<>();
+    /** The module's tick each chunk arrived at (its own clock: the world's time jumps right as chunks arrive). */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap arrived = new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private final Long2ObjectOpenHashMap<int[]> predicted = new Long2ObjectOpenHashMap<>();
     private volatile Long foundSeed;
     private volatile boolean searchFailed;
+    private String error;
+    private int statSections, statListed, statLogged;
     private final java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "Ember-NetheriteFinder");
         thread.setDaemon(true);
         return thread;
     });
 
-    private final Long2ObjectOpenHashMap<int[]> predicted = new Long2ObjectOpenHashMap<>();
-    private final List<BlockPos> shownPredicted = new ArrayList<>(), shownFound = new ArrayList<>();
-    private long seedValue;
-    private boolean seedSet;
-    private int timer, seedState = SEED_UNKNOWN;
-    private long ticks;
-    private long bedrockMatch, bedrockTotal;
-    private final Long2ObjectOpenHashMap<Boolean> bedrockChecked = new Long2ObjectOpenHashMap<>();
-    /** World time each chunk arrived at. */
-    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap arrived = new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
-    private String error;
-
-    public NetheriteFinder() {
-        super(Categories.Donut, "netherite-finder", "Shows ancient debris in the nether from the world seed, checked against the server's bedrock.");
-    }
-
-    @Override
-    public void onActivate() {
-        realDebris.clear();
-        reset();
-    }
-
-    private void reset() {
+    private void resetSeed() {
         predicted.clear();
-        shownPredicted.clear();
-        shownFound.clear();
+        shownPinned = List.of();
         bedrockChecked.clear();
         bedrockMatch = bedrockTotal = 0;
         seedState = SEED_UNKNOWN;
-        debrisState = DEBRIS_UNKNOWN;
-        explainedCount = checkedCount = 0;
-        searchFailed = false;
-        error = null;
-
-        // Chunks already loaded count as arrived now.
-        if (mc.world != null) {
-            for (net.minecraft.world.chunk.Chunk chunk : meteordevelopment.meteorclient.utils.Utils.chunks()) {
-                arrived.putIfAbsent(chunk.getPos().toLong(), ticks);
-            }
-        }
+        if (pinState != PIN_SEARCHING) pinState = PIN_UNKNOWN;
 
         String text = seed.get().trim();
         seedSet = !text.isEmpty();
@@ -178,363 +632,142 @@ public class NetheriteFinder extends Module {
         }
     }
 
-    @EventHandler
-    private void onTick(TickEvent.Post event) {
-        // Its own clock: the world's time jumps when the server first sends it, right as chunks arrive.
-        ticks++;
-        if (mc.player == null || mc.world == null || ++timer < 10) return;
-        timer = 0;
-        shownPredicted.clear();
-        shownFound.clear();
-        if (!seedSet || mc.world.getRegistryKey() != World.NETHER) return;
-        if (!indexesReady()) return;
-
-        checkSeed();
-        checkDebris();
-        if (needMatch.get() && (seedState != SEED_GOOD || debrisState != DEBRIS_GOOD)) return;
-
-        ChunkPos here = mc.player.getChunkPos();
-        int r = range.get();
-        for (int dx = -r; dx <= r; dx++) {
-            for (int dz = -r; dz <= r; dz++) {
-                int cx = here.x + dx, cz = here.z + dz;
-                int[] spots = predicted.computeIfAbsent(ChunkPos.toLong(cx, cz), k -> predict(seedValue, cx, cz));
-                WorldChunk chunk = mc.world.getChunk(cx, cz, ChunkStatus.FULL, false) instanceof WorldChunk c ? c : null;
-                for (int i = 0; i < spots.length; i += 3) {
-                    BlockPos pos = new BlockPos(spots[i], spots[i + 1], spots[i + 2]);
-                    if (chunk == null) {
-                        shownPredicted.add(pos);
-                        continue;
-                    }
-                    BlockState state = mc.world.getBlockState(pos);
-                    if (state.isOf(Blocks.ANCIENT_DEBRIS)) shownFound.add(pos);
-                    // Debris never generates beside air, so open spots were mined or never got it. Anything solid can
-                    // hide it: anti-xray sends hidden blocks as netherrack, or as fake ores.
-                    else if (!state.isAir() && state.getFluidState().isEmpty() && !exposed(pos)) shownPredicted.add(pos);
-                }
-            }
-        }
-        if (predicted.size() > 20_000) predicted.clear();
-    }
-
-    @EventHandler
-    private void onChunkData(meteordevelopment.meteorclient.events.world.ChunkDataEvent event) {
-        if (mc.world == null) return;
-        if (arrived.size() > 50_000) arrived.clear();
-        arrived.put(event.chunk().getPos().toLong(), ticks);
-        if (mc.world.getRegistryKey() == World.NETHER) collectDebris(event.chunk());
-    }
-
-    /** Debris the server revealed: someone dug next to it, or you did. */
-    @EventHandler
-    private void onBlockUpdate(meteordevelopment.meteorclient.events.world.BlockUpdateEvent event) {
-        if (mc.world == null || mc.world.getRegistryKey() != World.NETHER) return;
-        BlockPos pos = event.pos.toImmutable();
-        if (event.newState.isOf(Blocks.ANCIENT_DEBRIS) || event.oldState.isOf(Blocks.ANCIENT_DEBRIS)) addDebris(pos);
-        // A block mined next to debris leaves it open to air, so it's real and shows as it is.
-        if (event.newState.isAir()) {
-            for (Direction side : Direction.values()) {
-                if (mc.world.getBlockState(pos.offset(side)).isOf(Blocks.ANCIENT_DEBRIS)) addDebris(pos.offset(side));
-            }
-        }
-    }
-
-    /**
-     * Visible debris in a chunk. Only pieces open to air count: anti-xray sends those as they are, while a buried
-     * one could be one of its fakes.
-     */
-    private void collectDebris(WorldChunk chunk) {
-        var sections = chunk.getSectionArray();
-        int x0 = chunk.getPos().getStartX(), z0 = chunk.getPos().getStartZ();
-        BlockPos.Mutable pos = new BlockPos.Mutable();
-        it.unimi.dsi.fastutil.longs.LongOpenHashSet buried = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-        int open = 0;
-        for (int i = 0; i < sections.length && i < 8; i++) {
-            var section = sections[i];
-            if (section == null || section.isEmpty() || !section.hasAny(s -> s.isOf(Blocks.ANCIENT_DEBRIS))) continue;
-            int y0 = chunk.getBottomY() + (i << 4);
-            for (int y = 0; y < 16; y++) {
-                for (int x = 0; x < 16; x++) {
-                    for (int z = 0; z < 16; z++) {
-                        if (!section.getBlockState(x, y, z).isOf(Blocks.ANCIENT_DEBRIS)) continue;
-                        pos.set(x0 + x, y0 + y, z0 + z);
-                        if (exposed(pos)) {
-                            open++;
-                            addDebris(pos.toImmutable());
-                        } else {
-                            buried.add(pos.asLong());
-                        }
-                    }
-                }
-            }
-        }
-        noteLoad(chunk.getPos().toLong(), buried, open);
-    }
-
-    // How the server sends debris, logged to learn how its anti-xray works. Fake ores that change on every send
-    // give a low repeat share when the same chunk arrives twice; real debris repeats every time.
-
-    private final Long2ObjectOpenHashMap<it.unimi.dsi.fastutil.longs.LongOpenHashSet> lastBuried = new Long2ObjectOpenHashMap<>();
-    private int statChunks, statBuried, statOpen, statReloads, statRepeat, statRepeatOf, statLogged;
-    private long statLoggedAt;
-
-    private void noteLoad(long key, it.unimi.dsi.fastutil.longs.LongOpenHashSet buried, int open) {
-        statChunks++;
-        statBuried += buried.size();
-        statOpen += open;
-        var before = lastBuried.get(key);
-        if (before != null && !before.isEmpty()) {
-            statReloads++;
-            statRepeatOf += before.size();
-            for (long p : before) if (buried.contains(p)) statRepeat++;
-        }
-        if (lastBuried.size() > 20_000) lastBuried.clear();
-        lastBuried.put(key, buried);
-
-        if (statLogged < 3 && (buried.size() + open) > 0) {
-            statLogged++;
-            MeteorClient.LOG.info("[Ember Netherite] Chunk {} arrived with {} debris: {} open to air, {} buried", ChunkPos.getPackedX(key) + ", " + ChunkPos.getPackedZ(key),
-                buried.size() + open, open, buried.size());
-        }
-        if (ticks - statLoggedAt > 1200 && statChunks > 0) {
-            statLoggedAt = ticks;
-            MeteorClient.LOG.info("[Ember Netherite] Debris in packets: {} chunks, {} buried, {} open to air; {} chunks seen again, {} of {} buried debris in the same place again",
-                statChunks, statBuried, statOpen, statReloads, statRepeat, statRepeatOf);
-        }
-    }
-
-    private void addDebris(BlockPos pos) {
-        if (realDebris.size() < 400 && !realDebris.contains(pos)) {
-            MeteorClient.LOG.info("[Ember Netherite] Real debris at {} (seed says {})", pos.toShortString(),
-                seedSet && largeIndex >= 0 && explained(seedValue, List.of(pos), largeIndex + indexShift, smallIndex + indexShift) > 0 ? "yes" : "no");
-        }
-        if (realDebris.size() < 400 && realDebris.add(pos) && debrisState != DEBRIS_SEARCHING) {
-            // New evidence: look again, unless the seed was already proven.
-            if (debrisState != DEBRIS_GOOD) debrisState = DEBRIS_UNKNOWN;
-        }
-    }
-
-    /** Whether the seed puts the debris you've seen where it is, and if not, which top 16 bits would. */
-    private void checkDebris() {
-        Long found = foundSeed;
-        if (found != null) {
+    /** Whether the seed's debris lands in the listed sections, and if not, which top 16 bits would. */
+    private void checkPins() {
+        Long fixed = foundSeed;
+        if (fixed != null) {
             foundSeed = null;
-            MeteorClient.LOG.info("[Ember Netherite] Seed corrected: {}", found);
-            EmberNotificationsHud.push("Netherite finder", "Seed fixed: " + found, EmberNotificationsHud.GOOD);
-            seed.set(String.valueOf(found));
+            pinState = PIN_UNKNOWN;
+            MeteorClient.LOG.info("[Ember Netherite] Seed corrected: {}", fixed);
+            EmberNotificationsHud.push("Netherite finder", "Seed fixed from the debris areas: " + fixed, EmberNotificationsHud.GOOD);
+            seed.set(String.valueOf(fixed));
             return;
         }
-        if (searchFailed && debrisState == DEBRIS_SEARCHING) {
-            debrisState = DEBRIS_RANDOM;
-            MeteorClient.LOG.info("[Ember Netherite] No seed with these low 48 bits explains the {} debris seen: ore placement isn't from the seed here", realDebris.size());
-            EmberNotificationsHud.push("Netherite finder", "This server's debris doesn't follow the world seed", EmberNotificationsHud.BAD);
+        if (pinState == PIN_SEARCHING && searchFailed) {
+            pinState = PIN_NONE;
+            MeteorClient.LOG.info("[Ember Netherite] No seed with these low 48 bits puts its debris in the listed sections");
+            EmberNotificationsHud.push("Netherite finder", "This server's debris doesn't follow the seed: showing areas", EmberNotificationsHud.WARN);
         }
-        if (seedState != SEED_GOOD || debrisState != DEBRIS_UNKNOWN) return;
-        // No debris in view (DonutSMP's anti-xray hides every block of it): prove the seed from magma veins.
-        if (realDebris.size() < 3) {
-            checkVeins();
+        if (seedState != SEED_GOOD || pinState != PIN_UNKNOWN || ticks - pinCheckAt < 40) return;
+        pinCheckAt = ticks;
+
+        List<Snap> snaps = snapshot();
+        int[] score = score(seedValue, snaps, largeIndex + indexShift, smallIndex + indexShift, Integer.MAX_VALUE);
+        int[] other = score(seedValue ^ (0x5A5AL << 48), snaps, largeIndex + indexShift, smallIndex + indexShift, Integer.MAX_VALUE);
+        MeteorClient.LOG.info("[Ember Netherite] Seed {} vs the listed sections: {} of {} spots ({} chunks); a wrong seed gets {} of {}",
+            seedValue, score[0], score[0] + score[1], snaps.size(), other[0], other[0] + other[1]);
+        int total = score[0] + score[1];
+        if (total < 40) return;
+        if (matches(score, 40)) {
+            pinState = PIN_GOOD;
+            pinPercent = Math.round(100f * score[0] / total);
+            EmberNotificationsHud.push("Netherite finder", "Seed matches (" + pinPercent + "%): exact debris shown", EmberNotificationsHud.GOOD);
             return;
         }
 
-        List<BlockPos> seen = List.copyOf(realDebris);
-        checkedCount = seen.size();
-        explainedCount = explained(seedValue, seen, largeIndex + indexShift, smallIndex + indexShift);
-        if (explainedCount >= NEED_DEBRIS && explainedCount * 10 >= checkedCount * 6) {
-            debrisState = DEBRIS_GOOD;
-            MeteorClient.LOG.info("[Ember Netherite] Seed {} confirmed: {} of {} debris seen sit where it says", seedValue, explainedCount, checkedCount);
-            EmberNotificationsHud.push("Netherite finder", "Seed confirmed by " + explainedCount + " real debris", EmberNotificationsHud.GOOD);
-            return;
-        }
-        if (seen.size() < 3) return;
-
-        // The low 48 bits are right (the bedrock matched), so only 65,536 seeds are left to try.
-        debrisState = DEBRIS_SEARCHING;
+        pinState = PIN_SEARCHING;
         searchFailed = false;
         long low = seedValue & 0xFFFF_FFFF_FFFFL;
-        int large = largeIndex + indexShift, small = smallIndex + indexShift;
-        EmberNotificationsHud.push("Netherite finder", "Debris doesn't match yet: fixing the seed from what you've seen", EmberNotificationsHud.WARN);
-        worker.submit(() -> {
-            int need = Math.max(NEED_DEBRIS, (int) Math.ceil(seen.size() * 0.6));
-            for (long hi = 0; hi < 65536; hi++) {
-                long candidate = low | (hi << 48);
-                if (explained(candidate, seen, large, small) >= need) {
-                    foundSeed = candidate;
-                    return;
-                }
-            }
-            searchFailed = true;
-        });
-    }
-
-    // Magma veins: placed by the same seeded random as the debris, in every nether biome, and never hidden by
-    // anti-xray. Four per chunk, size 33, Y 27-36, replacing netherrack.
-
-    private static int magmaIndex = -1;
-    private long veinCheckAt;
-    /** Index shift found by the vein search: a server on another version can list the features differently. */
-    private static int indexShift;
-
-    private static final byte V_UNKNOWN = 0, V_NETHERRACK = 1, V_MAGMA = 2, V_OTHER = 3;
-    private static final int VEIN_Y0 = 18, VEIN_Y1 = 46;
-
-    private void checkVeins() {
-        if (magmaIndex < 0 || ticks - veinCheckAt < 100) return;
-        veinCheckAt = ticks;
-
-        // Chunks near you with plenty of magma in the vein band, read into plain arrays for the worker.
-        ChunkPos here = mc.player.getChunkPos();
-        List<long[]> picked = new ArrayList<>();
-        Long2ObjectOpenHashMap<byte[]> blocks = new Long2ObjectOpenHashMap<>();
-        for (int dx = -6; dx <= 6 && picked.size() < 8; dx++) {
-            for (int dz = -6; dz <= 6 && picked.size() < 8; dz++) {
-                if (!(mc.world.getChunk(here.x + dx, here.z + dz, ChunkStatus.FULL, false) instanceof WorldChunk chunk)) continue;
-                long key = chunk.getPos().toLong();
-                if (ticks - arrived.getOrDefault(key, ticks) < 60) continue;
-                byte[] column = snapshot(chunk);
-                int magma = 0;
-                for (byte b : column) if (b == V_MAGMA) magma++;
-                blocks.put(key, column);
-                if (magma >= 12) picked.add(new long[] {chunk.getPos().x, chunk.getPos().z});
-            }
-        }
-        // Veins reach a few blocks into the next chunk, so read the ring around the picked ones too.
-        for (long[] c : picked) {
-            for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
-                long key = ChunkPos.toLong((int) c[0] + dx, (int) c[1] + dz);
-                if (blocks.containsKey(key)) continue;
-                if (mc.world.getChunk((int) c[0] + dx, (int) c[1] + dz, ChunkStatus.FULL, false) instanceof WorldChunk chunk) blocks.put(key, snapshot(chunk));
-            }
-        }
-        if (picked.size() < 6) return;
-
-        long current = seedValue;
-        int[] score = veinScore(current, picked, blocks, magmaIndex + indexShift);
-        MeteorClient.LOG.info("[Ember Netherite] Magma veins in {} chunks: seed {} puts {} of {} vein centers on magma", picked.size(), current, score[0], score[0] + score[1]);
-        if (veinMatch(score)) {
-            debrisState = DEBRIS_GOOD;
-            EmberNotificationsHud.push("Netherite finder", "Seed confirmed by the magma veins around you", EmberNotificationsHud.GOOD);
-            return;
-        }
-
-        debrisState = DEBRIS_SEARCHING;
-        searchFailed = false;
-        long low = current & 0xFFFF_FFFF_FFFFL;
-        int baseMagma = magmaIndex;
-        EmberNotificationsHud.push("Netherite finder", "Fixing the seed from the magma veins around you...", EmberNotificationsHud.WARN);
+        int baseLarge = largeIndex, baseSmall = smallIndex;
         worker.submit(() -> {
             long start = System.currentTimeMillis();
             for (int shift : new int[] {0, -1, 1, -2, 2, -3, 3}) {
                 for (long hi = 0; hi < 65536; hi++) {
                     long candidate = low | (hi << 48);
-                    if (veinMatch(veinScore(candidate, picked, blocks, baseMagma + shift))) {
-                        MeteorClient.LOG.info("[Ember Netherite] Vein search: seed {} with index shift {} after {} ms", candidate, shift, System.currentTimeMillis() - start);
+                    if (matches(score(candidate, snaps, baseLarge + shift, baseSmall + shift, 2), 60)) {
+                        MeteorClient.LOG.info("[Ember Netherite] Seed search: {} with index shift {} after {} ms", candidate, shift, System.currentTimeMillis() - start);
                         indexShift = shift;
                         foundSeed = candidate;
                         return;
                     }
                 }
             }
-            MeteorClient.LOG.info("[Ember Netherite] Vein search: no seed with these low 48 bits fits the magma veins ({} ms)", System.currentTimeMillis() - start);
+            MeteorClient.LOG.info("[Ember Netherite] Seed search: nothing fits ({} ms)", System.currentTimeMillis() - start);
             searchFailed = true;
         });
     }
 
-    private static boolean veinMatch(int[] score) {
-        // The right seed put every vein center on magma in testing; a lucky wrong one stays far below 90%.
-        return score[0] >= 60 && score[0] * 10 >= (score[0] + score[1]) * 9;
+    /** The right seed puts every spot in a listed section; one miss in 50 allows for blocks players changed. */
+    private static boolean matches(int[] score, int need) {
+        int total = score[0] + score[1];
+        return total >= need && score[1] <= Math.max(1, total / 50);
     }
 
-    private static byte[] snapshot(WorldChunk chunk) {
-        byte[] out = new byte[16 * 16 * (VEIN_Y1 - VEIN_Y0 + 1)];
-        BlockPos.Mutable pos = new BlockPos.Mutable();
-        int x0 = chunk.getPos().getStartX(), z0 = chunk.getPos().getStartZ(), i = 0;
-        for (int y = VEIN_Y0; y <= VEIN_Y1; y++) {
-            for (int x = 0; x < 16; x++) {
-                for (int z = 0; z < 16; z++) {
-                    BlockState state = chunk.getBlockState(pos.set(x0 + x, y, z0 + z));
-                    out[i++] = state.isOf(Blocks.MAGMA_BLOCK) ? V_MAGMA : state.isOf(Blocks.NETHERRACK) ? V_NETHERRACK : V_OTHER;
+    /** Loaded chunks around you, read into plain arrays the worker can use. */
+    private record Snap(int cx, int cz, int listed, int readable, java.util.BitSet canHold) {
+    }
+
+    private static final byte OTHER = 0, NETHERRACK = 1, DEBRIS = 2, AIR = 3;
+
+    private List<Snap> snapshot() {
+        List<Snap> out = new ArrayList<>();
+        ChunkPos here = mc.player.getChunkPos();
+        byte[] type = new byte[16 * 16 * 128];
+        for (int dx = -5; dx <= 5; dx++) {
+            for (int dz = -5; dz <= 5; dz++) {
+                long key = ChunkPos.toLong(here.x + dx, here.z + dz);
+                if (!readable.containsKey(key)) continue;
+                if (!(mc.world.getChunk(here.x + dx, here.z + dz, ChunkStatus.FULL, false) instanceof WorldChunk chunk)) continue;
+
+                // Straight from the sections: going through the world for every neighbour is far too slow here.
+                ChunkSection[] sections = chunk.getSectionArray();
+                int bottom = chunk.getBottomSectionCoord();
+                for (int y = 0; y < 128; y++) {
+                    int i = (y >> 4) - bottom;
+                    ChunkSection section = i >= 0 && i < sections.length ? sections[i] : null;
+                    for (int x = 0; x < 16; x++) {
+                        for (int z = 0; z < 16; z++) {
+                            BlockState state = section == null ? Blocks.AIR.getDefaultState() : section.getBlockState(x, y & 15, z);
+                            type[(y << 8) | (x << 4) | z] = state.isOf(Blocks.NETHERRACK) ? NETHERRACK : state.isOf(Blocks.ANCIENT_DEBRIS) ? DEBRIS
+                                : state.isAir() ? AIR : OTHER;
+                        }
+                    }
                 }
+
+                java.util.BitSet bits = new java.util.BitSet(16 * 16 * 128);
+                for (int y = MIN_Y; y <= MAX_Y; y++) {
+                    for (int x = 0; x < 16; x++) {
+                        for (int z = 0; z < 16; z++) {
+                            int i = (y << 8) | (x << 4) | z;
+                            if (type[i] == DEBRIS || type[i] == NETHERRACK && !airBeside(type, x, y, z)) bits.set(i);
+                        }
+                    }
+                }
+                out.add(new Snap(chunk.getPos().x, chunk.getPos().z, listed.get(key), readable.get(key), bits));
             }
         }
         return out;
     }
 
-    private static byte at(Long2ObjectOpenHashMap<byte[]> blocks, int x, int y, int z) {
-        if (y < VEIN_Y0 || y > VEIN_Y1) return V_UNKNOWN;
-        byte[] column = blocks.get(ChunkPos.toLong(x >> 4, z >> 4));
-        if (column == null) return V_UNKNOWN;
-        return column[((y - VEIN_Y0) * 16 + (x & 15)) * 16 + (z & 15)];
+    /** Air next to a cell; across the chunk edge counts as solid. */
+    private static boolean airBeside(byte[] type, int x, int y, int z) {
+        return type[((y - 1) << 8) | (x << 4) | z] == AIR || type[((y + 1) << 8) | (x << 4) | z] == AIR
+            || x > 0 && type[(y << 8) | ((x - 1) << 4) | z] == AIR || x < 15 && type[(y << 8) | ((x + 1) << 4) | z] == AIR
+            || z > 0 && type[(y << 8) | (x << 4) | (z - 1)] == AIR || z < 15 && type[(y << 8) | (x << 4) | (z + 1)] == AIR;
     }
 
     /**
-     * Where this seed's magma veins run through the picked chunks, checked against what is there: OreFeature's
-     * draws in the game's order (square, height, angle, the two end heights, then one size per sphere).
+     * Spots the seed puts debris on that could still hold it, and whether their section lists debris.
      *
-     * @return {vein centers on magma, vein centers on netherrack}
+     * @return {in a listed section, in a section that doesn't list it}
      */
-    private static int[] veinScore(long worldSeed, List<long[]> chunks, Long2ObjectOpenHashMap<byte[]> blocks, int index) {
-        ChunkRandom random = new ChunkRandom(new Xoroshiro128PlusPlusRandom(0));
+    private static int[] score(long worldSeed, List<Snap> snaps, int large, int small, int maxMisses) {
+        Long2ObjectOpenHashMap<Snap> byKey = new Long2ObjectOpenHashMap<>();
+        for (Snap s : snaps) byKey.put(ChunkPos.toLong(s.cx, s.cz), s);
         int hits = 0, misses = 0;
-        for (long[] c : chunks) {
-            int cx = (int) c[0], cz = (int) c[1];
-            long population = random.setPopulationSeed(worldSeed, cx << 4, cz << 4);
-            random.setDecoratorSeed(population, index, STEP);
-            int chunkHits = 0, chunkMisses = 0;
-            for (int copy = 0; copy < 4; copy++) {
-                int x = random.nextInt(16) + (cx << 4);
-                int z = random.nextInt(16) + (cz << 4);
-                int y = MathHelper.nextBetween(random, 27, 36);
-                float f = random.nextFloat() * (float) Math.PI;
-                float g = 33 / 8.0F;
-                double sx = x + Math.sin(f) * g, ex = x - Math.sin(f) * g, sz = z + Math.cos(f) * g, ez = z - Math.cos(f) * g;
-                double sy = y + random.nextInt(3) - 2, ey = y + random.nextInt(3) - 2;
-                for (int k = 0; k < 33; k++) {
-                    float t = (float) k / 33;
-                    double size = random.nextDouble() * 33 / 16.0;
-                    double radius = ((MathHelper.sin((float) Math.PI * t) + 1.0F) * size + 1.0) / 2.0;
-                    if (radius < 0.7) continue;
-                    byte b = at(blocks, MathHelper.floor(MathHelper.lerp(t, sx, ex)), MathHelper.floor(MathHelper.lerp(t, sy, ey)), MathHelper.floor(MathHelper.lerp(t, sz, ez)));
-                    if (b == V_MAGMA) chunkHits++;
-                    else if (b == V_NETHERRACK) chunkMisses++;
-                }
+        for (Snap s : snaps) {
+            int[] spots = predict(worldSeed, s.cx, s.cz, large, small);
+            for (int i = 0; i < spots.length; i += 3) {
+                int x = spots[i], y = spots[i + 1], z = spots[i + 2];
+                if (y < MIN_Y || y > MAX_Y) continue;
+                Snap at = byKey.get(ChunkPos.toLong(x >> 4, z >> 4));
+                int bit = 1 << (y >> 4);
+                if (at == null || (at.readable & bit) == 0 || !at.canHold.get((y << 8) | ((x & 15) << 4) | (z & 15))) continue;
+                if ((at.listed & bit) != 0) hits++;
+                else if (++misses > maxMisses) return new int[] {hits, misses};
             }
-            hits += chunkHits;
-            misses += chunkMisses;
-            // A wrong seed misses in the first chunk already: stop early, it keeps the search fast.
-            if (hits == 0 && misses > 15) return new int[] {0, misses};
         }
         return new int[] {hits, misses};
-    }
-
-    /** How many of the debris positions this seed generates. */
-    private static int explained(long worldSeed, List<BlockPos> debris, int large, int small) {
-        int hits = 0;
-        for (BlockPos d : debris) {
-            int cx = d.getX() >> 4, cz = d.getZ() >> 4;
-            int lx = d.getX() & 15, lz = d.getZ() & 15;
-            // A piece can land up to 2 blocks into the next chunk.
-            int x0 = lx <= 2 ? -1 : 0, x1 = lx >= 13 ? 1 : 0, z0 = lz <= 2 ? -1 : 0, z1 = lz >= 13 ? 1 : 0;
-            search:
-            for (int dx = x0; dx <= x1; dx++) {
-                for (int dz = z0; dz <= z1; dz++) {
-                    int[] spots = predict(worldSeed, cx + dx, cz + dz, large, small);
-                    for (int i = 0; i < spots.length; i += 3) {
-                        if (spots[i] == d.getX() && spots[i + 1] == d.getY() && spots[i + 2] == d.getZ()) {
-                            hits++;
-                            break search;
-                        }
-                    }
-                }
-            }
-        }
-        return hits;
-    }
-
-    private boolean exposed(BlockPos pos) {
-        for (Direction side : Direction.values()) {
-            if (mc.world.getBlockState(pos.offset(side)).isAir()) return true;
-        }
-        return false;
     }
 
     /**
@@ -550,7 +783,8 @@ public class NetheriteFinder extends Module {
     static int[] predict(long worldSeed, int chunkX, int chunkZ, int large, int small) {
         ChunkRandom random = new ChunkRandom(new Xoroshiro128PlusPlusRandom(0));
         long population = random.setPopulationSeed(worldSeed, chunkX << 4, chunkZ << 4);
-        List<Integer> out = new ArrayList<>();
+        int[] out = new int[(3 + 2) * 3];
+        int n = 0;
 
         // ore_ancient_debris_large: 0-3 blocks, trapezoid height 8-24. ore_debris_small: 0-2 blocks, height 8-119.
         for (int f = 0; f < 2; f++) {
@@ -563,18 +797,12 @@ public class NetheriteFinder extends Module {
             int count = random.nextInt((big ? 3 : 2) + 1);
             for (int j = 0; j < count; j++) {
                 int spread = Math.min(j, 7);
-                int ox = Math.round((random.nextFloat() - random.nextFloat()) * spread);
-                int oy = Math.round((random.nextFloat() - random.nextFloat()) * spread);
-                int oz = Math.round((random.nextFloat() - random.nextFloat()) * spread);
-                out.add(x + ox);
-                out.add(y + oy);
-                out.add(z + oz);
+                out[n++] = x + Math.round((random.nextFloat() - random.nextFloat()) * spread);
+                out[n++] = y + Math.round((random.nextFloat() - random.nextFloat()) * spread);
+                out[n++] = z + Math.round((random.nextFloat() - random.nextFloat()) * spread);
             }
         }
-
-        int[] spots = new int[out.size()];
-        for (int i = 0; i < spots.length; i++) spots[i] = out.get(i);
-        return spots;
+        return java.util.Arrays.copyOf(out, n);
     }
 
     /** Where the two debris features sit in the nether's decoration order, from vanilla's own registries. */
@@ -593,8 +821,7 @@ public class NetheriteFinder extends Module {
             PlacedFeatureIndexer.IndexedFeatures step = steps.get(STEP);
             largeIndex = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacedFeatures.ORE_ANCIENT_DEBRIS_LARGE).value());
             smallIndex = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacedFeatures.ORE_DEBRIS_SMALL).value());
-            magmaIndex = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacedFeatures.ORE_MAGMA).value());
-            MeteorClient.LOG.info("[Ember Netherite] Features at decoration step {}: debris large {}, small {}; magma {}", STEP, largeIndex, smallIndex, magmaIndex);
+            MeteorClient.LOG.info("[Ember Netherite] Debris features at decoration step {}: large {}, small {}", STEP, largeIndex, smallIndex);
             return largeIndex >= 0 && smallIndex >= 0;
         } catch (Throwable t) {
             error = "couldn't read the game's world generation";
@@ -644,14 +871,13 @@ public class NetheriteFinder extends Module {
         }
 
         if (bedrockTotal < 6000) return;
-        // The right seed matched 94-96% of the bedrock in testing, wrong ones 50-70%.
+        // The right seed matched 94-100% of the bedrock in testing, wrong ones 50-70%.
         double share = (double) bedrockMatch / bedrockTotal;
         int state = share >= 0.88 ? SEED_GOOD : share < 0.8 ? SEED_BAD : SEED_UNKNOWN;
         if (state != seedState && state != SEED_UNKNOWN) {
             String percent = Math.round(share * 1000) / 10.0 + "%";
             MeteorClient.LOG.info("[Ember Netherite] Seed {} vs bedrock: {} of {} blocks match ({})", seedValue, bedrockMatch, bedrockTotal, percent);
-            if (state == SEED_GOOD) EmberNotificationsHud.push("Netherite finder", "Seed matches this nether's bedrock (" + percent + ")", EmberNotificationsHud.GOOD);
-            else EmberNotificationsHud.push("Netherite finder", "Wrong seed: only " + percent + " of the bedrock matches", EmberNotificationsHud.BAD);
+            if (state == SEED_BAD) EmberNotificationsHud.push("Netherite finder", "Wrong seed (" + percent + " of the bedrock matches): showing areas only", EmberNotificationsHud.WARN);
         }
         seedState = state;
     }
@@ -659,42 +885,5 @@ public class NetheriteFinder extends Module {
     private void count(boolean want, boolean is) {
         bedrockTotal++;
         if (want == is) bedrockMatch++;
-    }
-
-    @EventHandler
-    private void onRender(Render3DEvent event) {
-        if (mc.player == null) return;
-        Color predictedLine = predictedColor.get(), foundLine = foundColor.get();
-        Color predictedSide = new Color(predictedLine.r, predictedLine.g, predictedLine.b, predictedLine.a / 4);
-        Color foundSide = new Color(foundLine.r, foundLine.g, foundLine.b, foundLine.a / 4);
-        for (BlockPos pos : shownPredicted) event.renderer.box(pos, predictedSide, predictedLine, ShapeMode.Both, 0);
-        for (BlockPos pos : shownFound) event.renderer.box(pos, foundSide, foundLine, ShapeMode.Both, 0);
-
-        if (!tracers.get()) return;
-        List<BlockPos> all = new ArrayList<>(shownFound);
-        all.addAll(shownPredicted);
-        BlockPos me = mc.player.getBlockPos();
-        all.sort((a, b) -> Double.compare(a.getSquaredDistance(me), b.getSquaredDistance(me)));
-        for (int i = 0; i < all.size() && i < MAX_TRACERS; i++) {
-            BlockPos pos = all.get(i);
-            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
-                shownFound.contains(pos) ? foundLine : predictedLine);
-        }
-    }
-
-    @Override
-    public String getInfoString() {
-        if (!seedSet) return "no seed";
-        if (error != null) return "error";
-        if (mc.world != null && mc.world.getRegistryKey() != World.NETHER) return "nether only";
-        if (seedState == SEED_BAD) return "wrong seed";
-        if (seedState != SEED_GOOD) return "checking";
-        return switch (debrisState) {
-            case DEBRIS_GOOD -> "seed ok " + (shownPredicted.size() + shownFound.size());
-            case DEBRIS_SEARCHING -> "fixing seed";
-            case DEBRIS_RANDOM -> "ores not from seed";
-            // Bedrock agrees; real debris has to agree too before anything is drawn.
-            default -> "find debris " + Math.min(realDebris.size(), 3) + "/3";
-        };
     }
 }
