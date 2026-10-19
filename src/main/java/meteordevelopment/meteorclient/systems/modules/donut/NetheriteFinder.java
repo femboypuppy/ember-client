@@ -412,7 +412,15 @@ public class NetheriteFinder extends Module {
         }
         if (order.isEmpty()) return;
         order.sort(Comparator.<BlockPos>comparingInt(p -> p.getY() >= 8 && p.getY() <= 24 ? 0 : 1).thenComparingDouble(p -> boxDistanceSq(eye, p)));
-        List<BlockPos> picks = order.subList(0, Math.min(scanSpeed.get(), order.size()));
+        // Taps in one tick at least 3 apart: then a real block coming back at a tapped spot can only be the server's
+        // correction (dig reveals cover the blocks within 2 of a tap, never the tapped one), which the log counts.
+        List<BlockPos> picks = new ArrayList<>();
+        for (BlockPos p : order) {
+            if (picks.size() >= scanSpeed.get()) break;
+            boolean near = false;
+            for (BlockPos q : picks) near |= p.getManhattanDistance(q) < 3;
+            if (!near) picks.add(p);
+        }
 
         // A pickaxe would break netherrack on the spot: ask from a slot that holds no tool.
         int selected = mc.player.getInventory().getSelectedSlot(), slot = tapSlot(selected);
@@ -427,9 +435,12 @@ public class NetheriteFinder extends Module {
         for (BlockPos tap : picks) {
             startDigging(tap, eye);
             revealed.add(tap.asLong());
+            tappedAt.put(tap.asLong(), ticks);
             if (watched.containsKey(tap)) scannedAt.putIfAbsent(tap, ticks);
             taps++;
+            if (tap.getY() >= 8 && tap.getY() <= 24) tapsLow++;
         }
+        if (tappedAt.size() > 200_000) tappedAt.clear();
         // Starting the first one again shows the last one, then stop: nothing is left half dug.
         BlockPos first = picks.get(0);
         startDigging(first, eye);
@@ -472,6 +483,9 @@ public class NetheriteFinder extends Module {
     private long lastDigAt;
     private final java.util.Map<String, Integer> revealTypes = new java.util.TreeMap<>();
     private final int[] revealDistance = new int[6];
+    private final java.util.Map<String, Integer> answerTypes = new java.util.TreeMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap tappedAt = new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private int tapsLow;
     private int revealsFar;
     private long revealLoggedAt;
 
@@ -485,6 +499,8 @@ public class NetheriteFinder extends Module {
         }
         if (!event.oldState.isOf(Blocks.NETHERRACK) || event.newState.isAir() || event.newState.isOf(Blocks.NETHERRACK) || !event.newState.getFluidState().isEmpty()) return;
         revealTypes.merge(name(event.newState), 1, Integer::sum);
+        long at = tappedAt.getOrDefault(pos.asLong(), Long.MIN_VALUE);
+        if (ticks - at <= 10) answerTypes.merge(name(event.newState), 1, Integer::sum);
         if (event.newState.isOf(Blocks.MAGMA_BLOCK) && revealedMagma.size() < 5000) revealedMagma.add(pos);
         if (lastDig != null && ticks - lastDigAt <= 40) {
             int d = pos.getManhattanDistance(lastDig);
@@ -496,6 +512,7 @@ public class NetheriteFinder extends Module {
             revealLoggedAt = ticks;
             MeteorClient.LOG.info("[Ember Netherite] Reveals so far {}; blocks from your last dig 0-5+: {}; with no dig of yours just before: {}",
                 revealTypes, java.util.Arrays.toString(revealDistance), revealsFar);
+            MeteorClient.LOG.info("[Ember Netherite] Real-state answers at tapped blocks {} ({} taps, {} at Y 8-24)", answerTypes, taps, tapsLow);
         }
     }
 
