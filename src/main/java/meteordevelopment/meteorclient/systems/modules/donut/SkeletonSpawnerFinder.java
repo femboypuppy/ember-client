@@ -94,7 +94,9 @@ public class SkeletonSpawnerFinder extends Module {
         spawners.clear();
         announced.clear();
         samplesLeft.set(10);
+        blocksLeft = 20;
         context = FindsStorage.context();
+        MeteorClient.LOG.info("[Ember SkeletonSpawner] On ({} saved here)", FindsStorage.get(context, FIND_TYPE).size());
         if (mc.world == null) return;
         for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) {
             BlockPos pos = new BlockPos(find.x, find.y, find.z);
@@ -114,6 +116,55 @@ public class SkeletonSpawnerFinder extends Module {
         if (mc.world != null && !FindsStorage.context().equals(context)) onActivate();
         if (++statTicks % 1200 == 0 && chunksSeen.get() > 0) {
             MeteorClient.LOG.info("[Ember SkeletonSpawner] Block entities in {} chunk packets: {}", chunksSeen.get(), new java.util.TreeMap<>(entityStats));
+        }
+    }
+
+    // Spawner blocks themselves, read from the loaded chunk: a server plugin may send spawners without the vanilla mob
+    // data, which the block entity check above skips.
+
+    private int blocksLeft;
+
+    @EventHandler
+    private void onChunkData(meteordevelopment.meteorclient.events.world.ChunkDataEvent event) {
+        var chunk = event.chunk();
+        var sections = chunk.getSectionArray();
+        for (int i = 0; i < sections.length; i++) {
+            var states = sections[i].getBlockStateContainer();
+            if (states.hasAny(s -> false) || !states.hasAny(s -> s.isOf(net.minecraft.block.Blocks.SPAWNER))) continue;
+            int y0 = (chunk.getBottomSectionCoord() + i) << 4, x0 = chunk.getPos().getStartX(), z0 = chunk.getPos().getStartZ();
+            for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++) for (int z = 0; z < 16; z++) {
+                if (!sections[i].getBlockState(x, y, z).isOf(net.minecraft.block.Blocks.SPAWNER)) continue;
+                spawnerBlock(new BlockPos(x0 + x, y0 + y, z0 + z), chunk);
+            }
+        }
+    }
+
+    @EventHandler
+    private void onBlockUpdate(meteordevelopment.meteorclient.events.world.BlockUpdateEvent event) {
+        if (event.newState.isOf(net.minecraft.block.Blocks.SPAWNER) && mc.world != null) {
+            BlockPos pos = event.pos.toImmutable();
+            spawnerBlock(pos, mc.world.getWorldChunk(pos));
+        }
+    }
+
+    private void spawnerBlock(BlockPos pos, net.minecraft.world.chunk.WorldChunk chunk) {
+        String mob = null;
+        if (chunk.getBlockEntity(pos) instanceof net.minecraft.block.entity.MobSpawnerBlockEntity spawner && mc.world != null) {
+            var entity = spawner.getLogic().getRenderedEntity(mc.world, pos);
+            if (entity != null) mob = net.minecraft.registry.Registries.ENTITY_TYPE.getId(entity.getType()).toString();
+        }
+        if (blocksLeft > 0) {
+            blocksLeft--;
+            MeteorClient.LOG.info("[Ember SkeletonSpawner] Spawner block at {} (you at Y {}): mob {}", pos.toShortString(),
+                mc.player == null ? "?" : (int) mc.player.getY(), mob == null ? "unknown (no mob data sent)" : mob);
+        }
+        if (SKELETON.equals(mob)) {
+            NbtCompound fake = new NbtCompound();
+            NbtCompound data = new NbtCompound(), entity = new NbtCompound();
+            entity.putString("id", SKELETON);
+            data.put("entity", entity);
+            fake.put("SpawnData", data);
+            seen(pos, BlockEntityType.MOB_SPAWNER, fake);
         }
     }
 
