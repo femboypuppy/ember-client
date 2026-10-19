@@ -257,6 +257,13 @@ public class Config extends System<Config> {
         .build()
     );
 
+    public final Setting<Boolean> pillHotbar = sgVisual.add(new BoolSetting.Builder()
+        .name("pill-hotbar")
+        .description("Use a dark rounded hotbar with a darker selected slot, keeping Minecraft's item rendering.")
+        .defaultValue(false)
+        .build()
+    );
+
     public final Setting<meteordevelopment.meteorclient.utils.render.EmberAppearance> appearance = sgVisual.add(
         new EnumSetting.Builder<meteordevelopment.meteorclient.utils.render.EmberAppearance>()
             .name("ember-appearance")

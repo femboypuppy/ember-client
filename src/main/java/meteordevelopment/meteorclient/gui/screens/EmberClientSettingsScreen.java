@@ -454,6 +454,9 @@ public class EmberClientSettingsScreen extends WidgetScreen {
     }
 
     private double widgets(GuiRenderer r, double y, double dt) {
+        y = section(r, y, "HOTBAR", "A dark rounded bar with a quiet selected-slot highlight.");
+        y = toggle(r, y, "Pill hotbar", "Use the rounded hotbar style. Off restores Minecraft's hotbar.", Config.get().pillHotbar.get(), () -> Config.get().pillHotbar.set(!Config.get().pillHotbar.get()), dt);
+        y += 12;
         y = toggle(r, y, "HUD enabled", "Show your enabled widgets while playing.", Hud.get().active, () -> Hud.get().active = !Hud.get().active, dt);
         action(r, contentX, y, contentW, 36, "Open HUD layout editor", () -> mc.setScreen(new HudEditorScreen(theme)), true, dt); y += 54;
         y = section(r, y, "WIDGETS", "Switch each element on or off independently.");
