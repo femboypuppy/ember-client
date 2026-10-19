@@ -20,6 +20,6 @@ Ambient geometry now selects occupied cells before calculating their animated po
 
 `check_hud_rendering.py` exercises the production batching and hotbar routing, including ordered uploads, batch boundaries, opacity, frame rotation, screens and spectator mode. `check_exordium_compat.py` uses the installed mod's actual cache at 10/30 FPS while hotbar and blur updates run at 60/144/360 FPS. The optional `check_glass_rendering.py` compares the actual single-pane and instanced shaders on a GPU; overlap and odd-size cases differ by at most one color-channel step out of 255.
 
-An isolated Minecraft run with Exordium 2.1.1 and its native HUD cache set to 10 FPS refreshed both the hotbar and scene blur on all 306 sampled render frames. Native items, stack counts, and the offhand slot were also checked. This verifies update cadence rather than a before/after FPS increase.
+An isolated Minecraft run with Exordium 2.1.1 and its native HUD cache set to 30 FPS refreshed both the hotbar and scene blur on all 306 sampled render frames. Native items, stack counts, and the offhand slot were also checked. This verifies update cadence rather than a before/after FPS increase; the 10 FPS cache cases are covered by the automated cache tests.
 
 The `Ijam5Lis5x` Spark capture used Ember 1.9.8 and sampled only the integrated Server thread for 30.32 seconds; 87.05% was `Unsafe.park`. It cannot measure the rendering improvement. Reduced submissions and unchanged images are verified, but an end-to-end FPS claim still requires a client Render-thread capture.
