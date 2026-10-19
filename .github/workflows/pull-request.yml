@@ -70,6 +70,9 @@ jobs:
       - name: Check HUD font cache across menu passes
         run: python3 scripts/check_hud_fonts.py
 
+      - name: Check redesigned nametags
+        run: python3 scripts/check_nametags.py
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:

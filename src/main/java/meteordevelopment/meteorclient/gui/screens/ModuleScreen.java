@@ -58,6 +58,9 @@ public class ModuleScreen extends WindowScreen {
         }
 
         // Settings
+        if (module instanceof meteordevelopment.meteorclient.systems.modules.render.Nametags nametags) {
+            add(new meteordevelopment.meteorclient.gui.widgets.WNametagPreview(nametags)).expandX();
+        }
         if (module instanceof meteordevelopment.meteorclient.systems.modules.render.Chams
             || module instanceof meteordevelopment.meteorclient.systems.modules.render.blockesp.BlockESP
             || module instanceof meteordevelopment.meteorclient.systems.modules.render.StorageESP) {

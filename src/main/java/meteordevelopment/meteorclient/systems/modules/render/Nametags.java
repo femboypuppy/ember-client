@@ -24,6 +24,8 @@ import meteordevelopment.meteorclient.utils.entity.EntityUtils;
 import meteordevelopment.meteorclient.utils.misc.Names;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.EmberShapes;
+import meteordevelopment.meteorclient.utils.render.EmberNametagCard;
+import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.util.Identifier;
@@ -51,10 +53,32 @@ import org.joml.Vector3d;
 import java.util.*;
 
 public class Nametags extends Module {
+    private final SettingGroup sgAppearance = settings.createGroup("Appearance");
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgPlayers = settings.createGroup("Players");
+    private final SettingGroup sgEquipment = settings.createGroup("Equipment");
     private final SettingGroup sgItems = settings.createGroup("Items");
     private final SettingGroup sgRender = settings.createGroup("Render");
+
+    public final Setting<EmberNametagCard.Style> cardStyle = sgAppearance.add(new EnumSetting.Builder<EmberNametagCard.Style>()
+        .name("card-style").description("Glass follows Ember's Liquid Glass; Slate is flat; Compact uses a smaller card.")
+        .defaultValue(EmberNametagCard.Style.Glass).build());
+    public final Setting<Double> cardOpacity = sgAppearance.add(new DoubleSetting.Builder()
+        .name("card-opacity").description("Opacity of the nametag surface and its shadow; text stays readable.")
+        .defaultValue(.9).range(0, 1).sliderRange(0, 1).build());
+    public final Setting<Boolean> playerHead = sgAppearance.add(new BoolSetting.Builder()
+        .name("player-avatar").description("Show the player's rounded skin avatar.").defaultValue(true)
+        .visible(() -> cardStyle.get() != EmberNametagCard.Style.Compact).build());
+    public final Setting<Boolean> healthBar = sgAppearance.add(new BoolSetting.Builder()
+        .name("health-bar").description("Show a thin health bar with a gold absorption segment.").defaultValue(true)
+        .visible(() -> this.displayHealth.get() && cardStyle.get() != EmberNametagCard.Style.Compact).build());
+    public final Setting<Boolean> cardShadow = sgAppearance.add(new BoolSetting.Builder()
+        .name("card-shadow").description("Soft shadow around the nametag.").defaultValue(true).build());
+    public final Setting<Integer> maxCardWidth = sgAppearance.add(new IntSetting.Builder()
+        .name("maximum-card-width").description("Keep long server display names inside the card.")
+        .defaultValue(280).range(160, 420).sliderRange(160, 420).build());
+    public final Setting<Boolean> friendBadge = sgPlayers.add(new BoolSetting.Builder()
+        .name("friend-badge").description("Add a FRIEND badge to friends' tags.").defaultValue(true).build());
 
     // General
 
@@ -158,14 +182,14 @@ public class Nametags extends Module {
         .build()
     );
 
-    private final Setting<Boolean> displayItems = sgPlayers.add(new BoolSetting.Builder()
+    private final Setting<Boolean> displayItems = sgEquipment.add(new BoolSetting.Builder()
         .name("items")
         .description("Displays armor and hand items above the name tags.")
         .defaultValue(true)
         .build()
     );
 
-    private final Setting<Double> itemSpacing = sgPlayers.add(new DoubleSetting.Builder()
+    private final Setting<Double> itemSpacing = sgEquipment.add(new DoubleSetting.Builder()
         .name("item-spacing")
         .description("The spacing between items.")
         .defaultValue(2)
@@ -174,7 +198,7 @@ public class Nametags extends Module {
         .build()
     );
 
-    private final Setting<Boolean> ignoreEmpty = sgPlayers.add(new BoolSetting.Builder()
+    private final Setting<Boolean> ignoreEmpty = sgEquipment.add(new BoolSetting.Builder()
         .name("ignore-empty-slots")
         .description("Doesn't add spacing where an empty item stack would be.")
         .defaultValue(true)
@@ -182,7 +206,7 @@ public class Nametags extends Module {
         .build()
     );
 
-    private final Setting<Durability> itemDurability = sgPlayers.add(new EnumSetting.Builder<Durability>()
+    private final Setting<Durability> itemDurability = sgEquipment.add(new EnumSetting.Builder<Durability>()
         .name("durability")
         .description("Displays item durability as either a total, percentage, or neither.")
         .defaultValue(Durability.None)
@@ -190,7 +214,7 @@ public class Nametags extends Module {
         .build()
     );
 
-    private final Setting<Boolean> displayEnchants = sgPlayers.add(new BoolSetting.Builder()
+    private final Setting<Boolean> displayEnchants = sgEquipment.add(new BoolSetting.Builder()
         .name("display-enchants")
         .description("Displays item enchantments on the items.")
         .defaultValue(false)
@@ -198,7 +222,7 @@ public class Nametags extends Module {
         .build()
     );
 
-    private final Setting<Set<RegistryKey<Enchantment>>> shownEnchantments = sgPlayers.add(new EnchantmentListSetting.Builder()
+    private final Setting<Set<RegistryKey<Enchantment>>> shownEnchantments = sgEquipment.add(new EnchantmentListSetting.Builder()
         .name("shown-enchantments")
         .description("The enchantments that are shown on nametags.")
         .visible(() -> displayItems.get() && displayEnchants.get())
@@ -211,7 +235,7 @@ public class Nametags extends Module {
         .build()
     );
 
-    private final Setting<Position> enchantPos = sgPlayers.add(new EnumSetting.Builder<Position>()
+    private final Setting<Position> enchantPos = sgEquipment.add(new EnumSetting.Builder<Position>()
         .name("enchantment-position")
         .description("Where the enchantments are rendered.")
         .defaultValue(Position.Above)
@@ -219,7 +243,7 @@ public class Nametags extends Module {
         .build()
     );
 
-    private final Setting<Integer> enchantLength = sgPlayers.add(new IntSetting.Builder()
+    private final Setting<Integer> enchantLength = sgEquipment.add(new IntSetting.Builder()
         .name("enchant-name-length")
         .description("The length enchantment names are trimmed to.")
         .defaultValue(3)
@@ -229,7 +253,7 @@ public class Nametags extends Module {
         .build()
     );
 
-    private final Setting<Double> enchantTextScale = sgPlayers.add(new DoubleSetting.Builder()
+    private final Setting<Double> enchantTextScale = sgEquipment.add(new DoubleSetting.Builder()
         .name("enchant-text-scale")
         .description("The scale of the enchantment text.")
         .defaultValue(1)
@@ -253,7 +277,7 @@ public class Nametags extends Module {
     private final Setting<SettingColor> background = sgRender.add(new ColorSetting.Builder()
         .name("background-color")
         .description("The color of the nametag background.")
-        .defaultValue(new SettingColor(0, 0, 0, 75))
+        .defaultValue(new SettingColor(14, 16, 23, 210))
         .build()
     );
 
@@ -310,6 +334,26 @@ public class Nametags extends Module {
     public Nametags() {
         super(Categories.Render, "nametags", "Displays customizable nametags above players, items and other entities.");
     }
+
+    @Override public Module fromTag(net.minecraft.nbt.NbtCompound tag) {
+        super.fromTag(tag);
+        var groups = tag.getCompoundOrEmpty("settings").getListOrEmpty("groups");
+        Set<String> current = new HashSet<>();
+        for (var value : groups) if (value instanceof net.minecraft.nbt.NbtCompound group && group.getString("name", "").equals("Equipment")) {
+            for (var item : group.getListOrEmpty("settings")) if (item instanceof net.minecraft.nbt.NbtCompound setting) current.add(setting.getString("name", ""));
+        }
+        // Older shared configs stored equipment controls in Players. Explicit new values win.
+        for (var value : groups) if (value instanceof net.minecraft.nbt.NbtCompound group && group.getString("name", "").equals("Players")) {
+            for (var item : group.getListOrEmpty("settings")) if (item instanceof net.minecraft.nbt.NbtCompound setting) {
+                String name = setting.getString("name", "");
+                Setting<?> target = sgEquipment.get(name);
+                if (target != null && !current.contains(name)) target.fromTag(setting);
+            }
+        }
+        return this;
+    }
+
+    @Override public void onDeactivate() { entityList.clear(); }
 
     private static String ticksToTime(int ticks) {
         if (ticks > 20 * 3600) {
@@ -400,120 +444,69 @@ public class Nametags extends Module {
     }
 
     private void renderNametagPlayer(Render2DEvent event, PlayerEntity player, boolean shadow) {
-        TextRenderer text = TextRenderer.get();
         NametagUtils.begin(pos, event.drawContext);
+        try {
+            var data = playerCard(player);
+            var layout = EmberNametagCard.draw(data, pos.x, pos.y, NametagUtils.scale);
+            renderEquipment(event, player, shadow, layout.height());
+        } finally { NametagUtils.end(event.drawContext); }
+    }
 
-        // Gamemode
-        GameMode gm = EntityUtils.getGameMode(player);
-        String gmText = "BOT";
-        if (gm != null) {
-            gmText = switch (gm) {
-                case SPECTATOR -> "Sp";
-                case SURVIVAL -> "S";
-                case CREATIVE -> "C";
-                case ADVENTURE -> "A";
-            };
-        }
-
-        gmText = "[" + gmText + "]";
-
-        // Name
-        String name;
-        Color nameColor = PlayerUtils.getPlayerColor(player, this.nameColor.get());
-
-        if (player == mc.player) name = Modules.get().get(NameProtect.class).getName(player.getName().getString());
-        else {
-            if (displayPrefix.get()) name = player.getDisplayName().getString();
-            else name = player.getName().getString();
-        }
-
-        // Health
-        float absorption = player.getAbsorptionAmount();
-        int health = Math.round(player.getHealth() + absorption);
-        double healthPercentage = health / (player.getMaxHealth() + absorption);
-
-        Color healthColor;
-        if (healthPercentage <= 0.333) healthColor = RED;
-        else if (healthPercentage <= 0.666) healthColor = AMBER;
-        else healthColor = GREEN;
-
-        boolean renderPlayerDistance = player != mc.getCameraEntity() || Modules.get().isActive(Freecam.class);
-
-        // The second line gathers the small details that used to be appended to the name.
-        StringBuilder sub = new StringBuilder();
-        if (displayGameMode.get()) sub.append(gmText);
-        if (displayDistance.get() && renderPlayerDistance) {
-            if (!sub.isEmpty()) sub.append("  ");
-            sub.append("distance ").append(Math.round(PlayerUtils.distanceToCamera(player) * 10.0) / 10.0);
-        }
+    private EmberNametagCard.Data playerCard(PlayerEntity player) {
+        String name = player == mc.player ? Modules.get().get(NameProtect.class).getName(player.getName().getString())
+            : displayPrefix.get() && player.getDisplayName() != null ? player.getDisplayName().getString() : player.getName().getString();
+        double max = Math.max(1, player.getMaxHealth()), hp = Math.max(0, player.getHealth()), absorption = Math.max(0, player.getAbsorptionAmount());
+        double ratio = hp / max;
+        Color health = ratio < .34 ? new Color(250, 99, 112) : ratio < .67 ? new Color(255, 189, 100) : new Color(116, 224, 162);
+        List<EmberNametagCard.Chip> chips = new ArrayList<>(4);
+        if (friendBadge.get() && Friends.get().isFriend(player)) chips.add(new EmberNametagCard.Chip("FRIEND", new Color(120, 224, 176)));
         if (displayPing.get()) {
-            if (!sub.isEmpty()) sub.append("  ");
-            sub.append(EntityUtils.getPing(player)).append("ms");
+            int ping = EntityUtils.getPing(player);
+            chips.add(new EmberNametagCard.Chip(ping < 0 ? "Ping ?" : ping + " ms", pingColor.get()));
         }
-        if (displayHealth.get()) {
-            if (!sub.isEmpty()) sub.append("  ");
-            sub.append(health).append("hp");
+        if (displayDistance.get() && (player != mc.getCameraEntity() || Modules.get().isActive(Freecam.class))) {
+            double distance = PlayerUtils.distanceToCamera(player);
+            Color color = distanceColorMode.get() == DistanceColorMode.Flat ? distanceColor.get() :
+                distance < 16 ? new Color(255, 184, 118) : new Color(164, 185, 219);
+            chips.add(new EmberNametagCard.Chip(Math.round(distance * 10) / 10.0 + " m", color));
         }
-
-        String subText = sub.toString();
-
-        // Card metrics. Text is measured unscaled and the sub line drawn at SUB_SCALE, so its
-        // measured width is scaled to match rather than trusted directly.
-        double lineH = text.getHeight(shadow);
-        double headSize = NAMETAG_HEAD;
-        double pad = 4;
-        double gap = 5;
-
-        double nameWidth = text.getWidth(name, shadow);
-        double subWidth = text.getWidth(subText, shadow) * SUB_SCALE;
-
-        double barH = displayHealth.get() ? 4 : 0;
-        double contentW = Math.max(Math.max(nameWidth, subWidth), headSize * 1.6);
-        double contentH = lineH + (subText.isEmpty() ? 0 : lineH * SUB_SCALE + 1) + (barH > 0 ? barH + 3 : 0);
-
-        double cardH = Math.max(headSize, contentH) + pad * 2;
-        double cardW = pad + headSize + gap + contentW + pad;
-
-        double x0 = -cardW / 2;
-        double y0 = -cardH;
-
-        drawCard(x0, y0, cardW, cardH, Math.min(6, cardH / 2));
-
-        // Head
-        Identifier skin = skinOf(player);
-        double headX = x0 + pad;
-        double headY = y0 + (cardH - headSize) / 2;
-
-        if (skin != null) drawHead(skin, headX, headY, headSize);
-
-        // Text column
-        double tx = headX + headSize + gap;
-        double ty = y0 + (cardH - contentH) / 2;
-
-        text.beginBig();
-        text.render(name, tx, ty, nameColor, shadow);
-        text.end();
-
-        double cursorY = ty + lineH;
-
-        if (!subText.isEmpty()) {
-            text.begin(SUB_SCALE, false, true);
-            text.render(subText, tx, cursorY + 1, SUB_COLOR, shadow);
-            text.end();
-            cursorY += lineH * SUB_SCALE + 1;
+        if (displayGameMode.get()) {
+            GameMode mode = EntityUtils.getGameMode(player);
+            String label = mode == null ? "BOT" : switch (mode) {
+                case SURVIVAL -> "Survival"; case CREATIVE -> "Creative"; case ADVENTURE -> "Adventure"; case SPECTATOR -> "Spectator";
+            };
+            chips.add(new EmberNametagCard.Chip(label, gamemodeColor.get()));
         }
+        return new EmberNametagCard.Data(name, displayHealth.get() ? Math.round(hp + absorption) + " HP" : "",
+            hp / (max + absorption), absorption / (max + absorption), PlayerUtils.getPlayerColor(player, nameColor.get()), health,
+            EmberPalette.accent(), background.get(), skinOf(player), chips, playerHead.get(), displayHealth.get() && healthBar.get(),
+            cardShadow.get(), cardOpacity.get(), maxCardWidth.get(), cardStyle.get());
+    }
 
-        if (barH > 0) {
-            double barW = contentW;
-            double barY = cursorY + 2;
+    public void renderPreview(double centerX, double bottomY, double previewScale) {
+        String name = mc.player == null ? "EmberPlayer" : Modules.get().get(NameProtect.class).getName(mc.player.getName().getString());
+        var data = new EmberNametagCard.Data(name, displayHealth.get() ? "24 HP" : "", .83, .17,
+            nameColor.get(), new Color(116, 224, 162), EmberPalette.accent(), background.get(), mc.player == null ? null : skinOf(mc.player),
+            previewChips(), playerHead.get(), displayHealth.get() && healthBar.get(), cardShadow.get(), cardOpacity.get(), maxCardWidth.get(), cardStyle.get());
+        double previousScale = NametagUtils.scale;
+        NametagUtils.scale = previewScale;
+        NametagUtils.begin(new Vector3d(centerX, bottomY, 0));
+        try { EmberNametagCard.draw(data, centerX, bottomY, previewScale); }
+        finally { NametagUtils.end(); NametagUtils.scale = previousScale; }
+    }
 
-            drawRounded(tx, barY, barW, barH, barH / 2, BAR_TRACK);
+    private List<EmberNametagCard.Chip> previewChips() {
+        List<EmberNametagCard.Chip> chips = new ArrayList<>();
+        if (friendBadge.get()) chips.add(new EmberNametagCard.Chip("FRIEND", new Color(120, 224, 176)));
+        if (displayPing.get()) chips.add(new EmberNametagCard.Chip("42 ms", pingColor.get()));
+        if (displayDistance.get()) chips.add(new EmberNametagCard.Chip("12.4 m", distanceColor.get()));
+        if (displayGameMode.get()) chips.add(new EmberNametagCard.Chip("Survival", gamemodeColor.get()));
+        return chips;
+    }
 
-            double filled = barW * Math.max(0, Math.min(1, healthPercentage));
-            if (filled > barH) drawRounded(tx, barY, filled, barH, barH / 2, healthColor);
-        }
+    private void renderEquipment(Render2DEvent event, PlayerEntity player, boolean shadow, double heightDown) {
+        TextRenderer text = TextRenderer.get();
 
-        double heightDown = cardH;
 
         if (displayItems.get()) {
             // Item calc
@@ -537,7 +530,7 @@ public class Nametags extends Module {
                     for (RegistryEntry<Enchantment> enchantment : enchantments.getEnchantments()) {
                         if (enchantment.getKey().isPresent() && !shownEnchantments.get().contains(enchantment.getKey().get())) continue;
                         String enchantName = Utils.getEnchantSimpleName(enchantment, enchantLength.get()) + " " + enchantments.getLevel(enchantment);
-                        itemWidths[i] = Math.max(itemWidths[i], (text.getWidth(enchantName, shadow) / 2));
+                        itemWidths[i] = Math.max(itemWidths[i], EmberNametagCard.measure(text, enchantName, .5 * enchantTextScale.get()));
                         size++;
                     }
 
@@ -553,11 +546,17 @@ public class Nametags extends Module {
             double y = -heightDown - 7 - itemsHeight;
             double x = -itemWidthHalf;
 
+            if (itemWidthTotal > 0 && (hasItems || !ignoreEmpty.get())) {
+                Renderer2D.COLOR.begin();
+                EmberShapes.roundedGradient(Renderer2D.COLOR, x - 4, y - 4, itemWidthTotal + 8, 40, 7,
+                    new Color(25, 28, 37, (int) (190 * cardOpacity.get())), new Color(12, 14, 20, (int) (210 * cardOpacity.get())));
+                Renderer2D.COLOR.render();
+            }
             // Rendering items and enchants
             for (int i = 0; i < 6; i++) {
                 ItemStack stack = getItem(player, i);
 
-                RenderUtils.drawItem(event.drawContext, stack, (int) x, (int) y, 2, true, null, false);
+                if (!stack.isEmpty()) RenderUtils.drawItem(event.drawContext, stack, (int) x, (int) y, 2, true, null, false);
 
                 if (stack.isDamageable() && itemDurability.get() != Durability.None) {
                     text.begin(0.75, false, true);
@@ -602,7 +601,7 @@ public class Nametags extends Module {
                         if (entry.getKey().isIn(EnchantmentTags.CURSE)) enchantColor = RED;
 
                         enchantX = switch (enchantPos.get()) {
-                            case Above -> x + (aW / 2) - (text.getWidth(enchantName, shadow) / 2);
+                            case Above -> x + (aW / 2) - EmberNametagCard.measure(text, enchantName, .5 * enchantTextScale.get());
                             case OnTop -> x + (aW - text.getWidth(enchantName, shadow)) / 2;
                         };
 
@@ -616,9 +615,8 @@ public class Nametags extends Module {
 
                 x += itemWidths[i];
             }
-        } else if (displayEnchants.get()) displayEnchants.set(false);
+        }
 
-        NametagUtils.end(event.drawContext);
     }
 
     private void renderNametagItem(ItemStack stack, boolean shadow) {
@@ -630,9 +628,9 @@ public class Nametags extends Module {
         String name = Names.get(stack);
         String count = " x" + stack.getCount();
 
-        double nameWidth = text.getWidth(name, shadow);
-        double countWidth = text.getWidth(count, shadow);
-        double heightDown = text.getHeight(shadow);
+        double nameWidth = EmberNametagCard.measure(text, name, 1);
+        double countWidth = EmberNametagCard.measure(text, count, 1);
+        double heightDown = EmberNametagCard.height(text, 1);
 
         double width = nameWidth;
         if (itemCount.get()) width += countWidth;
@@ -671,9 +669,9 @@ public class Nametags extends Module {
         else if (healthPercentage <= 0.666) healthColor = AMBER;
         else healthColor = GREEN;
 
-        double nameWidth = text.getWidth(nameText, shadow);
-        double healthWidth = text.getWidth(healthText, shadow);
-        double heightDown = text.getHeight(shadow);
+        double nameWidth = EmberNametagCard.measure(text, nameText, 1);
+        double healthWidth = EmberNametagCard.measure(text, healthText, 1);
+        double heightDown = EmberNametagCard.height(text, 1);
 
         double width = nameWidth + healthWidth;
         double widthHalf = width / 2;
@@ -698,8 +696,8 @@ public class Nametags extends Module {
         //Name
         String nameText = entity.getType().getName().getString();
 
-        double nameWidth = text.getWidth(nameText, shadow);
-        double heightDown = text.getHeight(shadow);
+        double nameWidth = EmberNametagCard.measure(text, nameText, 1);
+        double heightDown = EmberNametagCard.height(text, 1);
         double widthHalf = nameWidth / 2;
 
         drawBg(-widthHalf, -heightDown, nameWidth, heightDown);
@@ -718,8 +716,8 @@ public class Nametags extends Module {
         TextRenderer text = TextRenderer.get();
         NametagUtils.begin(pos);
 
-        double width = text.getWidth(fuseText, shadow);
-        double heightDown = text.getHeight(shadow);
+        double width = EmberNametagCard.measure(text, fuseText, 1);
+        double heightDown = EmberNametagCard.height(text, 1);
 
         double widthHalf = width / 2;
 
@@ -749,40 +747,10 @@ public class Nametags extends Module {
 
     private void drawBg(double x, double y, double width, double height) {
         Renderer2D.COLOR.begin();
-        Renderer2D.COLOR.quad(x - 1, y - 1, width + 2, height + 2, background.get());
+        Color bg = background.get();
+        EmberShapes.roundedGradient(Renderer2D.COLOR, x - 6, y - 4, width + 12, height + 8, 7,
+            new Color(bg.r, bg.g, bg.b, (int) (bg.a * cardOpacity.get())), new Color(bg.r, bg.g, bg.b, (int) (bg.a * cardOpacity.get())));
         Renderer2D.COLOR.render();
-    }
-
-    // --- Ember nametag card ---
-
-    /** Head size inside a player card, in nametag units. */
-    private static final double NAMETAG_HEAD = 20;
-    private static final double SUB_SCALE = 0.62;
-    private static final Color SUB_COLOR = new Color(168, 168, 180, 255);
-    private static final Color BAR_TRACK = new Color(0, 0, 0, 140);
-    private static final Color SKIN_TINT = new Color(255, 255, 255, 255);
-
-    private void drawCard(double x, double y, double w, double h, double radius) {
-        Renderer2D.COLOR.begin();
-        EmberShapes.roundedQuad(Renderer2D.COLOR, x, y, w, h, radius, background.get());
-        Renderer2D.COLOR.render();
-    }
-
-    private void drawRounded(double x, double y, double w, double h, double radius, Color color) {
-        Renderer2D.COLOR.begin();
-        EmberShapes.roundedQuad(Renderer2D.COLOR, x, y, w, h, radius, color);
-        Renderer2D.COLOR.render();
-    }
-
-    /** Face and hat layer, both 8x8 patches of a 64x64 skin, with rounded corners. */
-    private void drawHead(Identifier skin, double x, double y, double size) {
-        var texture = mc.getTextureManager().getTexture(skin);
-        double radius = size * 0.26;
-
-        Renderer2D.TEXTURE.begin();
-        EmberShapes.roundedTexture(Renderer2D.TEXTURE, x, y, size, radius, 0.125, 0.125, 0.25, 0.25, SKIN_TINT);
-        EmberShapes.roundedTexture(Renderer2D.TEXTURE, x, y, size, radius, 0.625, 0.125, 0.75, 0.25, SKIN_TINT);
-        Renderer2D.TEXTURE.render(texture.getGlTextureView(), texture.getSampler());
     }
 
     private Identifier skinOf(PlayerEntity player) {

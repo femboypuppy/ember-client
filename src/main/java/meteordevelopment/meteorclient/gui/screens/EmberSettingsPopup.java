@@ -189,6 +189,11 @@ public class EmberSettingsPopup {
     private List<Row> buildRows() {
         List<Row> rows = new ArrayList<>();
 
+        if (hasNametagPreview()) {
+            rows.add(new Row(Kind.GROUP, "Nametag designer", null, null, 0, GROUP_H));
+            rows.add(new Row(Kind.PREVIEW_ACTION, "Live preview", "Preview the tag while changing its style and details.", null, 0, ROW_H));
+        }
+
         if (hasMaterialPreview()) {
             rows.add(new Row(Kind.GROUP, "3D preview", null, null, 0, GROUP_H));
             rows.add(new Row(Kind.PREVIEW_ACTION, "Live preview", "Rotate, zoom and view the material.", null, 0, ROW_H));
@@ -245,6 +250,13 @@ public class EmberSettingsPopup {
         return (chams != null && chams.settings == target.settings())
             || (block != null && block.settings == target.settings())
             || (storage != null && storage.settings == target.settings());
+    }
+
+    private boolean hasNametagPreview() {
+        var modules = Modules.get();
+        if (modules == null || target == null || target.openNativeEditor() == null) return false;
+        var nametags = modules.get(meteordevelopment.meteorclient.systems.modules.render.Nametags.class);
+        return nametags != null && nametags.settings == target.settings();
     }
 
     private static Kind kindOf(Setting<?> setting) {
@@ -434,7 +446,7 @@ public class EmberSettingsPopup {
             case HAND_ACTION, PREVIEW_ACTION -> {
                 double bh = 28, by = cy - bh / 2;
                 r.roundedRect(ctrlX, by, CTRL_W, bh, 8, alpha(over(ctrlX, by, CTRL_W, bh) ? CONTROL_HOVER : CONTROL_BG, fade));
-                text(row.kind() == Kind.PREVIEW_ACTION ? "Open 3D preview" : row.channel() == 0 ? "Make symmitrical" : "Open hand editor", ctrlX + CTRL_W / 2, by + (bh - 9) / 2, alpha(accent(), fade), LABEL_SCALE, 2, CTRL_W - 16);
+                text(row.kind() == Kind.PREVIEW_ACTION ? hasNametagPreview() ? "Open nametag designer" : "Open 3D preview" : row.channel() == 0 ? "Make symmitrical" : "Open hand editor", ctrlX + CTRL_W / 2, by + (bh - 9) / 2, alpha(accent(), fade), LABEL_SCALE, 2, CTRL_W - 16);
                 hits.add(new Hit(ctrlX, by, CTRL_W, bh, row, row.kind() == Kind.PREVIEW_ACTION ? "previewAction" : "handAction"));
             }
             case OTHER -> {
