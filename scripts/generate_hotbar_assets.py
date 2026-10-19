@@ -40,10 +40,11 @@ def generate(name, width, height, bounds, radius, top_alpha, bottom_alpha, rgb, 
     (OUT / (name + '.png.mcmeta')).write_text('{"gui":{"scaling":{"type":"stretch"}}}\n', encoding='utf-8')
 
 def main():
-    generate('pill', 182, 22, (0, 0, 182, 22), 9.5, 125, 150, (9, 12, 8))
-    generate('selection', 24, 23, (2, 2, 20, 20), 7, 205, 220, (3, 5, 3))
-    generate('offhand_left', 29, 24, (0, 1, 22, 22), 8, 125, 150, (9, 12, 8))
-    generate('offhand_right', 29, 24, (7, 1, 22, 22), 8, 125, 150, (9, 12, 8))
+    # Opaque interiors allow the runtime opacity slider to span fully clear to fully solid.
+    generate('pill', 182, 22, (0, 0, 182, 22), 9.5, 255, 255, (9, 12, 8))
+    generate('selection', 24, 23, (2, 2, 20, 20), 7, 255, 255, (3, 5, 3))
+    generate('offhand_left', 29, 24, (0, 1, 22, 22), 8, 255, 255, (9, 12, 8))
+    generate('offhand_right', 29, 24, (7, 1, 22, 22), 8, 255, 255, (9, 12, 8))
     generate('shadow', 218, 58, (18, 18, 182, 22), 9.5, 0, 0, (0, 0, 0), shadow=True)
     generate('offhand_shadow', 58, 58, (18, 18, 22, 22), 8, 0, 0, (0, 0, 0), shadow=True)
     generate('selection_shadow', 40, 39, (10, 10, 20, 20), 7, 0, 0, (0, 0, 0), shadow=.45)

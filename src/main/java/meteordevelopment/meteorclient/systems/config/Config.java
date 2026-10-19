@@ -268,6 +268,14 @@ public class Config extends System<Config> {
         .name("hotbar-shadow").description("Strength of the broad black shadow around the pill hotbar.")
         .defaultValue(1.0).range(0, 1).sliderRange(0, 1).visible(pillHotbar::get).build());
 
+    public final Setting<Double> hotbarOpacity = sgVisual.add(new DoubleSetting.Builder()
+        .name("hotbar-opacity").description("Opacity of the dark hotbar background. Items stay fully visible.")
+        .defaultValue(.55).range(0, 1).sliderRange(0, 1).visible(pillHotbar::get).build());
+
+    public final Setting<Double> hotbarBlur = sgVisual.add(new DoubleSetting.Builder()
+        .name("hotbar-blur").description("Blur the world behind the rounded hotbar. Zero disables the blur pass.")
+        .defaultValue(0.0).range(0, 1).sliderRange(0, 1).visible(pillHotbar::get).build());
+
     public final Setting<Boolean> hotbarAnimation = sgVisual.add(new BoolSetting.Builder()
         .name("hotbar-animation").description("Smoothly slide the selected-slot highlight when switching items.")
         .defaultValue(true).visible(pillHotbar::get).build());

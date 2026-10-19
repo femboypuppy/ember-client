@@ -127,6 +127,7 @@ public class RainAndSettingsChecks{
   Utils.height=700;menu=new Menu(EmberClientSettingsScreen.Page.Scene);menu.draw();require(GuiRenderer.labels.containsKey("BLOOM"),"Scene visuals has its own page");click(menu,"Bloom");require(!c.bloom.get(),"Bloom toggle controls the real setting");
   c.pillHotbar.set(false);menu=new Menu(EmberClientSettingsScreen.Page.Widgets);menu.draw();require(GuiRenderer.labels.containsKey("HOTBAR"),"Hotbar style has a clear settings entry");click(menu,"Pill hotbar");require(c.pillHotbar.get(),"Pill hotbar can be enabled from HUD widgets");
   require(GuiRenderer.labels.containsKey("Hotbar shadow"),"Shadow strength is accessible when the pill is enabled");
+  require(GuiRenderer.labels.containsKey("Hotbar opacity") && GuiRenderer.labels.containsKey("Hotbar blur"),"Opacity and blur controls appear with the enabled hotbar");
   boolean animated=c.hotbarAnimation.get();click(menu,"Animate hotbar selection");require(c.hotbarAnimation.get()!=animated,"Selection animation has an independent switch");
   click(menu,"Pill hotbar");require(!c.pillHotbar.get(),"Pill hotbar can restore Minecraft's skin");
   menu=new Menu(EmberClientSettingsScreen.Page.Players);menu.draw();require(GuiRenderer.labels.containsKey("PLAYER COSMETICS"),"Player cosmetics has its own page");click(menu,"Show on other players");require(!c.cosmeticsOthers.get(),"Player target toggle controls the real setting");

@@ -8,6 +8,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 P = 'meteordevelopment/meteorclient/'
 JAVA = Path(os.environ['JAVA_HOME']) / 'bin' if os.environ.get('JAVA_HOME') else Path(shutil.which('java')).parent
+gradle_home = Path(os.environ.get('GRADLE_USER_HOME', Path.home() / '.gradle'))
+joml = next(p for p in (gradle_home / 'caches/modules-2/files-2.1/org.joml/joml').rglob('*.jar')
+            if not p.name.endswith(('-sources.jar', '-javadoc.jar')))
 
 stubs = {
     'com/mojang/blaze3d/pipeline/RenderPipeline.java': 'package com.mojang.blaze3d.pipeline; public class RenderPipeline {}',
@@ -26,9 +29,25 @@ public class MeteorClient {
 public class Config {
  private static final Config INSTANCE=new Config(); public static Config get(){return INSTANCE;}
  public final Setting<Boolean> pillHotbar=new Setting<>(true), hotbarAnimation=new Setting<>(true);
- public final Setting<Double> hotbarShadow=new Setting<>(1.0);
+ public final Setting<Double> hotbarShadow=new Setting<>(1.0),hotbarOpacity=new Setting<>(.55),hotbarBlur=new Setting<>(0.0);
  public static class Setting<T>{public T value;Setting(T v){value=v;}public T get(){return value;}}
 }''',
+    P + 'utils/render/HotbarBlur.java': '''package meteordevelopment.meteorclient.utils.render;
+import net.minecraft.client.gui.DrawContext;
+public class HotbarBlur {public static void draw(DrawContext c,int x,int y,int w,int h,float r){}}
+''',
+    'net/minecraft/client/gl/RenderPipelines.java': '''package net.minecraft.client.gl;
+public class RenderPipelines {public static final com.mojang.blaze3d.pipeline.RenderPipeline GUI_TEXTURED=new com.mojang.blaze3d.pipeline.RenderPipeline();}''',
+    'net/minecraft/client/gui/ScreenRect.java': 'package net.minecraft.client.gui; public record ScreenRect(int x,int y,int width,int height){}',
+    'net/minecraft/client/texture/TextureSetup.java': 'package net.minecraft.client.texture; public class TextureSetup{}',
+    'net/minecraft/client/gui/render/state/SimpleGuiElementRenderState.java': '''package net.minecraft.client.gui.render.state;
+public interface SimpleGuiElementRenderState {
+ com.mojang.blaze3d.pipeline.RenderPipeline pipeline();net.minecraft.client.texture.TextureSetup textureSetup();
+ net.minecraft.client.gui.ScreenRect bounds();net.minecraft.client.gui.ScreenRect scissorArea();
+ void setupVertices(net.minecraft.client.render.VertexConsumer v);
+}''',
+    'net/minecraft/client/render/VertexConsumer.java': '''package net.minecraft.client.render;
+public interface VertexConsumer {VertexConsumer vertex(org.joml.Matrix3x2fc pose,float x,float y);VertexConsumer texture(float u,float v);VertexConsumer color(int color);}''',
     'net/minecraft/client/gui/DrawContext.java': '''package net.minecraft.client.gui;
 import java.util.*;import com.mojang.blaze3d.pipeline.RenderPipeline;import net.minecraft.util.Identifier;
 public class DrawContext {
@@ -80,6 +99,25 @@ public class HotbarChecks {
   near(c.calls.getLast().offset(),0); // Same slot after resizing.
   config.hotbarAnimation.value=false;draw(c,"hotbar_selection",459,199,24,23);
   near(c.calls.getLast().offset(),0);
+  config.hotbarOpacity.value=0.0;c.calls.clear();draw(c,"hotbar",100,200,182,22);draw(c,"hotbar_selection",99,199,24,23);
+  for(var call:c.calls)require(call.color()>>>24==0,"Zero opacity clears backgrounds and shadows, without transforming items");
+  config.hotbarOpacity.value=1.0;c.calls.clear();draw(c,"hotbar",100,200,182,22);draw(c,"hotbar_selection",99,199,24,23);
+  require(c.calls.get(1).color()>>>24==255 && c.calls.get(3).color()>>>24==255,"Full opacity makes both skins solid");
+  for(float scale:new float[]{1,2.5f,4}){
+   var pane=new HotbarBlurPane(new org.joml.Matrix3x2f().translate(3,2),new net.minecraft.client.texture.TextureSetup(),
+    100,200,182,22,9.5f,scale,1920,1080,null,new net.minecraft.client.gui.ScreenRect(103,202,182,22));
+   class Recorder implements net.minecraft.client.render.VertexConsumer{
+    int count,transparent;float x,y;boolean corner;
+    public Recorder vertex(org.joml.Matrix3x2fc pose,float x,float y){this.x=x;this.y=y;
+     require(x>=100 && x<=282 && y>=200 && y<=222,"Blur must stay inside the bar bounds");
+     if(x<101 && y<201)corner=true;count++;return this;}
+    public Recorder texture(float u,float v){near(u,(x+3)*scale/1920);near(v,1-(y+2)*scale/1080);return this;}
+    public Recorder color(int color){if(color>>>24==0)transparent++;return this;}
+   }
+   var recorder=new Recorder();pane.setupVertices(recorder);
+   require(recorder.count==288 && recorder.transparent==72,"Bounded rounded geometry with antialiased edges");
+   require(!recorder.corner,"Rounded corners leave the world untouched");
+  }
   config.hotbarShadow.value=0.0;draw(c,"hotbar",300,200,182,22);
   require(c.calls.get(c.calls.size()-2).color()>>>24==0,"Zero strength hides shadow");
   for(String side:new String[]{"left","right"}){
@@ -106,10 +144,10 @@ with tempfile.TemporaryDirectory(prefix='ember-hotbar-') as directory:
         path = work / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding='utf-8')
-    for name in ['EmberHotbar', 'HotbarSelectionMotion']:
+    for name in ['EmberHotbar', 'HotbarSelectionMotion', 'HotbarBlurPane']:
         dest = work / (P + 'utils/render/' + name + '.java')
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'src/main/java' / (P + 'utils/render/' + name + '.java'), dest)
     sources = [str(path) for path in work.rglob('*.java')]
-    subprocess.run([str(JAVA / 'javac'), '-encoding', 'UTF-8', '-d', str(work / 'out'), *sources], check=True)
-    subprocess.run([str(JAVA / 'java'), '-cp', str(work / 'out'), 'HotbarChecks'], check=True)
+    subprocess.run([str(JAVA / 'javac'), '-cp', str(joml), '-encoding', 'UTF-8', '-d', str(work / 'out'), *sources], check=True)
+    subprocess.run([str(JAVA / 'java'), '-cp', os.pathsep.join([str(work / 'out'), str(joml)]), 'HotbarChecks'], check=True)

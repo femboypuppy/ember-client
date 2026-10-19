@@ -37,7 +37,9 @@ public final class EmberHotbar {
             return false;
         }
         if (!original.getNamespace().equals("minecraft")) return false;
-        int shadowColor = ((int) Math.round(config.hotbarShadow.get() * 255) << 24) | 0xFFFFFF;
+        double opacity = config.hotbarOpacity.get();
+        int shadowColor = tint(config.hotbarShadow.get() * Math.min(1, opacity / .55));
+        int backgroundColor = tint(opacity);
         switch (original.getPath()) {
             case "hud/hotbar" -> {
                 long now = System.nanoTime();
@@ -45,8 +47,9 @@ public final class EmberHotbar {
                 if (world.get() != MeteorClient.mc.world) world = new WeakReference<>(MeteorClient.mc.world);
                 lastRender = now;
                 barX = x;
+                HotbarBlur.draw(context, x, y, width, height, 9.5f);
                 context.drawGuiTexture(pipeline, SHADOW, x - 18, y - 18, width + 36, height + 36, shadowColor);
-                context.drawGuiTexture(pipeline, BAR, x, y, width, height);
+                context.drawGuiTexture(pipeline, BAR, x, y, width, height, backgroundColor);
             }
             case "hud/hotbar_selection" -> {
                 double target = x - (barX - 1);
@@ -55,7 +58,7 @@ public final class EmberHotbar {
                 try {
                     context.getMatrices().translate((float) offset, 0);
                     context.drawGuiTexture(pipeline, SELECTION_SHADOW, x - 8, y - 8, width + 16, height + 16, shadowColor);
-                    context.drawGuiTexture(pipeline, SELECTION, x, y, width, height);
+                    context.drawGuiTexture(pipeline, SELECTION, x, y, width, height, tint(opacity * 1.55));
                 } finally {
                     context.getMatrices().popMatrix();
                 }
@@ -63,11 +66,16 @@ public final class EmberHotbar {
             case "hud/hotbar_offhand_left", "hud/hotbar_offhand_right" -> {
                 boolean left = original.getPath().endsWith("left");
                 // The native offhand sprite has seven pixels of empty space next to the main bar.
+                HotbarBlur.draw(context, x + (left ? 0 : 7), y + 1, 22, 22, 8);
                 context.drawGuiTexture(pipeline, OFFHAND_SHADOW, x + (left ? 0 : 7) - 18, y + 1 - 18, 58, 58, shadowColor);
-                context.drawGuiTexture(pipeline, left ? OFFHAND_LEFT : OFFHAND_RIGHT, x, y, width, height);
+                context.drawGuiTexture(pipeline, left ? OFFHAND_LEFT : OFFHAND_RIGHT, x, y, width, height, backgroundColor);
             }
             default -> { return false; }
         }
         return true;
+    }
+
+    private static int tint(double opacity) {
+        return ((int) Math.round(Math.clamp(opacity, 0, 1) * 255) << 24) | 0xFFFFFF;
     }
 }

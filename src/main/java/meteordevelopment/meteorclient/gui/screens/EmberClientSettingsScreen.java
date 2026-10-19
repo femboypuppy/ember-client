@@ -458,6 +458,8 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         y = toggle(r, y, "Pill hotbar", "Use the rounded hotbar style. Off restores Minecraft's hotbar.", Config.get().pillHotbar.get(), () -> Config.get().pillHotbar.set(!Config.get().pillHotbar.get()), dt);
         if (Config.get().pillHotbar.get()) {
             Config c = Config.get();
+            y = slider(r, y, "Hotbar opacity", c.hotbarOpacity.get(), percent(c.hotbarOpacity.get()), c.hotbarOpacity::set, dt);
+            y = slider(r, y, "Hotbar blur", c.hotbarBlur.get(), percent(c.hotbarBlur.get()), c.hotbarBlur::set, dt);
             y = slider(r, y, "Hotbar shadow", c.hotbarShadow.get(), percent(c.hotbarShadow.get()), c.hotbarShadow::set, dt);
             y = toggle(r, y, "Animate hotbar selection", "Glide smoothly between slots when scrolling or pressing number keys.", c.hotbarAnimation.get(), () -> c.hotbarAnimation.set(!c.hotbarAnimation.get()), dt);
         }
