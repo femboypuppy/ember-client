@@ -55,7 +55,7 @@ def main():
  assets=ROOT/'src/main/resources/assets/ember'
  for name in ('chrome','midnight','chrome_blur','midnight_blur'):
   data=(assets/f'textures/menu/{name}.png').read_bytes();assert data[:8]==b'\x89PNG\r\n\x1a\n';w,h=struct.unpack('>II',data[16:24]);assert w>0 and h>0
-  if name.endswith('_blur'):assert (w,h)==(320,180)
+  assert (w,h)==((320,180) if name.endswith('_blur') else (2560,1440))
  for name in ('ui','clock'):
   provider=json.loads((assets/f'font/{name}.json').read_text())['providers'][0];file=provider['file'].removeprefix('ember:')
   assert provider['type']=='ttf' and (assets/'font'/file).is_file();assert (assets/'font'/file).read_bytes()[:4] in (b'\x00\x01\x00\x00',b'OTTO')

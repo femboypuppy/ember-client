@@ -7,23 +7,25 @@ import net.minecraft.util.Identifier;
 public final class WallpaperRenderer {
     private static final Identifier[] SHARP={Identifier.of("ember","textures/menu/chrome.png"),Identifier.of("ember","textures/menu/chrome.png"),Identifier.of("ember","textures/menu/midnight.png")};
     private static final Identifier[] BLUR={Identifier.of("ember","textures/menu/chrome_blur.png"),Identifier.of("ember","textures/menu/chrome_blur.png"),Identifier.of("ember","textures/menu/midnight_blur.png")};
-    private MenuConfig.Wallpaper current=ConfigManager.get().wallpaper, previous=current;
-    private double fade=1, panX,panY,time,width,height,coverX,coverY,coverW,coverH;
+    // Live/static Chrome share artwork, so a reversible two-image blend handles rapid selections.
+    private double midnight=ConfigManager.get().wallpaper==MenuConfig.Wallpaper.MIDNIGHT?1:0;
+    private double live=ConfigManager.get().wallpaper==MenuConfig.Wallpaper.CHROME_LIVE?1:0;
+    private double panX,panY,time,width,height,coverX,coverY,coverW,coverH;
     public void update(double w,double h,double mouseX,double mouseY,double dt) {
         var c=ConfigManager.get();width=w;height=h;
-        if(c.wallpaper!=current){previous=current;current=c.wallpaper;fade=0;}
-        fade=MenuAnimation.smooth(fade,1,dt*c.animationSpeed,c.motion()?.16:.055);
+        midnight=MenuAnimation.smooth(midnight,c.wallpaper==MenuConfig.Wallpaper.MIDNIGHT?1:0,dt*c.animationSpeed,c.motion()?.16:.055);
+        live=MenuAnimation.smooth(live,c.wallpaper==MenuConfig.Wallpaper.CHROME_LIVE?1:0,dt*c.animationSpeed,.2);
         if(c.motion())time+=dt*c.animationSpeed;
         double tx=c.motion()&&c.parallax?(mouseX/w-.5)*14:0,ty=c.motion()&&c.parallax?(mouseY/h-.5)*10:0;
         if(c.motion()){panX=MenuAnimation.smooth(panX,tx,dt,.35);panY=MenuAnimation.smooth(panY,ty,dt,.35);}else{panX=panY=0;}
-        double zoom=1.06+(current==MenuConfig.Wallpaper.CHROME_LIVE&&c.motion()?Math.sin(time*.12)*.012:0);
+        double zoom=1.06+(c.motion()?Math.sin(time*.12)*.012*live:0);
         double scale=Math.max(w/2560,h/1440)*zoom;coverW=2560*scale;coverH=1440*scale;
         coverX=(w-coverW)*.5+panX;coverY=(h-coverH)*.5+panY;
-        if(current==MenuConfig.Wallpaper.CHROME_LIVE&&c.motion()){coverX+=Math.sin(time*.09)*7;coverY+=Math.cos(time*.07)*4;}
+        if(c.motion()){coverX+=Math.sin(time*.09)*7*live;coverY+=Math.cos(time*.07)*4*live;}
     }
     public void draw(MenuCanvas c,double backgroundBlur) {
-        if(fade<.999)full(c,previous,1,backgroundBlur);
-        full(c,current,fade,backgroundBlur);
+        if(midnight<.999)full(c,MenuConfig.Wallpaper.CHROME,1,backgroundBlur);
+        if(midnight>.001)full(c,MenuConfig.Wallpaper.MIDNIGHT,midnight>.999?1:midnight,backgroundBlur);
         c.context.fillGradient(0,0,(int)width,(int)(height*.45),0x45000000,0x00000000);
         c.context.fillGradient(0,(int)(height*.45),(int)width,(int)height,0x00000000,0x99000000);
         // Soft vignette without a framebuffer, custom pipeline or per-frame image allocation.
@@ -41,8 +43,8 @@ public final class WallpaperRenderer {
     }
     public void sample(MenuCanvas c,double x,double y,double w,double h,double radius,double alpha) {
         if(alpha<=.001)return;
-        if(fade<.999)roundedSample(c,previous,x,y,w,h,radius,alpha);
-        roundedSample(c,current,x,y,w,h,radius,alpha*fade);
+        if(midnight<.999)roundedSample(c,MenuConfig.Wallpaper.CHROME,x,y,w,h,radius,alpha);
+        if(midnight>.001)roundedSample(c,MenuConfig.Wallpaper.MIDNIGHT,x,y,w,h,radius,alpha*(midnight>.999?1:midnight));
     }
     private void roundedSample(MenuCanvas c,MenuConfig.Wallpaper wallpaper,double x,double y,double w,double h,double radius,double alpha) {
         double r=Math.min(radius,Math.min(w,h)*.5);region(c,wallpaper,true,x,y+r,w,h-2*r,alpha);
