@@ -67,7 +67,7 @@ public class SkySubmissionChecks {
         static final Config INSTANCE = new Config();
         final Setting<Boolean> ambience = new Setting<>(true), worldAtmosphere = new Setting<>(true),
             accentFog = new Setting<>(true), accentSky = new Setting<>(true), worldLighting = new Setting<>(true),
-            musicReactive = new Setting<>(false), bassLighting = new Setting<>(true);
+            musicReactive = new Setting<>(false), bassLighting = new Setting<>(true), depthFog = new Setting<>(false);
         final Setting<Double> fogAmount = new Setting<>(0.5), skyIntensity = new Setting<>(0.85),
             worldDarkness = new Setting<>(0.42), worldLightTint = new Setting<>(0.8),
             vanillaLightMix = new Setting<>(0.0), daylightBrightness = new Setting<>(1.0);
@@ -149,7 +149,12 @@ public class SkySubmissionChecks {
                 mc.gameRenderer.camera.medium = medium;
                 require(openSky() && skyActive() && fogEnabled() && lightingEnabled());
                 // Air haze may affect long view distances; it must not change liquid fog.
-                require(fogHazeEnabled() == (medium == CameraSubmersionType.NONE));
+                for (boolean depthMode : new boolean[]{false, true}) {
+                    Config.INSTANCE.depthFog.value = depthMode;
+                    require(fogAirEnabled() == (medium == CameraSubmersionType.NONE));
+                    require(fogHazeEnabled() == (medium == CameraSubmersionType.NONE && !depthMode));
+                }
+                Config.INSTANCE.depthFog.value = false;
             }
         }
         mc.player.effects.add(StatusEffects.BLINDNESS);
