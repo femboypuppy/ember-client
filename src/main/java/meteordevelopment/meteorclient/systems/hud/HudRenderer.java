@@ -34,7 +34,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -55,8 +54,10 @@ public class HudRenderer {
     private final ClippedTextRenderer unicodeText = new ClippedTextRenderer();
 
     private final Int2ObjectMap<FontHolder> fontsInUse = new Int2ObjectOpenHashMap<>();
+    // atlasHeight() has only 13 possible sizes. Keep those atlases across HUD/menu passes;
+    // a second, empty notification pass must not evict the fonts drawn by the first pass.
     private final LoadingCache<Integer, FontHolder> fontCache = CacheBuilder.newBuilder()
-        .maximumSize(4)
+        .maximumSize(16)
         .expireAfterAccess(Duration.ofMinutes(10))
         .removalListener(notification -> {
             if (notification.wasEvicted())
@@ -97,25 +98,15 @@ public class HudRenderer {
         Renderer2D.COLOR.render();
 
         if (hud.hasCustomFont()) {
-            // Render fonts that were visited this frame and move to cache which weren't visited
-            for (Iterator<FontHolder> it = fontsInUse.values().iterator(); it.hasNext(); ) {
-                FontHolder fontHolder = it.next();
-
-                if (fontHolder.visited) {
-                    MeshRenderer.begin()
-                        .attachments(mc.getFramebuffer())
-                        .pipeline(MeteorRenderPipelines.UI_TEXT)
-                        .mesh(fontHolder.getMesh())
-                        .sampler("u_Texture", fontHolder.font.texture.getGlTextureView(), fontHolder.font.texture.getSampler())
-                        .end();
-                }
-                else {
-                    it.remove();
-                    fontCache.put(fontHolder.font.getHeight(), fontHolder);
-                }
-
-                fontHolder.visited = false;
+            for (FontHolder fontHolder : fontsInUse.values()) {
+                MeshRenderer.begin()
+                    .attachments(mc.getFramebuffer())
+                    .pipeline(MeteorRenderPipelines.UI_TEXT)
+                    .mesh(fontHolder.getMesh())
+                    .sampler("u_Texture", fontHolder.font.texture.getGlTextureView(), fontHolder.font.texture.getSampler())
+                    .end();
             }
+            fontsInUse.clear();
         }
         else {
             VanillaTextRenderer.INSTANCE.end();
@@ -613,27 +604,9 @@ public class HudRenderer {
         if (scale == -1) scale = hud.getTextScale();
         int height = atlasHeight(scale);
 
-        // Check fonts in use
-        FontHolder fontHolder = fontsInUse.get(height);
-        if (fontHolder != null) {
-            if (render) fontHolder.visited = true;
-            return fontHolder;
-        }
-
-        // Create font if not in cache otherwise remove from cache and add to fonts in use
-        if (render) {
-            fontHolder = fontCache.getIfPresent(height);
-            if (fontHolder == null) fontHolder = loadFont(height);
-            else fontCache.invalidate(height);
-
-            fontsInUse.put(height, fontHolder);
-            fontHolder.visited = true;
-
-            return fontHolder;
-        }
-
-        // Otherwise get from cache
-        return fontCache.getUnchecked(height);
+        FontHolder fontHolder = fontCache.getUnchecked(height);
+        if (render) fontsInUse.put(height, fontHolder);
+        return fontHolder;
     }
 
     private Font getFont(double scale) {
@@ -642,8 +615,7 @@ public class HudRenderer {
 
     @EventHandler
     private void onCustomFontChanged(CustomFontChangedEvent event) {
-        // Need to destroy both fonts in use and in cache because they were not evicted from the cache automatically
-        for (FontHolder fontHolder : fontsInUse.values()) fontHolder.destroy();
+        // The cache owns every atlas; the current draw batch only borrows them.
         for (FontHolder fontHolder : fontCache.asMap().values()) fontHolder.destroy();
 
         // Clear collections
@@ -662,7 +634,6 @@ public class HudRenderer {
 
     private static class FontHolder {
         public final Font font;
-        public boolean visited;
 
         private MeshBuilder mesh;
 
