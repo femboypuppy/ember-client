@@ -93,7 +93,7 @@ public class SkeletonSpawnerFinder extends Module {
     public void onActivate() {
         spawners.clear();
         announced.clear();
-        samplesLeft.set(5);
+        samplesLeft.set(10);
         context = FindsStorage.context();
         if (mc.world == null) return;
         for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) {
@@ -112,6 +112,18 @@ public class SkeletonSpawnerFinder extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.world != null && !FindsStorage.context().equals(context)) onActivate();
+        if (++statTicks % 1200 == 0 && chunksSeen.get() > 0) {
+            MeteorClient.LOG.info("[Ember SkeletonSpawner] Block entities in {} chunk packets: {}", chunksSeen.get(), new java.util.TreeMap<>(entityStats));
+        }
+    }
+
+    private final Map<String, AtomicInteger> entityStats = new ConcurrentHashMap<>();
+    private final AtomicInteger chunksSeen = new AtomicInteger();
+    private long statTicks;
+
+    @Override
+    public String getInfoString() {
+        return String.valueOf(spawners.size());
     }
 
     /** Network thread. */
@@ -120,7 +132,16 @@ public class SkeletonSpawnerFinder extends Module {
         try {
             if (event.packet instanceof ChunkDataS2CPacket packet) {
                 int cx = packet.getChunkX(), cz = packet.getChunkZ();
-                packet.getChunkData().getBlockEntities(cx, cz).accept((pos, type, nbt) -> seen(pos, type, nbt));
+                chunksSeen.incrementAndGet();
+                // Counted by depth while you're above or below the deepslate: tells whether the server still lists
+                // block entities in sections it sends as plain deepslate.
+                boolean deepYou = mc.player != null && mc.player.getY() < 0;
+                packet.getChunkData().getBlockEntities(cx, cz).accept((pos, type, nbt) -> {
+                    String band = pos.getY() < 0 ? "below0" : pos.getY() < 16 ? "0-15" : "16+";
+                    String kind = type == BlockEntityType.MOB_SPAWNER ? "spawner" : type == BlockEntityType.CHEST ? "chest" : "other";
+                    entityStats.computeIfAbsent((deepYou ? "you<0 " : "you>=0 ") + kind + "@" + band, k -> new AtomicInteger()).incrementAndGet();
+                    seen(pos, type, nbt);
+                });
             } else if (event.packet instanceof BlockEntityUpdateS2CPacket packet) {
                 seen(packet.getPos(), packet.getBlockEntityType(), packet.getNbt());
             } else if (event.packet instanceof UnloadChunkS2CPacket) {
