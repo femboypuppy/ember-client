@@ -70,3 +70,7 @@ The headless menu check runs production springs/dock/config code, compares 15/30
 - **Additional languages:** add `menu_lang/<locale>.json` and extend `MenuLanguage.locale()` and the language segmented control.
 
 Verified API references: [DrawContext 1.21.11](https://maven.fabricmc.net/docs/yarn-1.21.11+build.3/net/minecraft/client/gui/DrawContext.html), [Style 1.21.11](https://maven.fabricmc.net/docs/yarn-1.21.11+build.3/net/minecraft/text/Style.html). The code uses Yarn names, not Mojang mappings.
+
+## Validation of this revision
+
+The Java 21 build and visual checks passed against Minecraft 1.21.11/Yarn build 3. Startup, held-Enter isolation, all seven native settings layouts at maximum UI scale, resource reload, clock/date positioning, and compact-window rendering were checked in an isolated development client. Current compiled input bytecode also passed Home/End, cursor insertion, select-all replacement and Unicode backspace checks. Existing account UI/authentication, rain/settings and profile-sharing regression checks passed. Microsoft authentication itself was not performed with a real account during this menu preview.

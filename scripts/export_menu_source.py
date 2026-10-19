@@ -25,7 +25,7 @@ def files():
     selected += [ROOT / name for name in ('src/main/resources/fabric.mod.json',
                                          'src/main/resources/ember-client.mixins.json',
                                          'build.gradle.kts', 'gradle/libs.versions.toml',
-                                         'docs/start-menu.md', 'scripts/check_start_menu.py',
+                                         'docs/start-menu.md', 'scripts/check_start_menu.py', 'scripts/check_rain_status.py',
                                          'scripts/export_menu_source.py')]
     selected += sorted(path for path in (ROOT / 'src/main/resources/assets/ember').rglob('*') if path.is_file())
     return selected
