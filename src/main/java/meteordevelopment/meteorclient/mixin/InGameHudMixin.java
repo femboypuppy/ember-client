@@ -38,7 +38,9 @@ public abstract class InGameHudMixin {
         target = "Lnet/minecraft/client/gui/DrawContext;drawGuiTexture(Lcom/mojang/blaze3d/pipeline/RenderPipeline;Lnet/minecraft/util/Identifier;IIII)V"))
     private void ember$hotbarSkin(DrawContext context, RenderPipeline pipeline, Identifier sprite,
                                   int x, int y, int width, int height, Operation<Void> original) {
-        original.call(context, pipeline, EmberHotbar.sprite(sprite), x, y, width, height);
+        if (!EmberHotbar.draw(context, pipeline, sprite, x, y, width, height)) {
+            original.call(context, pipeline, sprite, x, y, width, height);
+        }
     }
 
     @Inject(method = "renderStatusEffectOverlay", at = @At("HEAD"), cancellable = true)

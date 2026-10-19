@@ -259,10 +259,18 @@ public class Config extends System<Config> {
 
     public final Setting<Boolean> pillHotbar = sgVisual.add(new BoolSetting.Builder()
         .name("pill-hotbar")
-        .description("Use a dark rounded hotbar with a darker selected slot, keeping Minecraft's item rendering.")
+        .description("Use a dark rounded hotbar with soft black shadows and a sliding selected slot.")
         .defaultValue(false)
         .build()
     );
+
+    public final Setting<Double> hotbarShadow = sgVisual.add(new DoubleSetting.Builder()
+        .name("hotbar-shadow").description("Strength of the broad black shadow around the pill hotbar.")
+        .defaultValue(1.0).range(0, 1).sliderRange(0, 1).visible(pillHotbar::get).build());
+
+    public final Setting<Boolean> hotbarAnimation = sgVisual.add(new BoolSetting.Builder()
+        .name("hotbar-animation").description("Smoothly slide the selected-slot highlight when switching items.")
+        .defaultValue(true).visible(pillHotbar::get).build());
 
     public final Setting<meteordevelopment.meteorclient.utils.render.EmberAppearance> appearance = sgVisual.add(
         new EnumSetting.Builder<meteordevelopment.meteorclient.utils.render.EmberAppearance>()

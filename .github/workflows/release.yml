@@ -69,6 +69,9 @@ jobs:
       - name: Check animated HUD logo
         run: python3 scripts/check_ember_logo.py
 
+      - name: Check hotbar shadows and selection motion
+        run: python3 scripts/check_hotbar.py
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

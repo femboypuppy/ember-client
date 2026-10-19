@@ -5,9 +5,13 @@
 
 package meteordevelopment.meteorclient.utils.render;
 
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.systems.config.Config;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.util.Identifier;
+
+import java.lang.ref.WeakReference;
 
 /** Skin the native GUI sprites so item rendering, HUD caching and GUI scale stay vanilla-owned. */
 public final class EmberHotbar {
@@ -15,18 +19,55 @@ public final class EmberHotbar {
     private static final Identifier SELECTION = MeteorClient.identifier("hotbar/selection");
     private static final Identifier OFFHAND_LEFT = MeteorClient.identifier("hotbar/offhand_left");
     private static final Identifier OFFHAND_RIGHT = MeteorClient.identifier("hotbar/offhand_right");
+    private static final Identifier SHADOW = MeteorClient.identifier("hotbar/shadow");
+    private static final Identifier OFFHAND_SHADOW = MeteorClient.identifier("hotbar/offhand_shadow");
+    private static final Identifier SELECTION_SHADOW = MeteorClient.identifier("hotbar/selection_shadow");
+    private static final HotbarSelectionMotion MOTION = new HotbarSelectionMotion();
+    private static WeakReference<Object> world = new WeakReference<>(null);
+    private static int barX;
+    private static long lastRender;
 
     private EmberHotbar() {}
 
-    public static Identifier sprite(Identifier original) {
+    public static boolean draw(DrawContext context, RenderPipeline pipeline, Identifier original,
+                               int x, int y, int width, int height) {
         var config = Config.get();
-        if (config == null || !config.pillHotbar.get() || !original.getNamespace().equals("minecraft")) return original;
-        return switch (original.getPath()) {
-            case "hud/hotbar" -> BAR;
-            case "hud/hotbar_selection" -> SELECTION;
-            case "hud/hotbar_offhand_left" -> OFFHAND_LEFT;
-            case "hud/hotbar_offhand_right" -> OFFHAND_RIGHT;
-            default -> original;
-        };
+        if (config == null || !config.pillHotbar.get()) {
+            MOTION.reset();
+            return false;
+        }
+        if (!original.getNamespace().equals("minecraft")) return false;
+        int shadowColor = ((int) Math.round(config.hotbarShadow.get() * 255) << 24) | 0xFFFFFF;
+        switch (original.getPath()) {
+            case "hud/hotbar" -> {
+                long now = System.nanoTime();
+                if (world.get() != MeteorClient.mc.world || now - lastRender > 500_000_000L) MOTION.reset();
+                if (world.get() != MeteorClient.mc.world) world = new WeakReference<>(MeteorClient.mc.world);
+                lastRender = now;
+                barX = x;
+                context.drawGuiTexture(pipeline, SHADOW, x - 18, y - 18, width + 36, height + 36, shadowColor);
+                context.drawGuiTexture(pipeline, BAR, x, y, width, height);
+            }
+            case "hud/hotbar_selection" -> {
+                double target = x - (barX - 1);
+                double offset = MOTION.position(target, System.nanoTime(), config.hotbarAnimation.get()) - target;
+                context.getMatrices().pushMatrix();
+                try {
+                    context.getMatrices().translate((float) offset, 0);
+                    context.drawGuiTexture(pipeline, SELECTION_SHADOW, x - 8, y - 8, width + 16, height + 16, shadowColor);
+                    context.drawGuiTexture(pipeline, SELECTION, x, y, width, height);
+                } finally {
+                    context.getMatrices().popMatrix();
+                }
+            }
+            case "hud/hotbar_offhand_left", "hud/hotbar_offhand_right" -> {
+                boolean left = original.getPath().endsWith("left");
+                // The native offhand sprite has seven pixels of empty space next to the main bar.
+                context.drawGuiTexture(pipeline, OFFHAND_SHADOW, x + (left ? 0 : 7) - 18, y + 1 - 18, 58, 58, shadowColor);
+                context.drawGuiTexture(pipeline, left ? OFFHAND_LEFT : OFFHAND_RIGHT, x, y, width, height);
+            }
+            default -> { return false; }
+        }
+        return true;
     }
 }

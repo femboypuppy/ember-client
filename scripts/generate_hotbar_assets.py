@@ -11,7 +11,7 @@ SCALE = 4
 def chunk(name, data):
     return struct.pack('>I', len(data)) + name + data + struct.pack('>I', zlib.crc32(name + data) & 0xffffffff)
 
-def generate(name, width, height, bounds, radius, top_alpha, bottom_alpha, rgb):
+def generate(name, width, height, bounds, radius, top_alpha, bottom_alpha, rgb, shadow=False):
     left, top, w, h = bounds
     rows = []
     for py in range(height * SCALE):
@@ -24,7 +24,13 @@ def generate(name, width, height, bounds, radius, top_alpha, bottom_alpha, rgb):
             t = max(0, min(1, .5 - distance / 1.2))
             coverage = t * t * (3 - 2 * t)
             gradient = max(0, min(1, (y - top) / h))
-            alpha = round(coverage * (top_alpha + (bottom_alpha - top_alpha) * gradient))
+            if shadow:
+                # Two soft falloffs: a dense contact shadow and a broad, smoothly fading halo.
+                outside = max(0, distance)
+                alpha = round(100 * math.exp(-.5 * (outside / (2.8 * shadow)) ** 2)
+                              + 100 * math.exp(-.5 * (outside / (5.2 * shadow)) ** 2))
+            else:
+                alpha = round(coverage * (top_alpha + (bottom_alpha - top_alpha) * gradient))
             row.extend((*rgb, alpha))
         rows.append(row)
     png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width * SCALE, height * SCALE, 8, 6, 0, 0, 0))
@@ -38,6 +44,9 @@ def main():
     generate('selection', 24, 23, (2, 2, 20, 20), 7, 205, 220, (3, 5, 3))
     generate('offhand_left', 29, 24, (0, 1, 22, 22), 8, 125, 150, (9, 12, 8))
     generate('offhand_right', 29, 24, (7, 1, 22, 22), 8, 125, 150, (9, 12, 8))
+    generate('shadow', 218, 58, (18, 18, 182, 22), 9.5, 0, 0, (0, 0, 0), shadow=True)
+    generate('offhand_shadow', 58, 58, (18, 18, 22, 22), 8, 0, 0, (0, 0, 0), shadow=True)
+    generate('selection_shadow', 40, 39, (10, 10, 20, 20), 7, 0, 0, (0, 0, 0), shadow=.45)
     print('Generated pill hotbar GUI sprites at 4x resolution.')
 
 if __name__ == '__main__':
