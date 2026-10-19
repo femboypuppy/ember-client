@@ -121,11 +121,6 @@ public class SkeletonSpawnerFinder extends Module {
     private final AtomicInteger chunksSeen = new AtomicInteger();
     private long statTicks;
 
-    @Override
-    public String getInfoString() {
-        return String.valueOf(spawners.size());
-    }
-
     /** Network thread. */
     @EventHandler
     private void onPacket(PacketEvent.Receive event) {
