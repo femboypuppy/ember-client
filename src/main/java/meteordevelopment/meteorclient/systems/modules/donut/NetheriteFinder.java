@@ -75,7 +75,7 @@ public class NetheriteFinder extends Module {
     private final Setting<Integer> range = sgGeneral.add(new IntSetting.Builder()
         .name("range")
         .description("How many chunks around you to show areas in.")
-        .defaultValue(8)
+        .defaultValue(16)
         .range(1, 24)
         .sliderRange(1, 16)
         .build()
@@ -220,6 +220,7 @@ public class NetheriteFinder extends Module {
         readable.clear();
         found.clear();
         mined.clear();
+        announced.clear();
         watched.clear();
         empty.clear();
         scannedAt.clear();
@@ -249,6 +250,9 @@ public class NetheriteFinder extends Module {
         readChunk(event.chunk());
     }
 
+    private long areaNotifiedAt = -100_000;
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet announced = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+
     private void readChunk(WorldChunk chunk) {
         int cx = chunk.getPos().x, cz = chunk.getPos().z;
         long key = chunk.getPos().toLong();
@@ -275,15 +279,23 @@ public class NetheriteFinder extends Module {
             hit |= 1 << sy;
             statListed++;
             Area area = scan(chunk, sy);
-            if (area != null) areas.put(ChunkSectionPos.asLong(cx, sy, cz), area);
+            if (area != null && areas.put(ChunkSectionPos.asLong(cx, sy, cz), area) == null && mc.player != null && ticks - areaNotifiedAt > 60
+                && announced.add(ChunkSectionPos.asLong(cx, sy, cz))) {
+                areaNotifiedAt = ticks;
+                EmberNotificationsHud.push("Netherite finder", "Debris area at " + (int) area.centerX() + " " + area.minY + "-" + area.maxY + " " + (int) area.centerZ()
+                    + " (" + Math.round(Math.sqrt(distanceSq(area, mc.player.getEyePos()))) + "m)", EmberNotificationsHud.GOOD);
+            }
         }
         listed.put(key, hit);
         readable.put(key, read);
 
-        if (statLogged < 4 && hit != 0) {
+        if (statLogged < 40 && hit != 0) {
             statLogged++;
-            MeteorClient.LOG.info("[Ember Netherite] Chunk {}, {}: debris listed in sections {} ({} of {} sections so far)", cx, cz,
-                Integer.toBinaryString(hit), statListed, statSections);
+            // Visible debris lists itself; a listed section with none in view hides some (the palette leak).
+            int visible = 0;
+            for (BlockPos p : found) if (p.getX() >> 4 == cx && p.getZ() >> 4 == cz && (hit & (1 << (p.getY() >> 4))) != 0) visible++;
+            MeteorClient.LOG.info("[Ember Netherite] Chunk {}, {} (x {} z {}): debris listed in sections {}, {} of it in view ({} of {} sections so far)", cx, cz,
+                cx << 4, cz << 4, Integer.toBinaryString(hit), visible, statListed, statSections);
         }
         if (areas.size() > 50_000) areas.clear();
     }
@@ -516,7 +528,7 @@ public class NetheriteFinder extends Module {
             return;
         }
 
-        if (seedSet && indexesReady()) {
+        if (seedSet && !onDonut() && indexesReady()) {
             checkSeed();
             checkPins();
         }
@@ -816,14 +828,11 @@ public class NetheriteFinder extends Module {
     public String getInfoString() {
         if (mc.world != null && mc.world.getRegistryKey() != World.NETHER) return "nether only";
         int exact = shownFound.size() + shownPinned.size();
-        if (revealScan.get() && shownAreas.isEmpty()) {
-            // The seed is proven by magma first (Y 27-36), then the debris spots show.
-            if (seedSet && seedState == SEED_GOOD && pinState == PIN_UNKNOWN && revealedMagma.size() < 60)
-                return "proving seed: " + revealedMagma.size() + "/60 magma, scan at Y 27-36";
-            if (pinState == PIN_SEARCHING) return "fixing seed";
+        String areasText = shownAreas.isEmpty() ? "" : " · " + shownAreas.size() + (shownAreas.size() == 1 ? " area" : " areas");
+        if (revealScan.get()) {
             // Most debris is in the large clusters, Y 8-24: scanning higher mostly turns up magma.
-            if (pinState != PIN_GOOD && mc.player != null && (mc.player.getY() > 26 || mc.player.getY() < 6)) return "go to Y 15 for debris";
-            return exact + " debris · " + (revealed.size() >= 1000 ? revealed.size() / 1000 + "k" : revealed.size()) + " checked";
+            if (shownFound.isEmpty() && mc.player != null && (mc.player.getY() > 26 || mc.player.getY() < 6)) return "go to Y 15 for debris" + areasText;
+            return shownFound.size() + " debris · " + (revealed.size() >= 1000 ? revealed.size() / 1000 + "k" : revealed.size()) + " checked" + areasText;
         }
         String text = shownAreas.size() + (shownAreas.size() == 1 ? " area" : " areas");
         if (exact > 0) text += " · " + exact + " exact";
@@ -963,7 +972,18 @@ public class NetheriteFinder extends Module {
     private final List<BlockPos> revealedMagma = new ArrayList<>();
     private int magmaChecked;
 
+    /**
+     * DonutSMP's magma follows its world seed but its debris doesn't (measured 2026-10-19: 0 of 11 seed spots), so the seed
+     * is no use for debris there and isn't checked.
+     */
+    private boolean onDonut() {
+        var server = mc.getCurrentServerEntry();
+        return server != null && server.address.toLowerCase(java.util.Locale.ROOT).contains("donutsmp");
+    }
+
     private void checkByMagma() {
+        // Only magma from veins (Y 27-36, reaching a few blocks out): lower magma comes from other features.
+        revealedMagma.removeIf(p -> p.getY() < 22 || p.getY() > 41);
         int n = revealedMagma.size();
         if (magmaIndex < 0 || n < 60 || n - magmaChecked < 20) return;
         magmaChecked = n;
