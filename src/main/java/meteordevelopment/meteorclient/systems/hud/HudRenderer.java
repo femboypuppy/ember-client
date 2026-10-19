@@ -20,6 +20,7 @@ import meteordevelopment.meteorclient.renderer.text.Font;
 import meteordevelopment.meteorclient.renderer.text.VanillaTextRenderer;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
+import meteordevelopment.meteorclient.utils.render.LiquidGlassRenderer;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.DrawContext;
@@ -48,8 +49,7 @@ public class HudRenderer {
 
     private final Hud hud = Hud.get();
     private final List<Runnable> postTasks = new ArrayList<>();
-    private record GlassPane(double x, double y, double w, double h, double radius, double opacity) {}
-    private final List<GlassPane> glassPanes = new ArrayList<>();
+    private final List<LiquidGlassRenderer.Pane> glassPanes = new ArrayList<>();
     private final Renderer2D glassShadows = new Renderer2D(false);
     private final ClippedTextRenderer unicodeText = new ClippedTextRenderer();
 
@@ -90,10 +90,7 @@ public class HudRenderer {
 
     public void end() {
         glassShadows.render();
-        for (GlassPane pane : glassPanes) {
-            meteordevelopment.meteorclient.utils.render.LiquidGlassRenderer.draw(
-                pane.x, pane.y, pane.w, pane.h, pane.radius, pane.opacity);
-        }
+        LiquidGlassRenderer.drawAll(glassPanes);
         glassPanes.clear();
         Renderer2D.COLOR.render();
 
@@ -330,7 +327,9 @@ public class HudRenderer {
      */
     public boolean liquidPanel(double x, double y, double width, double height, double radius, double opacity) {
         if (!meteordevelopment.meteorclient.utils.render.LiquidGlassRenderer.available()) return false;
-        glassPanes.add(new GlassPane(x, y, width, height, radius, opacity));
+        if (width > 0 && height > 0 && opacity > .001) {
+            glassPanes.add(new LiquidGlassRenderer.Pane(x, y, width, height, radius, opacity));
+        }
         return true;
     }
 

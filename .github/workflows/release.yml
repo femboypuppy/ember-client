@@ -73,7 +73,9 @@ jobs:
         run: python3 scripts/check_hotbar.py
 
       - name: Check HUD font cache across menu passes
-        run: python3 scripts/check_hud_fonts.py
+        run: |
+          python3 scripts/check_hud_fonts.py
+          python3 scripts/check_hud_rendering.py
 
       - name: Check redesigned nametags
         run: python3 scripts/check_nametags.py

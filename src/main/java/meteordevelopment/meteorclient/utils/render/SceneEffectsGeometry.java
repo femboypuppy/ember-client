@@ -21,6 +21,10 @@ public final class SceneEffectsGeometry {
         int shapes = 0, curves = 0;
         for (int x = cx - 5; x <= cx + 5; x++) for (int y = cy - 5; y <= cy + 5; y++) for (int z = cz - 5; z <= cz + 5; z++) {
             long key = x * 73856093L ^ y * 19349663L ^ z * 83492791L;
+            // Selection depends only on the cell key. Empty cells do not need animated positions.
+            boolean drawShape = density > 0 && shapes < 192 && random(key + 5) < density * .4;
+            boolean drawCurve = trails > 0 && random(key + 9) < trails * .8;
+            if (!drawShape && !drawCurve) continue;
             double phase = random(key + 4) * TAU;
             double px = x * 4.0 + random(key + 1) * 4 + Math.sin(time * .17 + phase) * .6 - cameraX;
             double py = y * 4.0 + random(key + 2) * 4 + Math.sin(time * .23 + phase) * .7 - cameraY;
@@ -28,11 +32,11 @@ public final class SceneEffectsGeometry {
             double distance = Math.sqrt(px * px + py * py + pz * pz);
             if (distance > 19 || distance < 1) continue;
             double fade = Math.pow(Math.clamp((19 - distance) / 7, 0, 1), 2) * Math.clamp((distance - 1) / 2, 0, 1) * brightness;
-            if (density > 0 && shapes < 192 && random(key + 5) < density * .4) {
+            if (drawShape) {
                 shape(mesh, (int)(random(key + 6) * 3), px, py, pz, size * (.13 + random(key + 7) * .2), time * .27 + phase, fade, rgb);
                 shapes++;
             }
-            if (trails > 0 && random(key + 9) < trails * .8) {
+            if (drawCurve) {
                 // Keep nearby curves instead of truncating the volume in cell iteration order.
                 int at = curves;
                 if (at == 96) { if (distance >= CURVES[(at - 1) * 6]) continue; at--; }

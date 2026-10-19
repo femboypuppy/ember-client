@@ -1,12 +1,23 @@
 #version 330 core
 
 uniform sampler2D u_Texture;
+#ifdef GLASS_BATCH
+flat in vec4 v_Rect;
+flat in vec4 v_Surface;
+flat in vec4 v_Accent;
+flat in vec4 v_Screen;
+#define u_Rect v_Rect
+#define u_Surface v_Surface
+#define u_Accent v_Accent
+#define u_Screen v_Screen
+#else
 layout (std140) uniform GlassData {
     vec4 u_Rect;
     vec4 u_Surface; // radius, seconds, density, refraction
     vec4 u_Accent;  // RGB, light/dark tint
     vec4 u_Screen;  // framebuffer size, pointer position
 };
+#endif
 in vec2 v_TexCoord;
 in vec4 v_Color;
 out vec4 color;

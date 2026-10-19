@@ -13,7 +13,7 @@ import net.minecraft.util.Identifier;
 
 import java.lang.ref.WeakReference;
 
-/** Skin the native GUI sprites so item rendering, HUD caching and GUI scale stay vanilla-owned. */
+/** Skin native GUI sprites while retaining Minecraft's item rendering and GUI scale. */
 public final class EmberHotbar {
     private static final Identifier BAR = MeteorClient.identifier("hotbar/pill");
     private static final Identifier SELECTION = MeteorClient.identifier("hotbar/selection");

@@ -174,6 +174,29 @@ SOURCES = {
                 return badFrames;
             }
 
+            private static void hotbarScenario(Class<?> type, int fps, int cacheFps) throws Exception {
+                Config.ComponentSettings settings = new Config.ComponentSettings(true, cacheFps);
+                Object buffer = type.getConstructor(Supplier.class).newInstance((Supplier<Config.ComponentSettings>) () -> settings);
+                class_310 mc = class_310.method_1551(); mc.field_1755 = null; mc.temporary = null;
+                BufferedComponent.captures = 0; double nextUpdate = 0;
+                for (int frame = 0; frame < fps * 2; frame++) {
+                    mc.main.view.content.clear(); double now = frame * 1000.0 / fps;
+                    pacing(buffer, now >= nextUpdate);
+                    if (!bool(buffer, "skipGuiRendering")) nextUpdate = now + 1000.0 / cacheFps;
+                    // The cached native pass excludes the separated custom item row.
+                    flush(buffer, "scoreboard");
+                    EmberGuiPass.begin();
+                    try { flush(buffer, "hotbar-" + frame, "blur-" + frame); }
+                    finally { EmberGuiPass.end(); }
+                    require(mc.main.view.content.containsAll(List.of("scoreboard", "hotbar-" + frame, "blur-" + frame)),
+                        "Hotbar animation and scene blur must advance every frame at " + fps + "/" + cacheFps);
+                    for (String s : mc.main.view.content) if (s.startsWith("hotbar-") || s.startsWith("blur-"))
+                        require(s.equals("hotbar-" + frame) || s.equals("blur-" + frame), "No old hotbar may be baked into the HUD cache");
+                }
+                require(BufferedComponent.captures > 0 && BufferedComponent.captures < fps,
+                    "The remaining native HUD stays cached while the hotbar updates");
+            }
+
             public static void main(String[] args) throws Exception {
                 try (JarFile jar = new JarFile(args[0])) {
                     targetBytes = jar.getInputStream(jar.getJarEntry(TARGET.replace('.', '/') + ".class")).readAllBytes();
@@ -185,12 +208,13 @@ SOURCES = {
                 for (int fps : new int[]{20, 30, 60, 144, 360}) {
                     require(scenario(patched, true, fps) == 0, "Vanilla HUD and Ember must remain visible at " + fps + " FPS");
                 }
+                for (int fps : new int[]{60, 144, 360}) for (int cap : new int[]{10, 30}) hotbarScenario(patched, fps, cap);
                 try {
                     EmberGuiPass.begin();
                     try { throw new IllegalArgumentException("synthetic render failure"); } finally { EmberGuiPass.end(); }
                 } catch (IllegalArgumentException expected) { }
                 require(!EmberGuiPass.isActive(), "A failed overlay must not disable caching on subsequent frames");
-                System.out.println("Exordium checks passed: both original failures reproduced; mixed GUI submissions, cached frames, inventory, disabled caching and exception recovery pass at 20/30/60/144/360 FPS.");
+                System.out.println("Exordium checks passed: both original failures reproduced; cached HUD, live hotbar/blur at 60/144/360 FPS with 10/30 FPS caches, inventory, disabled caching and exception recovery.");
             }
             private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
         }

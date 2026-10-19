@@ -14,6 +14,7 @@ import meteordevelopment.meteorclient.systems.modules.misc.BetterChat;
 import meteordevelopment.meteorclient.systems.modules.render.Freecam;
 import meteordevelopment.meteorclient.systems.modules.render.NoRender;
 import meteordevelopment.meteorclient.utils.render.EmberHotbar;
+import meteordevelopment.meteorclient.utils.render.EmberHotbarPass;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.hud.InGameHud;
 import net.minecraft.client.render.RenderTickCounter;
@@ -33,6 +34,12 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 @Mixin(InGameHud.class)
 public abstract class InGameHudMixin {
     @Shadow public abstract void clear();
+
+    @WrapOperation(method = "renderMainHud", at = @At(value = "INVOKE",
+        target = "Lnet/minecraft/client/gui/hud/InGameHud;renderHotbar(Lnet/minecraft/client/gui/DrawContext;Lnet/minecraft/client/render/RenderTickCounter;)V"))
+    private void ember$separateCachedHotbar(InGameHud hud, DrawContext context, RenderTickCounter counter, Operation<Void> original) {
+        if (!EmberHotbarPass.separate()) original.call(hud, context, counter);
+    }
 
     @WrapOperation(method = "renderHotbar", at = @At(value = "INVOKE",
         target = "Lnet/minecraft/client/gui/DrawContext;drawGuiTexture(Lcom/mojang/blaze3d/pipeline/RenderPipeline;Lnet/minecraft/util/Identifier;IIII)V"))

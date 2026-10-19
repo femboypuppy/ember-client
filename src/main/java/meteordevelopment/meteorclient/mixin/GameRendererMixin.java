@@ -196,6 +196,14 @@ public abstract class GameRendererMixin implements IGameRenderer {
             meteor$renderHud = false;
             var context = new DrawContext(client, guiState, (int) client.mouse.getScaledX(client.getWindow()), (int) client.mouse.getScaledY(client.getWindow()));
 
+            if (meteordevelopment.meteorclient.utils.render.EmberHotbarPass.visible()) {
+                // Record native items and animated sprites every frame, outside the cached HUD.
+                // This runs before unscaled HUD rendering so native GUI coordinates stay intact.
+                guiState.clear();
+                ((InGameHudAccessor) client.inGameHud).ember$renderHotbar(context, tickCounter);
+                meteor$flushGuiState();
+            }
+
             Profilers.get().push(MeteorClient.MOD_ID + "_render_2d");
             Utils.unscaledProjection();
             try {

@@ -43,6 +43,7 @@ public class MeshRenderer {
     private @Nullable GpuBuffer vertexBuffer;
     private @Nullable GpuBuffer indexBuffer;
     private Matrix4f matrix;
+    private int instances = 1;
     private final HashMap<String, GpuBufferSlice> uniforms = new HashMap<>();
     private final HashMap<String, Pair<GpuTextureView, GpuSampler>> samplers = new HashMap<>();
 
@@ -113,6 +114,12 @@ public class MeshRenderer {
         return this.mesh(FullScreenRenderer.vbo, FullScreenRenderer.ibo);
     }
 
+    public MeshRenderer instances(int count) {
+        if (count < 1) throw new IllegalArgumentException("Instance count must be positive");
+        instances = count;
+        return this;
+    }
+
     public MeshRenderer uniform(String name, GpuBufferSlice slice) {
         uniforms.put(name, slice);
         return this;
@@ -176,7 +183,7 @@ public class MeshRenderer {
 
                 pass.setVertexBuffer(0, vertexBuffer);
                 pass.setIndexBuffer(indexBuffer, VertexFormat.IndexType.INT);
-                pass.drawIndexed(0, 0, indexCount, 1);
+                pass.drawIndexed(0, 0, indexCount, instances);
 
                 pass.close();
             }
@@ -194,6 +201,7 @@ public class MeshRenderer {
         vertexBuffer = null;
         indexBuffer = null;
         matrix = null;
+        instances = 1;
         uniforms.clear();
         samplers.clear();
 

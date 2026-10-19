@@ -202,6 +202,21 @@ public abstract class MeteorRenderPipelines {
         .build()
     );
 
+    public static final RenderPipeline UI_LIQUID_GLASS_BATCH = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)
+        .withLocation(MeteorClient.identifier("pipeline/ui_liquid_glass_batch"))
+        .withVertexFormat(MeteorVertexFormats.POS2, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexShader(MeteorClient.identifier("shaders/liquid_glass_batch.vert"))
+        .withFragmentShader(MeteorClient.identifier("shaders/liquid_glass.frag"))
+        .withShaderDefine("GLASS_BATCH")
+        .withSampler("u_Texture")
+        .withUniform("GlassBatchData", UniformType.UNIFORM_BUFFER)
+        .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+        .withDepthWrite(false)
+        .withBlend(BlendFunction.TRANSLUCENT)
+        .withCull(false)
+        .build()
+    );
+
     public static final RenderPipeline POST_OUTLINE = add(new ExtendedRenderPipelineBuilder()
         .withLocation(MeteorClient.identifier("pipeline/post/outline"))
         .withVertexFormat(MeteorVertexFormats.POS2, VertexFormat.DrawMode.TRIANGLES)

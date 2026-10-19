@@ -116,6 +116,7 @@
     "HeadFeatureRendererMixin",
     "HeldItemRendererMixin",
     "HungerManagerMixin",
+    "InGameHudAccessor",
     "InGameHudMixin",
     "InGameOverlayRendererMixin",
     "ItemEntityRendererMixin",

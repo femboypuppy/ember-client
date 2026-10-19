@@ -12,6 +12,7 @@ import meteordevelopment.meteorclient.utils.render.color.EmberPalette;
 import net.minecraft.client.gl.DynamicUniformStorage;
 
 import java.nio.ByteBuffer;
+import java.util.List;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
@@ -20,6 +21,9 @@ public final class LiquidGlassRenderer {
     private static final int SIZE = new Std140SizeCalculator()
         .putVec4().putVec4().putVec4().putVec4().get();
     private static DynamicUniformStorage<PaneData> storage;
+    public static final int BATCH_CAPACITY = 64;
+    private static final int BATCH_SIZE = 48 + BATCH_CAPACITY * 32;
+    private static DynamicUniformStorage<BatchData> batchStorage;
     private static Renderer2D quad;
     private static final long START = System.nanoTime();
 
@@ -31,6 +35,31 @@ public final class LiquidGlassRenderer {
 
     public static void flipFrame() {
         if (storage != null) storage.clear();
+        if (batchStorage != null) batchStorage.clear();
+    }
+
+    public record Pane(double x, double y, double w, double h, double radius, double opacity) {}
+
+    /** HUD panes already share a background layer. Preserve their order in one instanced draw. */
+    public static void drawAll(List<Pane> panes) {
+        if (panes.isEmpty() || !available()) return;
+        if (batchStorage == null) batchStorage = new DynamicUniformStorage<>("Ember HUD glass batches", BATCH_SIZE, 8);
+        Color accent = EmberPalette.accent();
+        float time = (float) ((System.nanoTime() - START) / 1_000_000_000.0 * EmberAppearance.motion() % 3600);
+        float mx = mc.currentScreen == null ? -10000 : (float) (mc.mouse.getScaledX(mc.getWindow()) * mc.getWindow().getScaleFactor());
+        float my = mc.currentScreen == null ? -10000 : (float) (mc.mouse.getScaledY(mc.getWindow()) * mc.getWindow().getScaleFactor());
+        float r = EmberAppearance.glassAccent() ? accent.r / 255f : 0;
+        float g = EmberAppearance.glassAccent() ? accent.g / 255f : 0;
+        float b = EmberAppearance.glassAccent() ? accent.b / 255f : 0;
+        for (int first = 0; first < panes.size(); first += BATCH_CAPACITY) {
+            int count = Math.min(BATCH_CAPACITY, panes.size() - first);
+            var data = batchStorage.write(new BatchData(panes, first, count, time,
+                (float) EmberAppearance.glass(), (float) EmberAppearance.glassLiquid(), (float) EmberAppearance.glassTint(),
+                r, g, b, Utils.getWindowWidth(), Utils.getWindowHeight(), mx, my));
+            MeshRenderer.begin().attachments(mc.getFramebuffer()).pipeline(MeteorRenderPipelines.UI_LIQUID_GLASS_BATCH)
+                .fullscreen().instances(count).sampler("u_Texture", EmberGlass.texture(), EmberGlass.sampler())
+                .uniform("GlassBatchData", data).end();
+        }
     }
 
     public static boolean draw(double x, double y, double w, double h, double radius, double opacity) {
@@ -76,6 +105,23 @@ public final class LiquidGlassRenderer {
                 .putVec4(radius, time, density, refraction)
                 .putVec4(r, g, b, tint)
                 .putVec4(screenW, screenH, mouseX, mouseY);
+        }
+    }
+
+    private record BatchData(List<Pane> panes, int first, int count, float time, float density, float refraction,
+                             float tint, float r, float g, float b, float screenW, float screenH, float mouseX, float mouseY)
+        implements DynamicUniformStorage.Uploadable {
+        @Override public void write(ByteBuffer buffer) {
+            var builder = Std140Builder.intoBuffer(buffer).putVec4(time, density, refraction, tint)
+                .putVec4(r, g, b, 0).putVec4(screenW, screenH, mouseX, mouseY);
+            for (int i = 0; i < BATCH_CAPACITY; i++) {
+                if (i < count) {
+                    Pane p = panes.get(first + i);
+                    builder.putVec4((float) p.x, (float) p.y, (float) p.w, (float) p.h)
+                        .putVec4((float) Math.clamp(p.radius, 0, Math.min(p.w, p.h) / 2),
+                            (int) (255 * Math.clamp(p.opacity, 0, 1)) / 255f, 0, 0);
+                } else builder.putVec4(0, 0, 0, 0).putVec4(0, 0, 0, 0);
+            }
         }
     }
 }

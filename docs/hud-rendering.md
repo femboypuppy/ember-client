@@ -16,6 +16,12 @@ submissions keep Exordium's configured cache and FPS limit. Nested flushes and
 exceptions restore the scope through `finally`. No Exordium settings are changed.
 The optional mixin is applied only when Exordium is installed.
 
+With Exordium and Ember's custom hotbar enabled, only the native item row is moved
+out of that cache. It renders once per world frame before Ember's HUD, keeping
+selection animation and scene blur live while the remaining vanilla HUD stays
+cached. Opening a screen restores normal Minecraft layering. F1 and spectator
+mode retain their native behavior.
+
 ## Regression check
 
 After Gradle has cached the project's dependencies, use Java 21 and an Exordium
