@@ -269,7 +269,7 @@ public class SusChunkFinderV2 extends Module {
     private final Long2IntOpenHashMap fitIn = new Long2IntOpenHashMap(), fitOut = new Long2IntOpenHashMap(),
         borderIn = new Long2IntOpenHashMap(), borderOut = new Long2IntOpenHashMap();
     private final Long2DoubleOpenHashMap candidates = new Long2DoubleOpenHashMap();
-    private final List<Zone> announced = new ArrayList<>();
+    private final List<Zone> announced = new java.util.concurrent.CopyOnWriteArrayList<>();
     private int windowRadius = -1;
     private Sensitivity windowSensitivity;
     private long publishedAt;
@@ -284,7 +284,11 @@ public class SusChunkFinderV2 extends Module {
     private RegistryKey<World> lastDimension;
     private String place = "";
     private FindsStorage.Context context = new FindsStorage.Context("", "");
-    private List<Zone> saved = List.of();
+    /**
+     * The zones on screen: saved ones, plus each zone once most of its square has arrived. Kept where they were first
+     * announced, so they never jump a chunk over or vanish as more chunks come in; fresh data only updates the numbers.
+     */
+    private volatile List<Zone> saved = List.of();
 
     // Render-thread state for the beacons and the info under the crosshair.
     private final EmberAnim.Clock clock = new EmberAnim.Clock(), cardClock = new EmberAnim.Clock();
@@ -332,7 +336,13 @@ public class SusChunkFinderV2 extends Module {
 
         List<Zone> fromSave = new ArrayList<>();
         for (FindsStorage.Find find : FindsStorage.get(context, FIND_TYPE)) fromSave.add(fromNote(find));
-        saved = fromSave;
+        // Zones announced this session stay up across a relog, saved to disk or not.
+        for (Zone zone : announced) {
+            boolean there = false;
+            for (Zone s : fromSave) there |= Math.abs(s.centerX - zone.centerX) <= zone.radius && Math.abs(s.centerZ - zone.centerZ) <= zone.radius;
+            if (!there) fromSave.add(zone);
+        }
+        saved = List.copyOf(fromSave);
 
         for (Chunk chunk : Utils.chunks()) {
             if (chunk instanceof WorldChunk worldChunk) arrive(worldChunk);
@@ -679,12 +689,29 @@ public class SusChunkFinderV2 extends Module {
         }
 
         zones = List.copyOf(out);
-        // Drawn while forming, announced once most of the square has arrived: an early guess from the
-        // first few chunks often moves a few chunks over as the rest come in.
+        // Shown and announced once most of the square has arrived: an early guess from the first few chunks often
+        // moves a few chunks over, or fades, as the rest come in.
         int fullSquare = (2 * r + 1) * (2 * r + 1);
         for (Zone zone : out) {
-            if (winM.get(ChunkPos.toLong(zone.centerX, zone.centerZ)) >= fullSquare * 3 / 4) announce(zone);
+            if (winM.get(ChunkPos.toLong(zone.centerX, zone.centerZ)) < fullSquare * 3 / 4) continue;
+            if (!refresh(zone)) announce(zone);
         }
+    }
+
+    /** Fresh numbers for a zone already on screen with the same centre. */
+    private boolean refresh(Zone zone) {
+        List<Zone> current = saved;
+        for (int i = 0; i < current.size(); i++) {
+            Zone kept = current.get(i);
+            if (kept.centerX != zone.centerX || kept.centerZ != zone.centerZ) continue;
+            if (kept.percent != zone.percent || kept.plants != zone.plants || kept.fromSave) {
+                List<Zone> next = new ArrayList<>(current);
+                next.set(i, zone);
+                saved = List.copyOf(next);
+            }
+            return true;
+        }
+        return false;
     }
 
     private Zone zone(long center, int r, Limits lim) {
@@ -730,10 +757,17 @@ public class SusChunkFinderV2 extends Module {
     }
 
     private void announce(Zone zone) {
+        // One zone per area: a centre a chunk or two from one already shown is the same spot measured again.
         for (Zone a : announced) {
             if (Math.abs(a.centerX - zone.centerX) <= zone.radius && Math.abs(a.centerZ - zone.centerZ) <= zone.radius) return;
         }
+        for (Zone a : saved) {
+            if (Math.abs(a.centerX - zone.centerX) <= zone.radius && Math.abs(a.centerZ - zone.centerZ) <= zone.radius) return;
+        }
         announced.add(zone);
+        List<Zone> next = new ArrayList<>(saved);
+        next.add(zone);
+        saved = List.copyOf(next);
 
         int x = (zone.centerX << 4) + 8, z = (zone.centerZ << 4) + 8;
         MeteorClient.LOG.info("[Ember SusChunkV2] Zone at {}, {}: {}", x, z, zone.note());
@@ -858,26 +892,14 @@ public class SusChunkFinderV2 extends Module {
             return;
         }
         planeY = followPlayerY.get() ? Math.floor(mc.player.getY()) : renderY.get();
-        List<Zone> live = zones;
-
         // Zones past render-range aren't drawn or pointed at: they stay saved and counted.
         double px = mc.player.getX(), pz = mc.player.getZ();
         double range = (double) renderRange.get() * renderRange.get();
         List<Zone> shown = new ArrayList<>();
-        for (Zone zone : live) {
+        for (Zone zone : saved) {
             if (distanceSq(zone, px, pz) <= range) shown.add(zone);
         }
-        for (Zone zone : saved) {
-            if (distanceSq(zone, px, pz) > range) continue;
-            boolean covered = false;
-            for (Zone l : live) {
-                if (Math.abs(l.centerX - zone.centerX) <= l.radius && Math.abs(l.centerZ - zone.centerZ) <= l.radius) {
-                    covered = true;
-                    break;
-                }
-            }
-            if (!covered) shown.add(zone);
-        }
+        shownCount = shown.size();
 
         // The beacon nearest the crosshair, within look-at-angle, shows its info.
         Vec3d cam = mc.gameRenderer.getCamera().getCameraPos();
@@ -993,7 +1015,8 @@ public class SusChunkFinderV2 extends Module {
 
     @Override
     public String getInfoString() {
-        int n = zones.size();
-        return n == 0 ? null : String.valueOf(n);
+        return shownCount == 0 ? null : String.valueOf(shownCount);
     }
+
+    private volatile int shownCount;
 }
