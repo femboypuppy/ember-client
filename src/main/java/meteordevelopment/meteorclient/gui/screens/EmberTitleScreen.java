@@ -83,11 +83,11 @@ public final class EmberTitleScreen extends MenuScreen {
             for(int i=0;i<5;i++){
                 double size=dock.size[i],x=dock.x[i],y=dock.y[i];
                 if(dock.tooltip[i]>.01)c.round(x-4,y-4,size+8,size+8,15,MenuTheme.alpha(0x25FFFFFF,dock.tooltip[i]));
-                c.icon(Dock.ACTIONS[i],x+size*.19,y+size*.19,size*.62,i==4?MenuTheme.RED:MenuTheme.WHITE);
+                c.icon(Dock.ACTIONS[i],x+size*.19,y+size*.19,size*.62,i==4?MenuTheme.RED:MenuTheme.text());
                 if(dock.active==i)c.round(x+size*.5-2,dock.top+66,4,4,2,MenuTheme.accent());
                 if(dock.tooltip[i]>.01&&!playSheet){String label=MenuLanguage.text(actionLabel(i));double w=c.width(label,13)+24,fade=dock.tooltip[i];
                     c.glass(wallpaper,x+size*.5-w*.5,dock.top-39-(1-fade)*4,w,27,9,fade);
-                    c.center(label,x+size*.5,dock.top-32-(1-fade)*4,13,MenuTheme.alpha(MenuTheme.WHITE,fade));
+                    c.center(label,x+size*.5,dock.top-32-(1-fade)*4,13,MenuTheme.alpha(MenuTheme.text(),fade));
                 }
             }
             c.center(MenuLanguage.text("Change menu"),width*.5,dock.top+dock.height+14,13,MenuTheme.DIM);
