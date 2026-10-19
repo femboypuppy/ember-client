@@ -94,14 +94,14 @@ public class NetheriteFinder extends Module {
 
     private final Setting<Boolean> revealScan = sgScan.add(new BoolSetting.Builder()
         .name("reveal-scan")
-        .description("Shows the real blocks around you, hidden debris included: taps blocks within reach (start digging, then stop) so the server's anti-xray sends what's around them. Nothing gets broken. Sends dig packets, so an anticheat could notice.")
+        .description("Checks every hidden-looking block within reach for debris: starts digging it, then the next one, and the server answers with what the first one really is. Nothing gets broken. Sends dig packets, so an anticheat could notice.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Integer> scanSpeed = sgScan.add(new IntSetting.Builder()
         .name("scan-speed")
-        .description("Blocks tapped per tick. Each one reveals the 24 blocks within 2 of it.")
+        .description("Blocks checked per tick. Everything within reach takes a few seconds at 3.")
         .defaultValue(3)
         .range(1, 10)
         .sliderRange(1, 6)
@@ -193,7 +193,8 @@ public class NetheriteFinder extends Module {
     private long ticks;
 
     public NetheriteFinder() {
-        super(Categories.Donut, "netherite-finder", "Shows areas with ancient debris through anti-xray, and the exact blocks once you get close or have the seed.");    }
+        super(Categories.Donut, "netherite-finder", "Shows areas with ancient debris through anti-xray, and the exact blocks once you get close or have the seed.");
+    }
 
     @Override
     public void onActivate() {
@@ -225,7 +226,6 @@ public class NetheriteFinder extends Module {
         revealedMagma.clear();
         magmaChecked = 0;
         revealed.clear();
-        tapped.clear();
         shownAreas = List.of();
         shownFound = List.of();
         shownPinned = List.of();
@@ -362,14 +362,14 @@ public class NetheriteFinder extends Module {
         }
     }
 
-    // Reveal scan. Paper's anti-xray (DonutSMP's too: measured 2026-10-19) sends the real blocks within 2 of any block a
-    // player starts digging, even one that doesn't break. So tapping a few well-spread blocks in reach shows every hidden
-    // block up to about 7 away: each tap uncovers the 24 blocks around it, not the tapped one itself.
+    // Reveal scan. When a player starts digging one block and then starts another without finishing, the server corrects
+    // the first with its real state ("abort destroying since another started": ServerPlayerGameMode sends
+    // getBlockState(destroyPos)). That isn't anti-xray's reveal list, so it shows hidden debris too, which DonutSMP never
+    // reveals the usual way (0 debris in ~1,700 dig reveals, 2026-10-19). One start per block: the next start shows it.
 
-    private static final double TAP_REACH = 5.0, SCAN_RADIUS = 7.0;
-    /** Blocks whose real state the server has sent us, and blocks already tapped. */
-    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet revealed = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(),
-        tapped = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private static final double TAP_REACH = 5.0;
+    /** Blocks already asked about. */
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet revealed = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
     private int taps;
     private long handWarnedAt = -100_000;
 
@@ -379,14 +379,12 @@ public class NetheriteFinder extends Module {
         if (mc.world.getRegistryKey() != World.NETHER || mc.currentScreen != null || mc.player.isUsingItem() || mc.interactionManager.isBreakingBlock()) return;
         if (mc.player.isSpectator() || mc.player.getAbilities().creativeMode) return;
         if (revealed.size() > 3_000_000) revealed.clear();
-        if (tapped.size() > 1_000_000) tapped.clear();
 
         Vec3d eye = mc.player.getEyePos();
-        // Hidden-looking blocks around you: netherrack with no air beside it (anti-xray's stand-in). Open blocks are
-        // already sent as they are.
-        it.unimi.dsi.fastutil.longs.LongOpenHashSet hidden = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        // Hidden-looking blocks in reach: netherrack with no air beside it (anti-xray's stand-in; open blocks are sent as
+        // they are). The debris layer goes first.
         List<BlockPos> order = new ArrayList<>();
-        int r = (int) Math.ceil(SCAN_RADIUS);
+        int r = (int) Math.ceil(TAP_REACH);
         BlockPos center = BlockPos.ofFloored(eye);
         BlockPos.Mutable pos = new BlockPos.Mutable();
         for (int dx = -r; dx <= r; dx++) {
@@ -394,101 +392,44 @@ public class NetheriteFinder extends Module {
                 for (int dz = -r; dz <= r; dz++) {
                     pos.set(center.getX() + dx, center.getY() + dy, center.getZ() + dz);
                     if (pos.getY() < MIN_Y || pos.getY() > MAX_Y || revealed.contains(pos.asLong())) continue;
-                    if (boxDistanceSq(eye, pos) > SCAN_RADIUS * SCAN_RADIUS || !mc.world.getBlockState(pos).isOf(Blocks.NETHERRACK)) continue;
+                    if (boxDistanceSq(eye, pos) > TAP_REACH * TAP_REACH || !mc.world.getBlockState(pos).isOf(Blocks.NETHERRACK)) continue;
                     if (touchesAir(pos)) continue;
-                    hidden.add(pos.asLong());
                     order.add(pos.toImmutable());
                 }
             }
         }
         if (order.isEmpty()) return;
-        order.sort(Comparator.comparingDouble(p -> boxDistanceSq(eye, p)));
+        order.sort(Comparator.<BlockPos>comparingInt(p -> p.getY() >= 8 && p.getY() <= 24 ? 0 : 1).thenComparingDouble(p -> boxDistanceSq(eye, p)));
+        List<BlockPos> picks = order.subList(0, Math.min(scanSpeed.get(), order.size()));
 
-        List<BlockPos> picks = new ArrayList<>();
-        for (BlockPos target : order) {
-            if (picks.size() >= scanSpeed.get()) break;
-            if (!hidden.contains(target.asLong())) continue;
-            BlockPos tap = bestTap(target, hidden, eye);
-            if (tap == null) {
-                // Out of reach from here; try again once you've moved.
-                hidden.remove(target.asLong());
-                continue;
-            }
-            picks.add(tap);
-            tapped.add(tap.asLong());
-            forShell(tap, p -> {
-                hidden.remove(p);
-                revealed.add(p);
-                if (!watched.isEmpty()) {
-                    BlockPos spot = BlockPos.fromLong(p);
-                    if (watched.containsKey(spot)) scannedAt.putIfAbsent(spot, ticks);
-                }
-            });
-        }
-        if (picks.isEmpty()) return;
-
-        // Tapping with a pickaxe would break netherrack outright: tap with a slot that holds no tool.
+        // A pickaxe would break netherrack on the spot: ask from a slot that holds no tool.
         int selected = mc.player.getInventory().getSelectedSlot(), slot = tapSlot(selected);
         if (slot < 0) {
             if (ticks - handWarnedAt > 1200) {
                 handWarnedAt = ticks;
                 EmberNotificationsHud.push("Netherite finder", "Reveal scan needs a hotbar slot without a tool", EmberNotificationsHud.WARN);
             }
-            for (BlockPos tap : picks) tapped.remove(tap.asLong());
             return;
         }
         if (slot != selected) mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket(slot));
         for (BlockPos tap : picks) {
-            Direction side = Direction.getFacing(eye.x - (tap.getX() + 0.5), eye.y - (tap.getY() + 0.5), eye.z - (tap.getZ() + 0.5));
-            mc.interactionManager.sendSequencedPacket(mc.world, sequence -> new net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket(
-                net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, tap, side, sequence));
+            startDigging(tap, eye);
+            revealed.add(tap.asLong());
+            if (watched.containsKey(tap)) scannedAt.putIfAbsent(tap, ticks);
             taps++;
         }
-        BlockPos last = picks.get(picks.size() - 1);
+        // Starting the first one again shows the last one, then stop: nothing is left half dug.
+        BlockPos first = picks.get(0);
+        startDigging(first, eye);
         mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket(
-            net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket.Action.ABORT_DESTROY_BLOCK, last, Direction.UP));
+            net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket.Action.ABORT_DESTROY_BLOCK, first, Direction.UP));
         if (slot != selected) mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket(selected));
     }
 
-    /** The block within reach whose 24 neighbours cover the most still-hidden blocks, one of them being the target. */
-    private BlockPos bestTap(BlockPos target, it.unimi.dsi.fastutil.longs.LongOpenHashSet hidden, Vec3d eye) {
-        BlockPos best = null;
-        int bestCount = 0;
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dy = -2; dy <= 2; dy++) {
-                for (int dz = -2; dz <= 2; dz++) {
-                    int d = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
-                    if (d == 0 || d > 2) continue;
-                    BlockPos tap = target.add(dx, dy, dz);
-                    if (tapped.contains(tap.asLong()) || boxDistanceSq(eye, tap) > TAP_REACH * TAP_REACH) continue;
-                    BlockState state = mc.world.getBlockState(tap);
-                    // A real, solid block that takes time to break, like Anubis checks: never air, fluid or bedrock.
-                    if (state.isAir() || !state.getFluidState().isEmpty() || state.getHardness(mc.world, tap) <= 0) continue;
-                    int[] count = {0};
-                    forShell(tap, p -> {
-                        if (hidden.contains(p)) count[0]++;
-                    });
-                    if (count[0] > bestCount) {
-                        bestCount = count[0];
-                        best = tap;
-                    }
-                }
-            }
-        }
-        return best;
-    }
-
-    /** The blocks the server sends when one is tapped: everything within 2 steps, not the tapped block. */
-    private static void forShell(BlockPos tap, java.util.function.LongConsumer action) {
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dy = -2; dy <= 2; dy++) {
-                for (int dz = -2; dz <= 2; dz++) {
-                    int d = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
-                    if (d == 0 || d > 2) continue;
-                    action.accept(BlockPos.asLong(tap.getX() + dx, tap.getY() + dy, tap.getZ() + dz));
-                }
-            }
-        }
+    private void startDigging(BlockPos tap, Vec3d eye) {
+        Direction side = Direction.getFacing(eye.x - (tap.getX() + 0.5), eye.y - (tap.getY() + 0.5), eye.z - (tap.getZ() + 0.5));
+        mc.interactionManager.sendSequencedPacket(mc.world, sequence -> new net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket(
+            net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, tap, side, sequence));
     }
 
     private int tapSlot(int selected) {
@@ -635,6 +576,19 @@ public class NetheriteFinder extends Module {
     /** Shown spots the reveal scan covered, and when. */
     private final java.util.Map<BlockPos, Long> scannedAt = new java.util.HashMap<>();
 
+    /**
+     * DonutSMP's magma follows the world seed but its debris doesn't (a secret per-feature seed, it looks like): spots the
+     * scan checks keep coming up netherrack. Stop drawing seed spots then; the scan keeps finding the real ones.
+     */
+    private void giveUpOnSpotsIfWrong() {
+        if (pinState != PIN_GOOD || hits * 4 >= misses || misses < 4) return;
+        pinState = PIN_NONE;
+        shownPinned = List.of();
+        MeteorClient.LOG.info("[Ember Netherite] Seed spots off: {} of {} checked had debris", hits, hits + misses);
+        EmberNotificationsHud.push("Netherite finder", "Debris here doesn't follow the seed (" + hits + " of " + (hits + misses)
+            + " spots): seed spots off, the scan finds real debris", EmberNotificationsHud.WARN);
+    }
+
     private void checkOpened() {
         var it = watched.entrySet().iterator();
         while (it.hasNext()) {
@@ -662,6 +616,7 @@ public class NetheriteFinder extends Module {
                 it.remove();
                 scannedAt.remove(pos);
                 MeteorClient.LOG.info("[Ember Netherite] Spot {} scanned: netherrack ({} of {} had debris)", pos.toShortString(), hits, hits + misses);
+                giveUpOnSpotsIfWrong();
                 continue;
             }
             boolean open = false;
@@ -681,6 +636,7 @@ public class NetheriteFinder extends Module {
                 empty.add(pos);
                 it.remove();
                 MeteorClient.LOG.info("[Ember Netherite] Spot {} opened: netherrack ({} of {} had debris)", pos.toShortString(), hits, hits + misses);
+                giveUpOnSpotsIfWrong();
             }
         }
     }
@@ -867,7 +823,7 @@ public class NetheriteFinder extends Module {
             if (pinState == PIN_SEARCHING) return "fixing seed";
             // Most debris is in the large clusters, Y 8-24: scanning higher mostly turns up magma.
             if (pinState != PIN_GOOD && mc.player != null && (mc.player.getY() > 26 || mc.player.getY() < 6)) return "go to Y 15 for debris";
-            return exact + " debris · " + (revealed.size() >= 1000 ? revealed.size() / 1000 + "k" : revealed.size()) + " scanned";
+            return exact + " debris · " + (revealed.size() >= 1000 ? revealed.size() / 1000 + "k" : revealed.size()) + " checked";
         }
         String text = shownAreas.size() + (shownAreas.size() == 1 ? " area" : " areas");
         if (exact > 0) text += " · " + exact + " exact";
