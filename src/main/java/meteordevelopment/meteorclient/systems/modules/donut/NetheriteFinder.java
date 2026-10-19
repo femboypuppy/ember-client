@@ -111,8 +111,8 @@ public class NetheriteFinder extends Module {
 
     private final Setting<String> seed = sgGeneral.add(new StringSetting.Builder()
         .name("seed")
-        .description("Optional. The world seed: if the areas agree with it, every area shows its exact debris blocks. A wrong seed is ignored. DonutSMP's ores don't follow its seed, so leave it empty there.")
-        .defaultValue("")
+        .description("The world seed (DonutSMP's is filled in). It's proven against the world before anything is drawn: the bedrock, then the section lists or the hidden magma the reveal scan uncovers. A wrong seed is ignored.")
+        .defaultValue(DONUT_SEED)
         .placeholder("world seed (optional)")
         .wide()
         .onChanged(v -> resetSeed())
@@ -193,8 +193,7 @@ public class NetheriteFinder extends Module {
     private long ticks;
 
     public NetheriteFinder() {
-        super(Categories.Donut, "netherite-finder", "Shows areas with ancient debris through anti-xray, and the exact blocks once you get close or have the seed.");
-    }
+        super(Categories.Donut, "netherite-finder", "Shows areas with ancient debris through anti-xray, and the exact blocks once you get close or have the seed.");    }
 
     @Override
     public void onActivate() {
@@ -222,6 +221,9 @@ public class NetheriteFinder extends Module {
         mined.clear();
         watched.clear();
         empty.clear();
+        scannedAt.clear();
+        revealedMagma.clear();
+        magmaChecked = 0;
         revealed.clear();
         tapped.clear();
         shownAreas = List.of();
@@ -417,6 +419,10 @@ public class NetheriteFinder extends Module {
             forShell(tap, p -> {
                 hidden.remove(p);
                 revealed.add(p);
+                if (!watched.isEmpty()) {
+                    BlockPos spot = BlockPos.fromLong(p);
+                    if (watched.containsKey(spot)) scannedAt.putIfAbsent(spot, ticks);
+                }
             });
         }
         if (picks.isEmpty()) return;
@@ -526,6 +532,7 @@ public class NetheriteFinder extends Module {
         }
         if (!event.oldState.isOf(Blocks.NETHERRACK) || event.newState.isAir() || event.newState.isOf(Blocks.NETHERRACK) || !event.newState.getFluidState().isEmpty()) return;
         revealTypes.merge(name(event.newState), 1, Integer::sum);
+        if (event.newState.isOf(Blocks.MAGMA_BLOCK) && revealedMagma.size() < 5000) revealedMagma.add(pos);
         if (lastDig != null && ticks - lastDigAt <= 40) {
             int d = pos.getManhattanDistance(lastDig);
             revealDistance[Math.min(d, 5)]++;
@@ -601,7 +608,7 @@ public class NetheriteFinder extends Module {
                     for (int i = 0; i < spots.length; i += 3) {
                         BlockPos pos = new BlockPos(spots[i], spots[i + 1], spots[i + 2]);
                         if (found.contains(pos) || empty.contains(pos) || !canHold(pos)) continue;
-                        if (!isListed(pos)) continue;
+                        if (pinMode == MODE_LISTED && !isListed(pos)) continue;
                         pinnedSet.add(pos);
                         if (watched.size() < 5000) watched.putIfAbsent(pos, -1L);
                     }
@@ -625,6 +632,8 @@ public class NetheriteFinder extends Module {
     /** Opened up and turned out to be plain netherrack. */
     private final Set<BlockPos> empty = new java.util.HashSet<>();
     private int hits, misses;
+    /** Shown spots the reveal scan covered, and when. */
+    private final java.util.Map<BlockPos, Long> scannedAt = new java.util.HashMap<>();
 
     private void checkOpened() {
         var it = watched.entrySet().iterator();
@@ -645,8 +654,23 @@ public class NetheriteFinder extends Module {
                 if (state.isAir() && entry.getValue() >= 0) it.remove();
                 continue;
             }
+            Long scanned = scannedAt.get(pos);
+            if (scanned != null && ticks - scanned >= 30) {
+                // The reveal scan made the server send its surroundings, and it stayed netherrack: no debris.
+                misses++;
+                empty.add(pos);
+                it.remove();
+                scannedAt.remove(pos);
+                MeteorClient.LOG.info("[Ember Netherite] Spot {} scanned: netherrack ({} of {} had debris)", pos.toShortString(), hits, hits + misses);
+                continue;
+            }
             boolean open = false;
-            for (Direction d : Direction.values()) open |= mc.world.getBlockState(pos.offset(d)).isAir();
+            for (Direction d : Direction.values()) {
+                BlockPos side = pos.offset(d);
+                // A neighbour in a chunk that isn't loaded reads as air: that's not an opening.
+                if (!(mc.world.getChunk(side.getX() >> 4, side.getZ() >> 4, ChunkStatus.FULL, false) instanceof WorldChunk)) continue;
+                open |= mc.world.getBlockState(side).isAir();
+            }
             if (!open) {
                 entry.setValue(-1L);
             } else if (entry.getValue() < 0) {
@@ -815,6 +839,7 @@ public class NetheriteFinder extends Module {
             verdict = "ANCIENT DEBRIS";
             where = Math.round(Math.sqrt(pos.getSquaredDistance(eye))) + "m  ·  " + FindBeacon.dig(pos.getY() + 0.5);
             if (real) reason = "Real block: the server showed it";
+            else if (pinMode == MODE_MAGMA) reason = "Debris spot from the seed (proven by hidden magma, " + pinPercent + "%)  ·  " + (hits + misses > 0 ? hits + " of " + (hits + misses) + " checked had debris" : "the reveal scan confirms it when you get close");
             else reason = "Exact spot from the seed (" + pinPercent + "% match)";
         }
 
@@ -836,8 +861,12 @@ public class NetheriteFinder extends Module {
         if (mc.world != null && mc.world.getRegistryKey() != World.NETHER) return "nether only";
         int exact = shownFound.size() + shownPinned.size();
         if (revealScan.get() && shownAreas.isEmpty()) {
+            // The seed is proven by magma first (Y 27-36), then the debris spots show.
+            if (seedSet && seedState == SEED_GOOD && pinState == PIN_UNKNOWN && revealedMagma.size() < 60)
+                return "proving seed: " + revealedMagma.size() + "/60 magma, scan at Y 27-36";
+            if (pinState == PIN_SEARCHING) return "fixing seed";
             // Most debris is in the large clusters, Y 8-24: scanning higher mostly turns up magma.
-            if (mc.player != null && (mc.player.getY() > 26 || mc.player.getY() < 6)) return "go to Y 15 for debris";
+            if (pinState != PIN_GOOD && mc.player != null && (mc.player.getY() > 26 || mc.player.getY() < 6)) return "go to Y 15 for debris";
             return exact + " debris · " + (revealed.size() >= 1000 ? revealed.size() / 1000 + "k" : revealed.size()) + " scanned";
         }
         String text = shownAreas.size() + (shownAreas.size() == 1 ? " area" : " areas");
@@ -885,6 +914,8 @@ public class NetheriteFinder extends Module {
         bedrockMatch = bedrockTotal = 0;
         seedState = SEED_UNKNOWN;
         if (pinState != PIN_SEARCHING) pinState = PIN_UNKNOWN;
+        pinMode = MODE_LISTED;
+        magmaChecked = 0;
 
         String text = seed.get().trim();
         seedSet = !text.isEmpty();
@@ -911,7 +942,7 @@ public class NetheriteFinder extends Module {
         if (pinState == PIN_SEARCHING && searchFailed) {
             pinState = PIN_NONE;
             MeteorClient.LOG.info("[Ember Netherite] No seed with these low 48 bits puts its debris in the listed sections");
-            EmberNotificationsHud.push("Netherite finder", "This server's debris doesn't follow the seed: showing areas", EmberNotificationsHud.WARN);
+            EmberNotificationsHud.push("Netherite finder", "This server's ores don't follow the seed", EmberNotificationsHud.WARN);
         }
         if (seedState != SEED_GOOD || pinState != PIN_UNKNOWN || ticks - pinCheckAt < 40) return;
         pinCheckAt = ticks;
@@ -936,15 +967,12 @@ public class NetheriteFinder extends Module {
             return;
         }
 
-        // DonutSMP leaves debris out of the lists altogether, and its ores don't follow the world seed (its spots there
-        // came up netherrack 6 times of 6). With nothing to check the seed against, it isn't used.
+        // DonutSMP leaves debris out of the lists altogether: there the seed is checked against hidden magma the server
+        // reveals (the reveal scan uncovers hundreds a minute), since magma veins come from the same seeded decoration.
         boolean anyListed = false;
         for (Snap s : snaps) anyListed |= s.listed != 0;
         if (!anyListed) {
-            if (total >= 40) {
-                pinState = PIN_NONE;
-                MeteorClient.LOG.info("[Ember Netherite] No section around you lists debris: the seed can't be checked, so it isn't used");
-            }
+            checkByMagma();
             return;
         }
         if (total < 40) return;
@@ -969,6 +997,108 @@ public class NetheriteFinder extends Module {
             MeteorClient.LOG.info("[Ember Netherite] Seed search: nothing fits ({} ms)", System.currentTimeMillis() - start);
             searchFailed = true;
         });
+    }
+
+    private static final int MODE_LISTED = 0, MODE_MAGMA = 1;
+    private static final String DONUT_SEED = "6608149111735331168";
+    private int pinMode = MODE_LISTED;
+    private static int magmaIndex = -1;
+    /** Hidden magma the server revealed: real blocks, placed by the seeded decoration like debris. */
+    private final List<BlockPos> revealedMagma = new ArrayList<>();
+    private int magmaChecked;
+
+    private void checkByMagma() {
+        int n = revealedMagma.size();
+        if (magmaIndex < 0 || n < 60 || n - magmaChecked < 20) return;
+        magmaChecked = n;
+        int index = magmaIndex + indexShift;
+        double me = insideVeins(seedValue, revealedMagma, index);
+        double wrong = (insideVeins(seedValue ^ (0x5A5AL << 48), revealedMagma, index) + insideVeins(seedValue ^ (0x1234L << 48), revealedMagma, index)) / 2;
+        MeteorClient.LOG.info("[Ember Netherite] Seed {} vs {} revealed magma blocks: {}% inside its veins, a wrong seed {}%", seedValue, n,
+            Math.round(me * 100), Math.round(wrong * 100));
+        if (me >= 0.8 && me >= wrong * 3) {
+            pinState = PIN_GOOD;
+            pinMode = MODE_MAGMA;
+            pinPercent = (int) Math.round(me * 100);
+            EmberNotificationsHud.push("Netherite finder", "Seed proven by " + n + " hidden magma blocks (" + pinPercent + "%): debris spots shown", EmberNotificationsHud.GOOD);
+        } else if (n >= 150 && me < 0.5) {
+            // The bedrock proved the low 48 bits; try the 65,536 top halves against the magma before giving up.
+            pinState = PIN_SEARCHING;
+            searchFailed = false;
+            List<BlockPos> sample = List.copyOf(revealedMagma.subList(0, Math.min(200, n)));
+            long low = seedValue & 0xFFFF_FFFF_FFFFL;
+            worker.submit(() -> {
+                long start = System.currentTimeMillis();
+                List<BlockPos> quick = sample.subList(0, 30);
+                for (long hi = 0; hi < 65536; hi++) {
+                    long candidate = low | (hi << 48);
+                    if (insideVeins(candidate, quick, index) >= 0.8 && insideVeins(candidate, sample, index) >= 0.8) {
+                        MeteorClient.LOG.info("[Ember Netherite] Magma seed search: {} after {} ms", candidate, System.currentTimeMillis() - start);
+                        foundSeed = candidate;
+                        return;
+                    }
+                }
+                MeteorClient.LOG.info("[Ember Netherite] Magma seed search: nothing fits ({} ms)", System.currentTimeMillis() - start);
+                searchFailed = true;
+            });
+        }
+    }
+
+    /** Share of the magma blocks that lie inside the seed's magma veins (from their chunk or a neighbour's). */
+    private static double insideVeins(long worldSeed, List<BlockPos> magma, int index) {
+        Long2ObjectOpenHashMap<double[]> veins = new Long2ObjectOpenHashMap<>();
+        int inside = 0;
+        for (BlockPos pos : magma) {
+            int cx = pos.getX() >> 4, cz = pos.getZ() >> 4;
+            search:
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    int vx = cx + dx, vz = cz + dz;
+                    double[] spheres = veins.computeIfAbsent(ChunkPos.toLong(vx, vz), k -> veins(worldSeed, vx, vz, index));
+                    for (int i = 0; i < spheres.length; i += 4) {
+                        double r = spheres[i + 3];
+                        double ax = (pos.getX() + 0.5 - spheres[i]) / r, ay = (pos.getY() + 0.5 - spheres[i + 1]) / r, az = (pos.getZ() + 0.5 - spheres[i + 2]) / r;
+                        if (ax * ax + ay * ay + az * az < 1) {
+                            inside++;
+                            break search;
+                        }
+                    }
+                }
+            }
+        }
+        return magma.isEmpty() ? 0 : (double) inside / magma.size();
+    }
+
+    /**
+     * The spheres of one chunk's four magma veins, as OreFeature draws them: square, height 27-36, angle, the two end
+     * heights, then one size per sphere along the vein.
+     *
+     * @return x, y, z, radius of each sphere
+     */
+    private static double[] veins(long worldSeed, int chunkX, int chunkZ, int index) {
+        ChunkRandom random = new ChunkRandom(new Xoroshiro128PlusPlusRandom(0));
+        long population = random.setPopulationSeed(worldSeed, chunkX << 4, chunkZ << 4);
+        random.setDecoratorSeed(population, index, STEP);
+        double[] out = new double[4 * 33 * 4];
+        int n = 0;
+        for (int copy = 0; copy < 4; copy++) {
+            int x = random.nextInt(16) + (chunkX << 4);
+            int z = random.nextInt(16) + (chunkZ << 4);
+            int y = MathHelper.nextBetween(random, 27, 36);
+            float f = random.nextFloat() * (float) Math.PI;
+            float g = 33 / 8.0F;
+            double sx = x + Math.sin(f) * g, ex = x - Math.sin(f) * g, sz = z + Math.cos(f) * g, ez = z - Math.cos(f) * g;
+            double sy = y + random.nextInt(3) - 2, ey = y + random.nextInt(3) - 2;
+            for (int k = 0; k < 33; k++) {
+                float t = (float) k / 33;
+                double size = random.nextDouble() * 33 / 16.0;
+                out[n++] = MathHelper.lerp(t, sx, ex);
+                out[n++] = MathHelper.lerp(t, sy, ey);
+                out[n++] = MathHelper.lerp(t, sz, ez);
+                out[n++] = ((MathHelper.sin((float) Math.PI * t) + 1.0F) * size + 1.0) / 2.0;
+            }
+        }
+        return out;
     }
 
     private String lastScoreLine;
@@ -1167,6 +1297,7 @@ public class NetheriteFinder extends Module {
             PlacedFeatureIndexer.IndexedFeatures step = steps.get(STEP);
             largeIndex = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacedFeatures.ORE_ANCIENT_DEBRIS_LARGE).value());
             smallIndex = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacedFeatures.ORE_DEBRIS_SMALL).value());
+            magmaIndex = step.indexMapping().applyAsInt(placed.getOrThrow(OrePlacedFeatures.ORE_MAGMA).value());
             MeteorClient.LOG.info("[Ember Netherite] Debris features at decoration step {}: large {}, small {}", STEP, largeIndex, smallIndex);
             return largeIndex >= 0 && smallIndex >= 0;
         } catch (Throwable t) {
@@ -1223,7 +1354,7 @@ public class NetheriteFinder extends Module {
         if (state != seedState && state != SEED_UNKNOWN) {
             String percent = Math.round(share * 1000) / 10.0 + "%";
             MeteorClient.LOG.info("[Ember Netherite] Seed {} vs bedrock: {} of {} blocks match ({})", seedValue, bedrockMatch, bedrockTotal, percent);
-            if (state == SEED_BAD) EmberNotificationsHud.push("Netherite finder", "Wrong seed (" + percent + " of the bedrock matches): showing areas only", EmberNotificationsHud.WARN);
+            if (state == SEED_BAD && !seed.get().trim().equals(DONUT_SEED)) EmberNotificationsHud.push("Netherite finder", "Wrong seed (" + percent + " of the bedrock matches): showing areas only", EmberNotificationsHud.WARN);
         }
         seedState = state;
     }
