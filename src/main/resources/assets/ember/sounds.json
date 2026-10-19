@@ -1,0 +1,7 @@
+{
+  "ui.click": {
+    "sounds": [
+      { "name": "minecraft:ui.button.click", "type": "event" }
+    ]
+  }
+}

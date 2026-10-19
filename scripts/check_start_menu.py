@@ -1,173 +1,66 @@
-"""Exercise the production startup screen with recorded drawing and real input methods."""
+"""Exercise production animation/config code; native Screens compile against Minecraft itself."""
 from pathlib import Path
-import os, shutil, subprocess, tempfile
-from check_profile_sharing import stubs as shared_stubs
-
+import json, os, shutil, struct, subprocess, tempfile
 ROOT=Path(__file__).resolve().parents[1]
 JAVA=Path(os.environ['JAVA_HOME'])/'bin' if os.environ.get('JAVA_HOME') else Path(shutil.which('java')).parent
-P='meteordevelopment/meteorclient/'
-stubs=dict(shared_stubs)
-stubs[P+'gui/GuiThemes.java']='package meteordevelopment.meteorclient.gui;public class GuiThemes{static final GuiTheme THEME=new GuiTheme();public static GuiTheme get(){return THEME;}}'
-stubs[P+'gui/GuiTheme.java']=stubs[P+'gui/GuiTheme.java'].replace('final Text text=', 'public net.minecraft.client.gui.screen.Screen accountsScreen(){return new net.minecraft.client.gui.screen.TitleScreen();}final Text text=')
-stubs[P+'MeteorClient.java']='''package meteordevelopment.meteorclient;
-public class MeteorClient {
- public static final String VERSION="1.8.5-dev";public static final Client mc=new Client();public static final java.io.File FOLDER=new java.io.File(".");public static final Log LOG=new Log();
- public static String identifier(String path){return "ember-client:"+path;}public static class Log{public void error(String m,Object...v){}}
- public static class Options {public boolean skipMultiplayerWarning;}
- public static class Client {public Object world,currentScreen;public final Options options=new Options();public int stopped;public final Window window=new Window();public Window getWindow(){return window;}public void setScreen(Object screen){currentScreen=screen;}public void scheduleStop(){stopped++;}public Manager getTextureManager(){return new Manager();}}
- public static class Window{public double scale=1;public double getScaleFactor(){return scale;}}
- public static class Manager{public Texture getTexture(String id){if(!id.startsWith("ember-client:textures/menu/"))throw new AssertionError("Wrong namespace");return new Texture();}}
- public static class Texture{public Object getGlTextureView(){return this;}public Object getSampler(){return this;}}
-}'''
-stubs[P+'systems/config/Config.java']='''package meteordevelopment.meteorclient.systems.config;
-import meteordevelopment.meteorclient.utils.render.StartMenuLayout;
-public class Config {static final Config INSTANCE=new Config();public static Config get(){return INSTANCE;}public int saves;public void save(){saves++;}
- public final S<StartMenuLayout.Style> startMenu=new S<>(StartMenuLayout.Style.LockScreen);public final S<StartMenuLayout.Wallpaper> startWallpaper=new S<>(StartMenuLayout.Wallpaper.Chrome);public final S<Boolean> startClock24=new S<>(true);
- public static class S<T>{T value;S(T v){value=v;}public T get(){return value;}public void set(T v){value=v;}}
-}'''
-stubs[P+'utils/Utils.java']='''package meteordevelopment.meteorclient.utils;
-public class Utils{public static int width=1600,height=900,projection;public static int getWindowWidth(){return width;}public static int getWindowHeight(){return height;}public static void unscaledProjection(){projection++;}public static void scaledProjection(){projection--;}}
-'''
-stubs[P+'utils/render/color/Color.java']='''package meteordevelopment.meteorclient.utils.render.color;public class Color{public int r,g,b,a;public Color(int r,int g,int b,int a){this.r=r;this.g=g;this.b=b;this.a=a;}public int r(){return r;}public int g(){return g;}public int b(){return b;}public int a(){return a;}}'''
-stubs[P+'utils/render/EmberAnim.java']='''package meteordevelopment.meteorclient.utils.render;public class EmberAnim{public static class Clock{public float tick(){return 1f/60;}}public static double approach(double a,double b,double dt,double tau){double v=a+(b-a)*(1-Math.exp(-dt/tau));return Math.abs(v-b)<.01?b:v;}}'''
-stubs[P+'utils/render/EmberGlass.java']='package meteordevelopment.meteorclient.utils.render;public class EmberGlass{public static int captures;public static void ensureCaptured(){captures++;}}'
-stubs[P+'renderer/Renderer2D.java']='''package meteordevelopment.meteorclient.renderer;import meteordevelopment.meteorclient.utils.render.color.Color;public class Renderer2D{public static final Renderer2D TEXTURE=new Renderer2D();double x,y;public void begin(){}public void texQuad(double x,double y,double w,double h,Color c){this.x=x;this.y=y;if(w<=0||h<=0)throw new AssertionError("Invalid texture size");}public void render(Object view,Object sampler){if(view instanceof Texture&&(x!=Math.rint(x)||y!=Math.rint(y)))throw new AssertionError("Clock must be aligned to physical pixels");}}'''
-stubs[P+'systems/hud/HudRenderer.java']='''package meteordevelopment.meteorclient.systems.hud;
-import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;import meteordevelopment.meteorclient.utils.render.color.Color;
-public class HudRenderer {public static final HudRenderer INSTANCE=new HudRenderer();public void begin(Object c){}public void end(){}public double textHeight(boolean shadow,double scale){return 18*scale*(Hud.get().hasCustomFont()?scale:1);}public double textWidth(String text,boolean shadow,double scale){return text.codePointCount(0,text.length())*textHeight(false,scale)/2;}public void text(String text,double x,double y,Color c,boolean shadow,double scale){double height=textHeight(false,scale);if(text.matches("[0-9]+:[0-9]+.*")&&(height<40||height>400))throw new AssertionError("Clock must fit the viewport");GuiRenderer.text(text,x,y,c,height/18);}}
-'''
-stubs[P+'systems/hud/Hud.java']='package meteordevelopment.meteorclient.systems.hud;public class Hud{static final Hud INSTANCE=new Hud();public static Hud get(){return INSTANCE;}public boolean custom=true;public boolean hasCustomFont(){return custom;}}'
-stubs[P+'renderer/text/FontInfo.java']='package meteordevelopment.meteorclient.renderer.text;public record FontInfo(String family,Type type){public enum Type{Regular,Bold}}'
-stubs[P+'renderer/text/FontFace.java']='package meteordevelopment.meteorclient.renderer.text;public class FontFace{public java.nio.ByteBuffer readToDirectByteBuffer()throws java.io.IOException{throw new java.io.IOException("Unreadable local font");}}'
-stubs[P+'renderer/text/BuiltinFontFace.java']='package meteordevelopment.meteorclient.renderer.text;public class BuiltinFontFace extends FontFace{final String name;public BuiltinFontFace(FontInfo info,String name){this.name=name;}public java.nio.ByteBuffer readToDirectByteBuffer()throws java.io.IOException{return java.nio.ByteBuffer.wrap(java.nio.file.Files.readAllBytes(java.nio.file.Path.of(System.getProperty("test.fonts"),name+".ttf")));}}'
-stubs[P+'renderer/text/FontFamily.java']='package meteordevelopment.meteorclient.renderer.text;public class FontFamily{public final FontFace face=new FontFace(),bold=new FontFace();public FontFace get(FontInfo.Type type){return type==FontInfo.Type.Bold?bold:face;}}'
-stubs[P+'renderer/Fonts.java']='package meteordevelopment.meteorclient.renderer;import meteordevelopment.meteorclient.renderer.text.*;public class Fonts{public static final FontFace DEFAULT_FONT=new FontFace();public static CustomTextRenderer RENDERER;public static final java.util.Map<String,FontFamily> families=new java.util.HashMap<>();public static FontFamily getFamily(String name){return families.get(name);}}'
-stubs[P+'renderer/text/CustomTextRenderer.java']='''package meteordevelopment.meteorclient.renderer.text;import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;import meteordevelopment.meteorclient.utils.render.color.Color;
-public class CustomTextRenderer{public static int created,destroyed;double scale;boolean building;public CustomTextRenderer(FontFace face)throws java.io.IOException{created++;}public void begin(double s){if(building)throw new AssertionError("Nested font batch");scale=s;building=true;}public double getWidth(String text){return text.codePointCount(0,text.length())*9*scale;}public void render(String text,double x,double y,Color c,boolean shadow){if(shadow)throw new AssertionError("Menu type must have no heavy shadow");if(text.matches("[0-9]+:[0-9]+.*")&&18*scale>150)throw new AssertionError("Oversized clock");GuiRenderer.text(text,x,y,c,scale);}public void end(){building=false;}public void destroy(){destroyed++;}}
-'''
-stubs['com/mojang/blaze3d/textures/TextureFormat.java']='package com.mojang.blaze3d.textures;public enum TextureFormat{RGBA8}'
-stubs['com/mojang/blaze3d/textures/FilterMode.java']='package com.mojang.blaze3d.textures;public enum FilterMode{LINEAR}'
-stubs['org/lwjgl/BufferUtils.java']='package org.lwjgl;public class BufferUtils{public static java.nio.ByteBuffer createByteBuffer(int size){return java.nio.ByteBuffer.allocateDirect(size);}}'
-stubs[P+'renderer/Texture.java']='''package meteordevelopment.meteorclient.renderer;import com.mojang.blaze3d.textures.*;public class Texture{public static int created,closed;public final int w,h;public Texture(int w,int h,TextureFormat f,FilterMode min,FilterMode mag){this.w=w;this.h=h;created++;}public void upload(java.nio.ByteBuffer bytes){if(bytes.remaining()!=w*h*4)throw new AssertionError("Invalid RGBA upload");}public void close(){closed++;}public Object getGlTextureView(){return this;}public Object getSampler(){return this;}}'''
-stubs['net/minecraft/text/Text.java']='package net.minecraft.text;public record Text(String value){public static Text literal(String s){return new Text(s);}}'
-stubs['net/minecraft/client/gui/screen/Screen.java']='''package net.minecraft.client.gui.screen;import net.minecraft.text.Text;import net.minecraft.client.gui.*;import net.minecraft.client.input.*;
-public class Screen{public Screen parent;public Screen(Text t){}public void render(DrawContext c,int x,int y,float d){}public void renderBackground(DrawContext c,int x,int y,float d){}public boolean shouldCloseOnEsc(){return true;}public boolean shouldPause(){return true;}public boolean mouseClicked(Click c,boolean d){return false;}public boolean keyPressed(KeyInput k){return false;}public boolean keyReleased(KeyInput k){return false;}public void close(){}}
-'''
-stubs['net/minecraft/client/gui/screen/TitleScreen.java']='package net.minecraft.client.gui.screen;public class TitleScreen extends Screen{public TitleScreen(){super(null);}}'
-for package,cls,arguments in [('world','SelectWorldScreen','Screen parent'),('multiplayer','MultiplayerWarningScreen','Screen parent'),('multiplayer','MultiplayerScreen','Screen parent'),('option','OptionsScreen','Screen parent,Object options')]:
-    stubs[f'net/minecraft/client/gui/screen/{package}/{cls}.java']=f'package net.minecraft.client.gui.screen.{package};import net.minecraft.client.gui.screen.Screen;public class {cls} extends Screen{{public {cls}({arguments}){{super(null);this.parent=parent;}}}}'
-stubs['net/minecraft/util/Util.java']='package net.minecraft.util;public class Util{public static Util getOperatingSystem(){return new Util();}public void open(String url){if(!url.startsWith("https://unsplash.com/photos/"))throw new AssertionError("Unexpected wallpaper link");}}'
-stubs['org/lwjgl/glfw/GLFW.java']='''package org.lwjgl.glfw;public class GLFW{public static final int GLFW_MOUSE_BUTTON_LEFT=0,GLFW_KEY_ENTER=257,GLFW_KEY_KP_ENTER=335,GLFW_KEY_SPACE=32,GLFW_KEY_ESCAPE=256,GLFW_KEY_TAB=258,GLFW_KEY_LEFT=263,GLFW_KEY_RIGHT=262,GLFW_KEY_UP=265,GLFW_KEY_DOWN=264,GLFW_MOD_SHIFT=1,GLFW_MOD_CONTROL=2,GLFW_KEY_A=65,GLFW_KEY_V=86,GLFW_KEY_BACKSPACE=259;}'''
-renderer=stubs[P+'gui/renderer/GuiRenderer.java']
-renderer=renderer[:renderer.rfind('}')]+'''
- public boolean glassPanel(double x,double y,double w,double h,double radius,double opacity){return false;}
- public void quad(double x,double y,double w,double h,Color a,Color b,Color c,Color d){quad(x,y,w,h,a);}
- public void triangle(double ax,double ay,double bx,double by,double cx,double cy,Color color){commands.add(String.format(Locale.ROOT,"{\\"kind\\":\\"triangle\\",\\"points\\":[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f],\\"color\\":[%d,%d,%d,%d]}",ax,ay,bx,by,cx,cy,color.r,color.g,color.b,color.a));}
-}'''
-stubs[P+'gui/renderer/GuiRenderer.java']=renderer
-ui=stubs[P+'gui/screens/EmberUI.java']
-ui=ui[:ui.rfind('}')]+'''public static Color alpha(Color c,float fade){return new Color(c.r,c.g,c.b,(int)(c.a*fade));}public static void bar(GuiRenderer r,double x,double y,double xx,double yy,double thickness,Color c){double dx=xx-x,dy=yy-y,len=Math.hypot(dx,dy);if(len<1e-6)return;double nx=-dy/len*thickness/2,ny=dx/len*thickness/2;r.triangle(x+nx,y+ny,xx+nx,yy+ny,xx-nx,yy-ny,c);r.triangle(x+nx,y+ny,xx-nx,yy-ny,x-nx,y-ny,c);}}'''
-stubs[P+'gui/screens/EmberUI.java']=ui
-
-HARNESS=r'''import java.nio.file.*;import meteordevelopment.meteorclient.MeteorClient;import meteordevelopment.meteorclient.gui.screens.EmberTitleScreen;import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;import meteordevelopment.meteorclient.utils.Utils;import meteordevelopment.meteorclient.utils.render.*;import meteordevelopment.meteorclient.systems.config.Config;import net.minecraft.client.gui.*;import net.minecraft.client.input.*;
-public class StartMenuChecks {
- static void require(boolean b,String m){if(!b)throw new AssertionError(m);}
- static void draw(EmberTitleScreen menu,int count){for(int i=0;i<count;i++)menu.render(new DrawContext(),0,0,0);require(Utils.projection==0,"Restore projection after drawing");}
- static void click(EmberTitleScreen menu,double x,double y){double s=MeteorClient.mc.window.scale;menu.mouseClicked(new Click(x/s,y/s,0),false);}
- static void dock(EmberTitleScreen menu,int index){var r=StartMenuLayout.frame(Utils.width,Utils.height,1).buttons()[index];click(menu,r.x()+r.w()/2,r.y()+r.h()/2);}
- static void key(EmberTitleScreen menu,int key){menu.keyPressed(new KeyInput(key,0));}
- static void release(EmberTitleScreen menu,int key){menu.keyReleased(new KeyInput(key,0));}
+SOURCE=ROOT/'src/main/java/meteordevelopment/meteorclient/gui/screens/menu'
+HARNESS=r'''import java.nio.file.*;import meteordevelopment.meteorclient.gui.screens.menu.*;
+public class MenuChecks {
+ static void check(boolean b,String m){if(!b)throw new AssertionError(m);}
+ static void near(double a,double b,double e,String m){check(Math.abs(a-b)<e,m+": "+a+" != "+b);}
  public static void main(String[] args)throws Exception{
-  var first=EmberTitleScreen.firstScreen();MeteorClient.mc.setScreen(first);draw(first,60);GuiRenderer.save(Path.of(args[0]).resolve("locked.json"));
-  require(EmberGlass.captures==0,"Locked screen must not run the blur chain");
-  dock(first,0);require(MeteorClient.mc.currentScreen==first,"Unlock click must not launch a world");dock(first,0);require(MeteorClient.mc.currentScreen==first,"Double-click unlock must not leak into Play");
-  draw(first,60);GuiRenderer.save(Path.of(args[0]).resolve("dock.json"));require(EmberGlass.captures>0,"Unlocked glass can capture the wallpaper");
-  var accounts=GuiRenderer.labels.get("Accounts");require(accounts!=null,"Unlocked startup menu exposes Accounts");
-  click(first,accounts[0],accounts[1]);require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.TitleScreen,"Accounts shortcut opens the theme's account screen");MeteorClient.mc.setScreen(first);draw(first,2);
-  dock(first,3);draw(first,30);GuiRenderer.save(Path.of(args[0]).resolve("customize.json"));
-  var panel=StartMenuLayout.frame(Utils.width,Utils.height,1).panel();double u=StartMenuLayout.frame(Utils.width,Utils.height,1).unit();
-  click(first,panel.x()+panel.w()*.75,panel.y()+149*u);require(Config.get().startWallpaper.get()==StartMenuLayout.Wallpaper.Midnight,"Wallpaper selection must persist");
-  key(first,256);draw(first,30);
-  key(first,256);draw(first,30);key(first,257);draw(first,60);key(first,257);require(MeteorClient.mc.currentScreen==first,"Held Enter used to unlock must never activate Play");release(first,257);
-  key(first,257);require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.world.SelectWorldScreen,"Play opens world selection");
-  require(((net.minecraft.client.gui.screen.Screen)MeteorClient.mc.currentScreen).parent==first,"Child screens return to the same unlocked menu");release(first,257);
-  for(double scale:new double[]{1,2,3}){
-   MeteorClient.mc.window.scale=scale;
-   for(int index:new int[]{0,1,2,4}){
-    var menu=new EmberTitleScreen(false);MeteorClient.mc.setScreen(menu);draw(menu,30);int stopped=MeteorClient.mc.stopped;dock(menu,index);
-    if(index==4)require(MeteorClient.mc.stopped==stopped+1,"Quit must call the client stop action");
-    else require(MeteorClient.mc.currentScreen!=menu,"Dock actions must work at every GUI scale");
-   }
+  if(args[0].equals("read")){
+   var c=ConfigManager.get();check(c.wallpaper==MenuConfig.Wallpaper.MIDNIGHT&&c.clock24&&c.reduceMotion,"Preferences restored in fresh JVM");
+   near(c.musicVolume,.27,1e-10,"Volume round trip");check(c.accent==0x123ABC&&c.language.equals("fr_fr"),"Color/language round trip");check(!c.motion(),"Reduced motion saved");
+   System.out.println("Fresh-session restore passed");return;
   }
-  MeteorClient.mc.window.scale=1;
-  var menu=new EmberTitleScreen(false);MeteorClient.mc.setScreen(menu);draw(menu,30);key(menu,262);draw(menu,2);key(menu,257);
-  require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.multiplayer.MultiplayerWarningScreen,"Arrow navigation must select Multiplayer");release(menu,257);
-  MeteorClient.mc.options.skipMultiplayerWarning=true;
-  for(int attempt=0;attempt<3;attempt++){
-   var returning=new EmberTitleScreen(false);MeteorClient.mc.setScreen(returning);draw(returning,30);dock(returning,1);
-   require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen,"Remember do-not-show-again on every visit, including a new title screen");
-   require(((net.minecraft.client.gui.screen.Screen)MeteorClient.mc.currentScreen).parent==returning,"Multiplayer returns to the current menu");
-   MeteorClient.mc.setScreen(returning);key(returning,262);key(returning,257);release(returning,257);
-   require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen,"Keyboard respects the same saved warning preference");
+  for(int fps:new int[]{15,30,60,144,240}){
+   var spring=new MenuAnimation.Spring(.2);spring.kick(-.3);for(int i=0;i<fps;i++)spring.update(1,1.0/fps,2.7,.71);
+   var exact=new MenuAnimation.Spring(.2);exact.kick(-.3);exact.update(1,1,2.7,.71);
+   near(spring.value,exact.value,1e-12,"Spring value FPS independence");near(spring.velocity,exact.velocity,1e-11,"Spring velocity FPS independence");
+   double smooth=0;for(int i=0;i<fps;i++)smooth=MenuAnimation.smooth(smooth,1,1.0/fps,.2);near(smooth,MenuAnimation.smooth(0,1,1,.2),1e-12,"Fade FPS independence");
   }
-  MeteorClient.mc.options.skipMultiplayerWarning=false;MeteorClient.mc.setScreen(menu);dock(menu,1);
-  require(MeteorClient.mc.currentScreen instanceof net.minecraft.client.gui.screen.multiplayer.MultiplayerWarningScreen,"Re-enabling the warning must restore it");
-  MeteorClient.mc.setScreen(menu);dock(menu,3);draw(menu,30);key(menu,258);key(menu,257);require(Config.get().startMenu.get()==StartMenuLayout.Style.Classic,"Keyboard can switch to the classic menu");require(!EmberMenuWallpaper.enabled(),"Classic restores the normal panorama path");
-  Config.get().startMenu.set(StartMenuLayout.Style.LockScreen);MeteorClient.mc.world=new Object();require(!EmberMenuWallpaper.enabled(),"Never replace in-world backgrounds");MeteorClient.mc.world=null;
-  for(int[] size:new int[][]{{640,360},{870,519},{1600,900},{3440,1440},{3840,2160}}){
-   Utils.width=size[0];Utils.height=size[1];var f=StartMenuLayout.frame(size[0],size[1],1);for(var r:f.buttons())require(r.x()>=0&&r.y()>=0&&r.x()+r.w()<=size[0]&&r.y()+r.h()<=size[1],"Dock fits the viewport");
-   var cover=StartMenuLayout.cover(size[0],size[1],2560,1440);require(cover.x()<=0&&cover.y()<=0&&cover.width()>=size[0]&&cover.height()>=size[1],"Wallpaper covers every aspect ratio");
+  check(MenuAnimation.cubic(-1)==0&&MenuAnimation.cubic(2)==1,"Ease clamps time");
+  for(double width:new double[]{1024,1280,2560}){
+   Dock d=new Dock();d.update(width,720,-100,-100,1,1,true,true,true,1);near(d.left+d.width/2,width/2,1e-9,"Centered dock");
+   for(int i=0;i<5;i++)check(d.hit(d.x[i]+d.size[i]/2,d.y[i]+d.size[i]/2)==i,"Shared paint/hit bounds");
+   for(int n=0;n<240;n++)d.update(width,720,width/2,636,1.0/120,1,true,true,true,1);
+   check(d.size[2]>d.size[1]&&d.size[1]>d.size[0],"Fisheye affects neighbors");for(int i=1;i<5;i++)check(d.x[i]>d.x[i-1]+d.size[i-1]+5,"No overlapping icons");
+   double y=d.y[2];d.click(2,true);d.update(width,720,width/2,636,.02,1,true,true,true,1);check(d.y[2]<y,"Upward click bounce");
+   d.update(width,720,width/2,636,.02,1,true,false,true,1);for(double size:d.size)near(size,44,1e-9,"Reduced motion disables magnification");
+   near(d.y[2],d.top+13,1e-9,"Reduced motion disables bounce");check(d.active==2,"Active marker persists");
   }
-  require(Config.get().saves>=2,"Preferences are saved");
-  require(EmberMenuFont.preferredFace()==meteordevelopment.meteorclient.renderer.Fonts.DEFAULT_FONT,"Missing SF Pro uses bundled Inter");
-  var sf=new meteordevelopment.meteorclient.renderer.text.FontFamily();meteordevelopment.meteorclient.renderer.Fonts.families.put("SF Pro Display",sf);require(EmberMenuFont.preferredFace()==sf.face,"Installed SF Pro Display must be preferred");EmberMenuFont.renderer();EmberMenuFont.renderer();require(meteordevelopment.meteorclient.renderer.text.CustomTextRenderer.created==2,"Cache the menu font across frames");require(meteordevelopment.meteorclient.renderer.text.CustomTextRenderer.destroyed==1,"Release the old font when changing faces");
-  require(EmberMenuFont.boldFace()==sf.bold,"Clock uses the installed bold weight, independently of the regular menu font");
-  for(boolean custom:new boolean[]{true,false}){meteordevelopment.meteorclient.systems.hud.Hud.get().custom=custom;Utils.width=1280;Utils.height=720;var clockMenu=new EmberTitleScreen(true);draw(clockMenu,30);}
-  System.out.println("Start menu passed: first-click isolation, Enter repeat, real dock actions, child return, 1x/2x/3x input, keyboard navigation, classic mode, in-world guard, offline assets and responsive cover.");
+  var invalid=new MenuConfig();invalid.uiScale=Double.NaN;invalid.musicVolume=Double.POSITIVE_INFINITY;invalid.wallpaper=null;invalid.language=null;invalid.blurIntensity=-9;invalid.fpsLimit=9999;invalid.validate();
+  check(invalid.uiScale==1&&invalid.musicVolume==.45&&invalid.blurIntensity==0&&invalid.fpsLimit==240,"Validate damaged numbers");check(invalid.wallpaper!=null&&invalid.language.equals("system"),"Validate unknown enum/language");
+  Path damaged=ConfigManager.PATH.resolveSibling("damaged.json");Files.createDirectories(damaged.getParent());Files.writeString(damaged,"{broken");check(ConfigManager.load(damaged).wallpaper==MenuConfig.Wallpaper.CHROME_LIVE,"Malformed config fallback");check(Files.readString(damaged).equals("{broken"),"Malformed file preserved");
+  var c=ConfigManager.get();c.clock24=true;c.wallpaper=MenuConfig.Wallpaper.MIDNIGHT;c.reduceMotion=true;c.musicVolume=.27;c.accent=0x123ABC;c.language="fr_fr";ConfigManager.init();ConfigManager.changed();ConfigManager.flush();
+  long deadline=System.nanoTime()+5_000_000_000L;while(!Files.exists(ConfigManager.PATH)&&System.nanoTime()<deadline)Thread.sleep(10);check(Files.exists(ConfigManager.PATH),"Atomic write completed");
+  check(!Files.readString(ConfigManager.PATH).contains("credential"),"No account credentials in menu JSON");System.out.println("Animation, dock and atomic persistence passed");
  }
 }'''
-
-CLOCK_HARNESS=r'''package meteordevelopment.meteorclient.utils.render;
-import java.awt.Font;import java.awt.image.BufferedImage;import java.nio.file.*;import javax.imageio.ImageIO;import meteordevelopment.meteorclient.renderer.Texture;import meteordevelopment.meteorclient.utils.render.color.Color;
-public class ClockFontChecks{
- static void require(boolean value,String message){if(!value)throw new AssertionError(message);}
- static long ink(BufferedImage image){long sum=0;for(int y=0;y<image.getHeight();y++)for(int x=0;x<image.getWidth();x++)sum+=image.getRGB(x,y)>>>24;return sum;}
- public static void main(String[] args)throws Exception{
-  Path fonts=Path.of(System.getProperty("test.fonts")),out=Path.of(args[0]);
-  Font bold=Font.createFont(Font.TRUETYPE_FONT,fonts.resolve("Inter Display Bold.ttf").toFile()),regular=Font.createFont(Font.TRUETYPE_FONT,fonts.resolve("Inter.ttf").toFile());
-  require(bold.getFontName().contains("Bold"),"Ship a real bold face");
-  for(int size:new int[]{32,48,88,160,220}){
-   BufferedImage image=EmberClockText.rasterize(bold,"08:42 PM",size),thin=EmberClockText.rasterize(regular,"08:42 PM",size);
-   require(image.getHeight()==size+4,"Rasterize at the requested pixel size");require(ink(image)>ink(thin)*1.15,"Bold must have visibly heavier strokes");
-   int partial=0,minX=image.getWidth(),minY=image.getHeight(),maxX=0,maxY=0;
-   for(int y=0;y<image.getHeight();y++)for(int x=0;x<image.getWidth();x++){int alpha=image.getRGB(x,y)>>>24;if(alpha>0){minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);}if(alpha>0&&alpha<255)partial++;}
-   require(partial>size,"Antialiased edges must exist at every size");require(minX>0&&minY>0&&maxX<image.getWidth()-1&&maxY<image.getHeight()-1,"No clipping at the texture edges");
-   ImageIO.write(image,"png",out.resolve("bold-clock-"+size+".png").toFile());
-  }
-  Color white=new Color(255,255,255,255);EmberClockText.draw("08:42",640.25,100.7,220,white);int allocated=Texture.created;
-  for(int frame=0;frame<10000;frame++)EmberClockText.draw(new String("08:42"),640,100,220,white);
-  require(Texture.created==allocated,"Repeated frames must reuse the cached texture");
-  EmberClockText.draw("08:43",640,100,220,white);EmberClockText.draw("08:43",640,100,88,white);
-  require(Texture.created==allocated+2&&Texture.created-Texture.closed==1,"Text/size updates replace and close the old texture");
-  System.out.println("Bold clock passed: real bold weight, native 32/48/88/160/220px rasterization, antialiasing, clipping, 10,000 cached frames and texture replacement.");
- }
-}'''
-
-with tempfile.TemporaryDirectory(prefix='ember-start-menu-') as temp:
-    temp=Path(temp);sources=temp/'src';out=temp/'classes'
-    for name,body in stubs.items():
-        path=sources/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body,encoding='utf-8')
-    for name in ['gui/screens/EmberTitleScreen','utils/render/StartMenuLayout','utils/render/EmberMenuWallpaper','utils/render/EmberMenuFont','utils/render/EmberClockText']:
-        path=sources/(P+name+'.java');path.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/'src/main/java'/(P+name+'.java'),path)
-    (sources/'StartMenuChecks.java').write_text(HARNESS,encoding='utf-8')
-    (sources/'ClockFontChecks.java').write_text(CLOCK_HARNESS,encoding='utf-8')
-    result=subprocess.run([str(JAVA/'javac'),'-encoding','UTF-8','-d',str(out),*map(str,sources.rglob('*.java'))],capture_output=True,text=True)
-    if result.returncode:
-        print(result.stderr)
-        raise SystemExit(result.returncode)
-    java=[str(JAVA/'java'),'-Djava.awt.headless=true',f'-Dtest.fonts={ROOT / "src/main/resources/assets/ember-client/fonts"}','-cp',str(out)]
-    subprocess.run([*java,'StartMenuChecks',str(ROOT/'build/start-menu')],check=True)
-    subprocess.run([*java,'meteordevelopment.meteorclient.utils.render.ClockFontChecks',str(ROOT/'build/start-menu')],check=True)
-for name in ['chrome','midnight']:
-    image=ROOT/f'src/main/resources/assets/ember-client/textures/menu/{name}.png'
-    assert image.read_bytes()[:8]==b'\x89PNG\r\n\x1a\n',f'Missing bundled wallpaper: {name}'
+def main():
+ cache=Path(os.environ.get('GRADLE_USER_HOME',str(Path.home()/'.gradle')))/'caches/modules-2/files-2.1'
+ jars=[]
+ for lib in ('com.google.code.gson/gson','org.slf4j/slf4j-api'):
+  found=sorted((cache/lib).rglob('*.jar'))
+  if not found: raise SystemExit('Run Gradle build first: missing '+lib)
+  jars.append(str(found[-1]))
+ with tempfile.TemporaryDirectory(prefix='ember-menu-') as directory:
+  temp=Path(directory);stub=temp/'net/fabricmc/loader/api/FabricLoader.java';stub.parent.mkdir(parents=True)
+  stub.write_text('package net.fabricmc.loader.api;public class FabricLoader{public static FabricLoader getInstance(){return new FabricLoader();}public java.nio.file.Path getConfigDir(){return java.nio.file.Path.of(System.getProperty("test.config"));}}')
+  harness=temp/'MenuChecks.java';harness.write_text(HARNESS);classes=temp/'classes';classes.mkdir();cp=os.pathsep.join(jars)
+  sources=[str(SOURCE/(n+'.java')) for n in ('MenuConfig','MenuAnimation','Dock','ConfigManager','MenuTheme')]
+  subprocess.run([str(JAVA/'javac'),'-encoding','UTF-8','-cp',cp,'-d',str(classes),str(stub),str(harness),*sources],check=True)
+  for phase in ('write','read'):subprocess.run([str(JAVA/'java'),'-Dtest.config='+str(temp/'config'),'-cp',str(classes)+os.pathsep+cp,'MenuChecks',phase],check=True)
+ assets=ROOT/'src/main/resources/assets/ember'
+ for name in ('chrome','midnight','chrome_blur','midnight_blur'):
+  data=(assets/f'textures/menu/{name}.png').read_bytes();assert data[:8]==b'\x89PNG\r\n\x1a\n';w,h=struct.unpack('>II',data[16:24]);assert w>0 and h>0
+  if name.endswith('_blur'):assert (w,h)==(320,180)
+ for name in ('ui','clock'):
+  provider=json.loads((assets/f'font/{name}.json').read_text())['providers'][0];file=provider['file'].removeprefix('ember:')
+  assert provider['type']=='ttf' and (assets/'font'/file).is_file();assert (assets/'font'/file).read_bytes()[:4] in (b'\x00\x01\x00\x00',b'OTTO')
+ for lang in ('en_us','fr_fr'):assert 'wallpaper.live' in json.loads((assets/f'menu_lang/{lang}.json').read_text(encoding='utf-8'))
+ assert json.loads((assets/'sounds.json').read_text())['ui.click']['sounds'][0]['type']=='event'
+ metadata=json.loads((ROOT/'src/main/resources/fabric.mod.json').read_text());assert any('EmberMenuClient' in str(e) for e in metadata['entrypoints']['client'])
+ print('Native resource/font/sound references passed')
+if __name__=='__main__':main()

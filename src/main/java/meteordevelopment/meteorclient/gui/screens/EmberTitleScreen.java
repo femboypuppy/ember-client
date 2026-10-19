@@ -1,590 +1,149 @@
 package meteordevelopment.meteorclient.gui.screens;
 
-import static meteordevelopment.meteorclient.MeteorClient.mc;
-
-import static org.lwjgl.glfw.GLFW.*;
-
 import meteordevelopment.meteorclient.MeteorClient;
-import meteordevelopment.meteorclient.gui.GuiThemes;
-import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
-import meteordevelopment.meteorclient.renderer.text.CustomTextRenderer;
+import meteordevelopment.meteorclient.gui.screens.menu.*;
 import meteordevelopment.meteorclient.systems.config.Config;
-import meteordevelopment.meteorclient.utils.Utils;
-import meteordevelopment.meteorclient.utils.render.*;
-import meteordevelopment.meteorclient.utils.render.color.Color;
-
+import meteordevelopment.meteorclient.utils.render.StartMenuLayout;
 import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.screen.TitleScreen;
-import net.minecraft.client.gui.screen.multiplayer.MultiplayerWarningScreen;
 import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
-import net.minecraft.client.gui.screen.option.OptionsScreen;
+import net.minecraft.client.gui.screen.multiplayer.MultiplayerWarningScreen;
 import net.minecraft.client.gui.screen.world.SelectWorldScreen;
 import net.minecraft.client.input.KeyInput;
-import net.minecraft.text.Text;
-import net.minecraft.util.Util;
-
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.Locale;
+import static org.lwjgl.glfw.GLFW.*;
 
-/** Clock-first startup with a small glass action dock. Child screens return to this instance. */
-public final class EmberTitleScreen extends Screen {
-    private record Label(
-            String text,
-            double x,
-            double y,
-            double height,
-            Color color,
-            boolean centered,
-            double maxWidth) {}
+/** Native Screen/DrawContext desktop; child screens return to the same unlocked instance. */
+public final class EmberTitleScreen extends MenuScreen {
+    private static boolean shown,migrated;
+    public final WallpaperRenderer wallpaper=new WallpaperRenderer();
+    public final Dock dock=new Dock();
+    private final MenuAnimation.Spring dockIntro=new MenuAnimation.Spring(0);
+    private boolean locked,playSheet;
+    private int held=-1,pending=-1;
+    private double age,unlockAge,pendingAge,outgoingFade,playFade;
+    private int playFocus;
+    private long second=-1;
+    private boolean clock24;
+    private String locale="",time="",date="";
+    private final String footer="Ember Client "+MeteorClient.VERSION;
+    private String credit="",creditLocale="";
+    private MenuConfig.Wallpaper creditWallpaper;
+    private double mouseX=-1,mouseY=-1;
+    private DateTimeFormatter timeFormat,dateFormat;
+    private Screen outgoing;
+    private MenuControl.Button singleplayer,multiplayer,cancel;
 
-    private record Hit(StartMenuLayout.Rect rect, Runnable action) {}
-
-    private static final Color WHITE = new Color(250, 250, 253, 255),
-            DIM = new Color(205, 208, 217, 255),
-            RED = new Color(255, 105, 113, 255);
-    private static boolean shown;
-    private final List<Hit> hits = new ArrayList<>();
-    private final List<Label> labels = new ArrayList<>();
-    private final GuiRenderer renderer = new GuiRenderer();
-    private final EmberAnim.Clock clock = new EmberAnim.Clock();
-    private boolean locked, customizing, keyboardFocus;
-    private int focused, customFocused, customButton, heldUnlockKey = -1;
-    private double lastMouseX = -1, lastMouseY = -1;
-    private double reveal, openFade, panelFade;
-    private long clockSecond = -1;
-    private boolean last24;
-    private String time = "", date = "";
-    private StartMenuLayout.Frame frame;
-
-    public EmberTitleScreen(boolean locked) {
-        super(Text.literal("Ember Client"));
-        this.locked = locked;
-        reveal = locked ? 0 : 1;
-        shown = true;
+    public EmberTitleScreen(boolean locked){
+        super("Ember Client");this.locked=locked;shown=true;
+        if(!locked){unlockAge=1;dockIntro.snap(1);}
+        if(!migrated && Config.get()!=null && !java.nio.file.Files.exists(ConfigManager.PATH)){
+            migrated=true;var cfg=ConfigManager.get();cfg.clock24=Config.get().startClock24.get();
+            if(Config.get().startWallpaper.get()==StartMenuLayout.Wallpaper.Midnight)cfg.wallpaper=MenuConfig.Wallpaper.MIDNIGHT;
+            ConfigManager.changed();
+        }
     }
-
-    public static EmberTitleScreen firstScreen() {
-        return new EmberTitleScreen(!shown);
+    public static EmberTitleScreen firstScreen(){return new EmberTitleScreen(!shown);}
+    @Override public boolean shouldCloseOnEsc(){return false;}
+    @Override protected void layout(){viewport();buildPlaySheet();}
+    private void buildPlaySheet(){
+        double x=vw/2-170,y=vh/2-42;
+        singleplayer=new MenuControl.Button("Singleplayer",x,y,340,40,()->openNative(new SelectWorldScreen(this)));
+        multiplayer=new MenuControl.Button("Multiplayer",x,y+50,340,40,()->openNative(client.options.skipMultiplayerWarning?new MultiplayerScreen(this):new MultiplayerWarningScreen(this)));
+        cancel=new MenuControl.Button("Cancel",x,y+102,340,32,()->playSheet=false);
     }
-
-    @Override
-    public boolean shouldCloseOnEsc() {
-        return false;
+    private void updateClock(){
+        var cfg=ConfigManager.get();String language=MenuLanguage.locale();long now=System.currentTimeMillis()/1000;
+        if(timeFormat==null||clock24!=cfg.clock24||!locale.equals(language)){
+            locale=language;clock24=cfg.clock24;Locale formatLocale=language.equals("fr_fr")?Locale.FRANCE:Locale.US;
+            timeFormat=DateTimeFormatter.ofPattern(clock24?"HH:mm":"h:mm a",formatLocale);
+            dateFormat=DateTimeFormatter.ofPattern(language.equals("fr_fr")?"EEEE d MMMM":"EEEE, MMMM d",formatLocale);second=-1;
+        }
+        if(second!=now){second=now;var local=LocalDateTime.now();time=local.format(timeFormat);date=local.format(dateFormat);}
     }
-
-    @Override
-    public boolean shouldPause() {
-        return false;
-    }
-
-    @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {}
-
-    @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        Utils.unscaledProjection();
-        try {
-            double dt = clock.tick();
-            openFade = EmberAnim.approach(openFade, 1, dt, .2);
-            reveal = EmberAnim.approach(reveal, locked ? 0 : 1, dt, .1);
-            panelFade = EmberAnim.approach(panelFade, customizing ? 1 : 0, dt, .08);
-            int w = Utils.getWindowWidth(), h = Utils.getWindowHeight();
-            double scale = mc.getWindow().getScaleFactor(),
-                    mx = mouseX * scale,
-                    my = mouseY * scale;
-            if (lastMouseX >= 0
-                    && (Math.abs(mx - lastMouseX) > .1 || Math.abs(my - lastMouseY) > .1))
-                keyboardFocus = false;
-            lastMouseX = mx;
-            lastMouseY = my;
-            frame = StartMenuLayout.frame(w, h, reveal);
-            double u = frame.unit();
-            hits.clear();
-            labels.clear();
-            EmberMenuWallpaper.drawPixels(context);
-            if (reveal > .02) EmberGlass.ensureCaptured();
-            GuiRenderer r = renderer;
-            r.theme = GuiThemes.get();
-            r.begin(context);
-            if (openFade < .995)
-                r.quad(0, 0, w, h, new Color(0, 0, 0, (int) (255 * (1 - openFade))));
-            label("EMBER", 30 * u, 25 * u, 15 * u, DIM, false, 150 * u);
-            if (!locked && !customizing && reveal > .9) {
-                var accounts = new StartMenuLayout.Rect(w - 154 * u, 20 * u, 124 * u, 30 * u);
-                r.roundedRect(accounts.x(), accounts.y(), accounts.w(), accounts.h(), 8 * u,
-                    new Color(255, 255, 255, accounts.contains(mx, my) ? 35 : 18));
-                label("Accounts", accounts.x() + accounts.w() / 2, accounts.y() + 7 * u,
-                    17 * u, alpha(WHITE, reveal), true, accounts.w() - 12 * u);
-                hits.add(new Hit(accounts, () -> mc.setScreen(GuiThemes.get().accountsScreen())));
-            }
-            updateClock();
-            if (panelFade < .99) {
-                Color clockColor = alpha(WHITE, openFade * (1 - panelFade));
-                label(date, w / 2.0, frame.clockY() - 26 * u, 20 * u, clockColor, true, w - 32);
-            }
-            if (reveal > .02) {
-                var dock = frame.dock();
-                pane(r, dock, 21 * u, reveal);
-                for (var action : StartMenuLayout.Action.values()) {
-                    var rect = frame.buttons()[action.ordinal()];
-                    boolean hover = rect.contains(mx, my);
-                    if (hover && !customizing && !keyboardFocus) focused = action.ordinal();
-                    boolean active =
-                            !customizing && (keyboardFocus ? focused == action.ordinal() : hover);
-                    if (active)
-                        r.roundedRect(
-                                rect.x(),
-                                rect.y(),
-                                rect.w(),
-                                rect.h(),
-                                15 * u,
-                                new Color(255, 255, 255, 28));
-                    glyph(
-                            r,
-                            action,
-                            rect.x() + rect.w() / 2,
-                            rect.y() + rect.h() / 2,
-                            21 * u,
-                            alpha(action == StartMenuLayout.Action.Quit ? RED : WHITE, reveal));
-                    if (!locked && !customizing && reveal > .9)
-                        hits.add(new Hit(rect, () -> activate(action)));
-                }
-                if (!customizing) {
-                    var action = StartMenuLayout.Action.values()[focused];
-                    label(
-                            action.label,
-                            w / 2.0,
-                            dock.y() + dock.h() + 14 * u,
-                            18 * u,
-                            alpha(WHITE, reveal),
-                            true,
-                            w - 32);
+    public void scene(MenuCanvas c,double width,double height,double mx,double my,double delta,double dim,boolean interactive){
+        var cfg=ConfigManager.get();age+=delta*cfg.animationSpeed;if(!locked)unlockAge+=delta*cfg.animationSpeed;
+        wallpaper.update(width,height,mx,my,delta);wallpaper.draw(c,dim*.85);
+        double clockFade=MenuAnimation.cubic(age/(cfg.motion()?MenuTheme.CLOCK_INTRO_SECONDS:.08));
+        double reveal=locked?0:MenuAnimation.cubic(unlockAge/(cfg.motion()?MenuTheme.DOCK_INTRO_SECONDS:.08));
+        if(cfg.motion())dockIntro.update(reveal,delta*cfg.animationSpeed,2.6,.65);else dockIntro.snap(reveal);
+        double old=c.opacity;c.opacity*=clockFade*(1-dim*.55);
+        updateClock();
+        c.text("EMBER",29,25,18,MenuTheme.WHITE);
+        c.round(width-150,20,120,36,12,0x17FFFFFF);c.center(MenuLanguage.text("Accounts"),width-90,30,14,MenuTheme.WHITE);
+        double clockY=height*.17-(cfg.motion()?(1-clockFade)*12:0);
+        if(cfg.showDate)c.center(date,width*.5,clockY-31,19,MenuTheme.WHITE);
+        c.clock(time,width*.5,clockY,MenuTheme.CLOCK_SIZE,MenuTheme.WHITE);
+        c.opacity=old*Math.clamp(reveal,0,1)*(1-dim*.5);
+        dock.update(width,height,mx,my,delta,dockIntro.value,interactive&&!locked&&!playSheet&&outgoing==null,cfg.motion(),cfg.magnification,cfg.animationSpeed);
+        if(reveal>.002){
+            c.glass(wallpaper,dock.left,dock.top,dock.width,dock.height,25,1);
+            for(int i=0;i<5;i++){
+                double size=dock.size[i],x=dock.x[i],y=dock.y[i];
+                if(dock.tooltip[i]>.01)c.round(x-4,y-4,size+8,size+8,15,MenuTheme.alpha(0x25FFFFFF,dock.tooltip[i]));
+                c.icon(Dock.ACTIONS[i],x+size*.19,y+size*.19,size*.62,i==4?MenuTheme.RED:MenuTheme.WHITE);
+                if(dock.active==i)c.round(x+size*.5-2,dock.top+66,4,4,2,MenuTheme.accent());
+                if(dock.tooltip[i]>.01&&!playSheet){String label=MenuLanguage.text(actionLabel(i));double w=c.width(label,13)+24,fade=dock.tooltip[i];
+                    c.glass(wallpaper,x+size*.5-w*.5,dock.top-39-(1-fade)*4,w,27,9,fade);
+                    c.center(label,x+size*.5,dock.top-32-(1-fade)*4,13,MenuTheme.alpha(MenuTheme.WHITE,fade));
                 }
             }
-            if (locked)
-                label(
-                        "Click anywhere or press Enter",
-                        w / 2.0,
-                        h * .83,
-                        18 * u,
-                        alpha(DIM, openFade * (1 - reveal)),
-                        true,
-                        w - 32);
-            if (panelFade > .01) customization(r, panelFade, mx, my);
-            label(
-                    "Ember Client " + MeteorClient.VERSION,
-                    24 * u,
-                    h - 27 * u,
-                    Math.max(10, 13 * u),
-                    DIM,
-                    false,
-                    w * .45);
-            var wallpaper = Config.get().startWallpaper.get();
-            label(
-                    "Wallpaper: " + wallpaper.artist,
-                    w - 24 * u,
-                    h - 27 * u,
-                    Math.max(10, 13 * u),
-                    DIM,
-                    false,
-                    -w * .43);
-            if (!locked && !customizing)
-                hits.add(
-                        new Hit(
-                                new StartMenuLayout.Rect(w * .56, h - 34 * u, w * .43, 30 * u),
-                                () -> Util.getOperatingSystem().open(wallpaper.url)));
-            r.end();
-            if (panelFade < .99)
-                EmberClockText.draw(
-                        time,
-                        w / 2.0,
-                        frame.clockY(),
-                        frame.clockHeight(),
-                        alpha(WHITE, openFade * (1 - panelFade)));
-            renderLabels(context);
-        } finally {
-            Utils.scaledProjection();
+            c.center(MenuLanguage.text("Change menu"),width*.5,dock.top+dock.height+14,13,MenuTheme.DIM);
         }
+        c.opacity=old*clockFade;
+        if(locked)c.center(MenuLanguage.text("Click anywhere or press Enter"),width*.5,height*.79,15,MenuTheme.DIM);
+        c.text(footer,24,height-26,12,MenuTheme.DIM);
+        if(creditWallpaper!=cfg.wallpaper||!creditLocale.equals(locale)){creditWallpaper=cfg.wallpaper;creditLocale=locale;credit=MenuLanguage.text("Wallpaper")+": "+cfg.wallpaper.artist;}
+        c.text(credit,width-24-c.width(credit,12),height-26,12,MenuTheme.DIM);c.opacity=old;
     }
-
-    private void updateClock() {
-        long second = System.currentTimeMillis() / 1000;
-        boolean hour24 = Config.get().startClock24.get();
-        if (clockSecond == second && last24 == hour24) return;
-        clockSecond = second;
-        last24 = hour24;
-        var now = LocalDateTime.now();
-        time =
-                now.format(
-                        DateTimeFormatter.ofPattern(
-                                hour24 ? "HH:mm" : "h:mm", Locale.getDefault()));
-        if (!hour24)
-            time += " " + now.format(DateTimeFormatter.ofPattern("a", Locale.getDefault()));
-        date = now.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault()));
-    }
-
-    private void customization(GuiRenderer r, double fade, double mx, double my) {
-        customButton = 0;
-        var p = frame.panel();
-        double u = frame.unit();
-        pane(r, p, 20 * u, fade);
-        label(
-                "Make it yours",
-                p.x() + 22 * u,
-                p.y() + 17 * u,
-                24 * u,
-                alpha(WHITE, fade),
-                false,
-                p.w() - 44 * u);
-        double gap = 8 * u, bw = (p.w() - 52 * u) / 2, x = p.x() + 22 * u;
-        button(
-                r,
-                new StartMenuLayout.Rect(x, p.y() + 59 * u, bw, 36 * u),
-                "Lock screen",
-                true,
-                () -> {
-                    customizing = false;
-                    locked = true;
-                },
-                fade,
-                mx,
-                my);
-        button(
-                r,
-                new StartMenuLayout.Rect(x + bw + gap, p.y() + 59 * u, bw, 36 * u),
-                "Classic Minecraft",
-                false,
-                () -> {
-                    Config.get().startMenu.set(StartMenuLayout.Style.Classic);
-                    Config.get().save();
-                    mc.setScreen(new TitleScreen());
-                },
-                fade,
-                mx,
-                my);
-        label("WALLPAPER", x, p.y() + 109 * u, 13 * u, alpha(DIM, fade), false, p.w() - 44 * u);
-        for (var wallpaper : StartMenuLayout.Wallpaper.values()) {
-            button(
-                    r,
-                    new StartMenuLayout.Rect(
-                            x + wallpaper.ordinal() * (bw + gap), p.y() + 132 * u, bw, 34 * u),
-                    wallpaper.name(),
-                    Config.get().startWallpaper.get() == wallpaper,
-                    () -> {
-                        Config.get().startWallpaper.set(wallpaper);
-                        Config.get().save();
-                    },
-                    fade,
-                    mx,
-                    my);
+    @Override protected void paint(double mx,double my){
+        if(mouseX>=0&&(Math.abs(mx-mouseX)>.2||Math.abs(my-mouseY)>.2))dock.focused=-1;mouseX=mx;mouseY=my;
+        scene(canvas,vw,vh,mx,my,dt,0,true);
+        playFade=MenuAnimation.smooth(playFade,playSheet?1:0,dt*ConfigManager.get().animationSpeed,ConfigManager.get().motion()?.065:.02);
+        if(playFade>.002){
+            double old=canvas.opacity;canvas.opacity*=playFade;
+            var matrices=canvas.context.getMatrices();matrices.pushMatrix();double scale=ConfigManager.get().motion()?.96+.04*MenuAnimation.cubic(playFade):1;
+            matrices.translate((float)(vw*.5),(float)(vh*.5));matrices.scale((float)scale,(float)scale);matrices.translate((float)(-vw*.5),(float)(-vh*.5));
+            singleplayer.focused=playFocus==0;multiplayer.focused=playFocus==1;cancel.focused=playFocus==2;
+            canvas.rect(0,0,vw,vh,0x42000000);canvas.glass(wallpaper,vw/2-194,vh/2-110,388,256,22,1);
+            canvas.center(MenuLanguage.text("Let's play"),vw/2,vh/2-85,24,MenuTheme.text());
+            singleplayer.render(canvas,mx,my,dt);multiplayer.render(canvas,mx,my,dt);cancel.render(canvas,mx,my,dt);
+            matrices.popMatrix();canvas.opacity=old;
         }
-        button(
-                r,
-                new StartMenuLayout.Rect(x, p.y() + 179 * u, p.w() - 44 * u, 30 * u),
-                Config.get().startClock24.get() ? "24-hour clock: On" : "24-hour clock: Off",
-                false,
-                () -> {
-                    Config.get().startClock24.set(!Config.get().startClock24.get());
-                    Config.get().save();
-                },
-                fade,
-                mx,
-                my);
-        button(
-                r,
-                new StartMenuLayout.Rect(
-                        p.x() + p.w() / 2 - 52 * u, p.y() + 220 * u, 104 * u, 26 * u),
-                "Done",
-                false,
-                () -> customizing = false,
-                fade,
-                mx,
-                my);
+        if(pending>=0){pendingAge+=dt;if(pendingAge>(ConfigManager.get().motion()?.12:.025)){int action=pending;pending=-1;activate(action);}}
+        if(outgoing!=null){outgoingFade+=dt/(ConfigManager.get().motion()?.15:.055);canvas.rect(0,0,vw,vh,MenuTheme.alpha(0xFF000000,MenuAnimation.cubic(outgoingFade)));
+            if(outgoingFade>=1){Screen next=outgoing;outgoing=null;MenuRuntime.incoming(next);client.setScreen(next);}}
     }
-
-    private void pane(GuiRenderer r, StartMenuLayout.Rect rect, double radius, double opacity) {
-        float fade = (float) opacity;
-        EmberUI.shadow(r, rect.x(), rect.y(), rect.w(), rect.h(), fade);
-        EmberUI.rim(r, rect.x(), rect.y(), rect.w(), rect.h(), radius, fade);
-        r.roundedRect(
-                rect.x(), rect.y(), rect.w(), rect.h(), radius, EmberUI.alpha(EmberUI.bg(), fade));
-        EmberUI.gloss(r, rect.x(), rect.y(), rect.w(), rect.h(), radius, fade);
+    private static String actionLabel(int index){return switch(index){case 0->"Play";case 1->"Accounts";case 2->"Settings";case 3->"Display";default->"Quit";};}
+    public void openSettings(MenuSettingsScreen.Section section){client.setScreen(new MenuSettingsScreen(this,section));}
+    public void openNative(Screen next){playSheet=false;outgoingFade=0;outgoing=next;}
+    private void activate(int index){switch(index){case 0->{playSheet=true;playFocus=0;}case 1->openSettings(MenuSettingsScreen.Section.ACCOUNTS);case 2->openSettings(MenuSettingsScreen.Section.GENERAL);case 3->openSettings(MenuSettingsScreen.Section.APPEARANCE);case 4->{ConfigManager.flush();client.scheduleStop();}}}
+    private void clickDock(int i){dock.click(i,ConfigManager.get().motion());MenuAudio.click();pending=i;pendingAge=0;}
+    @Override public boolean mouseClicked(Click click,boolean doubled){
+        if(click.button()!=GLFW_MOUSE_BUTTON_LEFT)return false;
+        if(locked){locked=false;unlockAge=0;held=-1;return true;}
+        if(pending>=0||outgoing!=null)return true;
+        double x=click.x()/unit,y=click.y()/unit;
+        if(playSheet){if(playFade<.9)return true;for(MenuControl control:new MenuControl[]{singleplayer,multiplayer,cancel})if(control.contains(x,y)){control.click(x,y);return true;}if(x<vw/2-194||x>vw/2+194||y<vh/2-110||y>vh/2+146)playSheet=false;return true;}
+        if(x>=vw-150&&x<vw-30&&y>=20&&y<56){openSettings(MenuSettingsScreen.Section.ACCOUNTS);return true;}
+        if(Math.abs(x-vw/2)<100&&y>=dock.top+dock.height+7&&y<dock.top+dock.height+37){openSettings(MenuSettingsScreen.Section.APPEARANCE);return true;}
+        int i=dock.hit(x,y);if(i>=0)clickDock(i);return true;
     }
-
-    private void button(
-            GuiRenderer r,
-            StartMenuLayout.Rect rect,
-            String title,
-            boolean selected,
-            Runnable action,
-            double fade,
-            double mx,
-            double my) {
-        int index = customButton++;
-        if (rect.contains(mx, my) && !keyboardFocus) customFocused = index;
-        boolean focus = keyboardFocus && customFocused == index;
-        r.roundedRect(
-                rect.x(),
-                rect.y(),
-                rect.w(),
-                rect.h(),
-                8 * frame.unit(),
-                new Color(
-                        255,
-                        255,
-                        255,
-                        (int)
-                                ((focus ? 65 : selected ? 48 : rect.contains(mx, my) ? 30 : 15)
-                                        * fade)));
-        label(
-                title,
-                rect.x() + rect.w() / 2,
-                rect.y() + 7 * frame.unit(),
-                17 * frame.unit(),
-                alpha(WHITE, fade),
-                true,
-                rect.w() - 12 * frame.unit());
-        if (customizing && panelFade > .85) hits.add(new Hit(rect, action));
-    }
-
-    private void label(
-            String text,
-            double x,
-            double y,
-            double height,
-            Color color,
-            boolean center,
-            double maxWidth) {
-        labels.add(new Label(text, x, y, height, color, center, maxWidth));
-    }
-
-    private void renderLabels(DrawContext context) {
-        CustomTextRenderer renderer = EmberMenuFont.renderer();
-        for (var label : labels) {
-            if (label.color.a == 0) continue;
-            // The menu has its own linear font scale; HUD preferences cannot enlarge it.
-            renderer.begin(label.height / 18);
-            try {
-                double limit = Math.abs(label.maxWidth);
-                String text = label.text;
-                while (!text.isEmpty() && renderer.getWidth(text) > limit)
-                    text = text.substring(0, text.offsetByCodePoints(text.length(), -1));
-                double width = renderer.getWidth(text),
-                        x =
-                                label.centered
-                                        ? label.x - width / 2
-                                        : label.maxWidth < 0 ? label.x - width : label.x;
-                renderer.render(text, x, label.y, label.color, false);
-            } finally {
-                renderer.end();
-            }
-        }
-    }
-
-    private static Color alpha(Color c, double amount) {
-        return new Color(c.r, c.g, c.b, (int) (c.a * Math.clamp(amount, 0, 1)));
-    }
-
-    private void activate(StartMenuLayout.Action action) {
-        switch (action) {
-            case Play -> mc.setScreen(new SelectWorldScreen(this));
-            case Multiplayer -> mc.setScreen(mc.options.skipMultiplayerWarning
-                ? new MultiplayerScreen(this) : new MultiplayerWarningScreen(this));
-            case Settings -> mc.setScreen(new OptionsScreen(this, mc.options));
-            case Menu -> {
-                customizing = !customizing;
-                customFocused = 0;
-            }
-            case Quit -> mc.scheduleStop();
-        }
-    }
-
-    @Override
-    public boolean mouseClicked(Click click, boolean doubled) {
-        if (click.button() != GLFW_MOUSE_BUTTON_LEFT) return false;
-        keyboardFocus = false;
-        if (locked) {
-            locked = false;
-            keyboardFocus = false;
+    @Override public boolean keyPressed(KeyInput input){
+        int key=input.key();if(held==key)return true;
+        if(locked){if(key==GLFW_KEY_ENTER||key==GLFW_KEY_KP_ENTER||key==GLFW_KEY_SPACE){locked=false;unlockAge=0;held=key;dock.focused=0;}return true;}
+        if(key==GLFW_KEY_ESCAPE){if(playSheet)playSheet=false;else{locked=true;unlockAge=0;dock.active=-1;}return true;}
+        if(playSheet){
+            if(key==GLFW_KEY_TAB||key==GLFW_KEY_DOWN||key==GLFW_KEY_UP){int direction=key==GLFW_KEY_UP||(key==GLFW_KEY_TAB&&(input.modifiers()&GLFW_MOD_SHIFT)!=0)?-1:1;playFocus=Math.floorMod(playFocus+direction,3);return true;}
+            if(key==GLFW_KEY_ENTER||key==GLFW_KEY_KP_ENTER||key==GLFW_KEY_SPACE){held=key;MenuControl.Button control=playFocus==0?singleplayer:playFocus==1?multiplayer:cancel;control.click(0,0);control.release();return true;}
             return true;
         }
-        if (frame == null) return false;
-        double scale = mc.getWindow().getScaleFactor(),
-                x = click.x() * scale,
-                y = click.y() * scale;
-        for (var hit : hits)
-            if (hit.rect.contains(x, y)) {
-                hit.action.run();
-                return true;
-            }
-        if (customizing && !frame.panel().contains(x, y)) customizing = false;
-        return true;
-    }
-
-    @Override
-    public boolean keyPressed(KeyInput input) {
-        int key = input.key();
-        if (key == heldUnlockKey) return true;
-        if (locked) {
-            if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER || key == GLFW_KEY_SPACE) {
-                locked = false;
-                keyboardFocus = true;
-                heldUnlockKey = key;
-            }
-            return true;
-        }
-        if (key == GLFW_KEY_ESCAPE) {
-            if (customizing) customizing = false;
-            else locked = true;
-            return true;
-        }
-        if (customizing) {
-            if (key == GLFW_KEY_TAB
-                    || key == GLFW_KEY_RIGHT
-                    || key == GLFW_KEY_DOWN
-                    || key == GLFW_KEY_LEFT
-                    || key == GLFW_KEY_UP) {
-                int direction =
-                        key == GLFW_KEY_LEFT
-                                        || key == GLFW_KEY_UP
-                                        || key == GLFW_KEY_TAB
-                                                && (input.modifiers() & GLFW_MOD_SHIFT) != 0
-                                ? -1
-                                : 1;
-                customFocused = Math.floorMod(customFocused + direction, 6);
-                keyboardFocus = true;
-                return true;
-            }
-            if ((key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER || key == GLFW_KEY_SPACE)
-                    && panelFade > .85
-                    && hits.size() == 6) {
-                heldUnlockKey = key;
-                hits.get(customFocused).action.run();
-            }
-            return true;
-        }
-        if (key == GLFW_KEY_TAB || key == GLFW_KEY_RIGHT || key == GLFW_KEY_LEFT) {
-            int direction =
-                    key == GLFW_KEY_LEFT
-                                    || key == GLFW_KEY_TAB
-                                            && (input.modifiers() & GLFW_MOD_SHIFT) != 0
-                            ? -1
-                            : 1;
-            focused = Math.floorMod(focused + direction, 5);
-            keyboardFocus = true;
-            return true;
-        }
-        if ((key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER || key == GLFW_KEY_SPACE)
-                && reveal > .9) {
-            heldUnlockKey = key;
-            activate(StartMenuLayout.Action.values()[focused]);
-            return true;
-        }
+        if(key==GLFW_KEY_TAB||key==GLFW_KEY_RIGHT||key==GLFW_KEY_LEFT){int direction=key==GLFW_KEY_LEFT||(key==GLFW_KEY_TAB&&(input.modifiers()&GLFW_MOD_SHIFT)!=0)?-1:1;dock.focused=Math.floorMod(dock.focused+direction,5);return true;}
+        if(key==GLFW_KEY_ENTER||key==GLFW_KEY_KP_ENTER||key==GLFW_KEY_SPACE){held=key;if(playSheet)singleplayer.click(0,0);else if(pending<0)clickDock(Math.max(0,dock.focused));return true;}
         return super.keyPressed(input);
     }
-
-    @Override
-    public boolean keyReleased(KeyInput input) {
-        if (input.key() == heldUnlockKey) heldUnlockKey = -1;
-        return super.keyReleased(input);
-    }
-
-    @Override
-    public void close() {
-        customizing = false;
-        locked = true;
-    }
-
-    private static void glyph(
-            GuiRenderer r,
-            StartMenuLayout.Action action,
-            double x,
-            double y,
-            double size,
-            Color color) {
-        double s = size / 24;
-        switch (action) {
-            case Play ->
-                    r.triangle(x - 6 * s, y - 9 * s, x - 6 * s, y + 9 * s, x + 10 * s, y, color);
-            case Multiplayer -> {
-                person(r, x - 6 * s, y + 1 * s, s * .78, color);
-                person(r, x + 6 * s, y + 1 * s, s * .78, color);
-            }
-            case Settings -> {
-                ring(r, x, y, 7 * s, 2.4 * s, 0, Math.PI * 2, color);
-                for (int i = 0; i < 8; i++) {
-                    double a = i * Math.PI / 4;
-                    EmberUI.bar(
-                            r,
-                            x + Math.cos(a) * 7 * s,
-                            y + Math.sin(a) * 7 * s,
-                            x + Math.cos(a) * 10 * s,
-                            y + Math.sin(a) * 10 * s,
-                            3 * s,
-                            color);
-                }
-                ring(r, x, y, 2.3 * s, 1.8 * s, 0, Math.PI * 2, color);
-            }
-            case Menu -> {
-                ringBox(r, x - 11 * s, y - 8 * s, 22 * s, 16 * s, 2 * s, color);
-                EmberUI.bar(r, x, y + 8 * s, x, y + 12 * s, 2 * s, color);
-                EmberUI.bar(r, x - 5 * s, y + 12 * s, x + 5 * s, y + 12 * s, 2 * s, color);
-                r.roundedRect(x - 6 * s, y - 4 * s, 4 * s, 4 * s, s, color);
-                EmberUI.bar(r, x + 1 * s, y - 3 * s, x + 7 * s, y - 3 * s, 1.6 * s, color);
-                EmberUI.bar(r, x - 6 * s, y + 3 * s, x + 7 * s, y + 3 * s, 1.6 * s, color);
-            }
-            case Quit -> {
-                ring(
-                        r,
-                        x,
-                        y + 1 * s,
-                        9 * s,
-                        2.4 * s,
-                        -Math.PI / 2 + .55,
-                        Math.PI * 1.5 - .55,
-                        color);
-                EmberUI.bar(r, x, y - 11 * s, x, y - 1 * s, 2.6 * s, color);
-            }
-        }
-    }
-
-    private static void person(GuiRenderer r, double x, double y, double s, Color c) {
-        r.roundedRect(x - 4 * s, y - 10 * s, 8 * s, 8 * s, 4 * s, c);
-        r.roundedRect(x - 7 * s, y, 14 * s, 10 * s, 4 * s, c);
-    }
-
-    private static void ringBox(
-            GuiRenderer r, double x, double y, double w, double h, double t, Color c) {
-        r.roundedRect(x, y, w, t, t / 2, c);
-        r.roundedRect(x, y + h - t, w, t, t / 2, c);
-        r.roundedRect(x, y, t, h, t / 2, c);
-        r.roundedRect(x + w - t, y, t, h, t / 2, c);
-    }
-
-    private static void ring(
-            GuiRenderer r,
-            double x,
-            double y,
-            double radius,
-            double thickness,
-            double start,
-            double end,
-            Color c) {
-        int count = 32;
-        for (int i = 0; i < count; i++) {
-            double a = start + (end - start) * i / count,
-                    b = start + (end - start) * (i + 1) / count;
-            EmberUI.bar(
-                    r,
-                    x + Math.cos(a) * radius,
-                    y + Math.sin(a) * radius,
-                    x + Math.cos(b) * radius,
-                    y + Math.sin(b) * radius,
-                    thickness,
-                    c);
-        }
-    }
+    @Override public boolean mouseReleased(Click click){singleplayer.release();multiplayer.release();cancel.release();return true;}
+    @Override public boolean keyReleased(KeyInput input){if(input.key()==held)held=-1;return true;}
 }

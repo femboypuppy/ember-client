@@ -262,10 +262,12 @@ public class EmberClientSettingsScreen extends WidgetScreen {
         for (var style : StartMenuLayout.Style.values()) action(r, contentX + style.ordinal() * menuW, y, menuW - 5, 34,
             style.toString(), () -> Config.get().startMenu.set(style), Config.get().startMenu.get() == style, dt);
         y += 46;
-        for (var wallpaper : StartMenuLayout.Wallpaper.values()) action(r, contentX + wallpaper.ordinal() * menuW, y, menuW - 5, 34,
-            wallpaper.name() + " wallpaper", () -> Config.get().startWallpaper.set(wallpaper), Config.get().startWallpaper.get() == wallpaper, dt);
+        var menu = meteordevelopment.meteorclient.gui.screens.menu.ConfigManager.get();
+        double wallpaperWidth = contentW / 3;
+        for (var wallpaper : meteordevelopment.meteorclient.gui.screens.menu.MenuConfig.Wallpaper.values()) action(r, contentX + wallpaper.ordinal() * wallpaperWidth, y, wallpaperWidth - 5, 34,
+            meteordevelopment.meteorclient.gui.screens.menu.MenuLanguage.text(wallpaper.key), () -> { menu.wallpaper = wallpaper; meteordevelopment.meteorclient.gui.screens.menu.ConfigManager.changed(); }, menu.wallpaper == wallpaper, dt);
         y += 46;
-        y = toggle(r, y, "24-hour menu clock", "Use a 24-hour clock on the startup screen.", Config.get().startClock24.get(), () -> Config.get().startClock24.set(!Config.get().startClock24.get()), dt);
+        y = toggle(r, y, "24-hour menu clock", "Use a 24-hour clock on the startup screen.", menu.clock24, () -> { menu.clock24 = !menu.clock24; meteordevelopment.meteorclient.gui.screens.menu.ConfigManager.changed(); }, dt);
         return y;
     }
 

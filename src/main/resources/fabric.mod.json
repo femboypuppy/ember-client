@@ -12,7 +12,8 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "meteordevelopment.meteorclient.MeteorClient"
+      "meteordevelopment.meteorclient.MeteorClient",
+      "meteordevelopment.meteorclient.gui.screens.menu.EmberMenuClient"
     ],
     "modmenu": [
       "meteordevelopment.meteorclient.modintegration.ModMenuIntegration"

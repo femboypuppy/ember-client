@@ -191,7 +191,8 @@ public abstract class GameRendererMixin implements IGameRenderer {
 
     @Unique
     private void meteor$renderOverlays(RenderTickCounter tickCounter) {
-        meteordevelopment.meteorclient.utils.render.EmberGlass.ensureCaptured();
+        if (!(client.currentScreen instanceof meteordevelopment.meteorclient.gui.screens.menu.MenuScreen))
+            meteordevelopment.meteorclient.utils.render.EmberGlass.ensureCaptured();
         if (meteor$renderHud) {
             meteor$renderHud = false;
             var context = new DrawContext(client, guiState, (int) client.mouse.getScaledX(client.getWindow()), (int) client.mouse.getScaledY(client.getWindow()));

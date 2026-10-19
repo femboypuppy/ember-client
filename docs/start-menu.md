@@ -1,19 +1,72 @@
-# Ember startup menu
+# Ember desktop menu
 
-On first boot, Ember opens a lock-screen-style menu with the local date and clock over a bundled wallpaper. Click anywhere or press Enter/Space to reveal the glass dock. The unlocking input is consumed, so it cannot also activate Play. Returning from Options, Multiplayer, or world selection keeps the same unlocked screen; returning to the title after leaving a world skips the initial lock step for that session.
+The startup screen uses Minecraft 1.21.11 **Yarn mappings**, Java 21, Fabric Loader and Fabric API. It is implemented with `Screen`, `DrawContext`, native text/font providers and resource-managed textures. No external UI toolkit or legacy OpenGL UI path is used.
 
-The dock has **Play** (singleplayer worlds), **Multiplayer**, **Settings** (Minecraft options), **Change menu**, and **Quit**. Hover labels identify the icons. Arrow keys and Tab/Shift+Tab navigate; Enter/Space activate. Escape closes customization or returns to the clock.
+Click anywhere or press Enter/Space once to unlock. The five-item dock offers **Play**, **Accounts**, **Settings**, **Display** and **Quit**. Play opens Singleplayer/Multiplayer choices. Tab/Shift+Tab and arrow keys navigate; Enter/Space activate; Escape closes a sheet/settings or returns to the lock screen. Held activation keys cannot unlock and launch a world at once. Multiplayer honors the saved warning preference.
 
-Multiplayer respects Minecraft's saved **Do not show this screen again** preference.
-Once selected on the third-party online play warning, future visits open the server
-list directly, including after returning to or recreating the title screen.
+The dock magnifies the hovered icon and its neighbors, fades tooltips, bounces on activation and marks the last action with an accent dot. Intro and settings transitions use time-based easing and analytic springs. Returning from a Minecraft child screen retains the unlocked home screen. Reduce motion disables parallax, breathing, magnification, bounce and scale/slide motion while keeping short fades.
 
-The dock and customization panel use Ember's existing Liquid Glass material and follow its opacity, blur, refraction, lightness, and accent settings. The clock is compact and shadow-free. Menu text has its own linear scaling, independent of HUD font preferences. It prefers a locally installed **SF Pro Display Regular** face, then SF Pro, and otherwise uses bundled Inter. Installed `.ttf` and `.otf` faces are supported; restart Minecraft after installing a font. SF Pro is not bundled, following [Apple's font distribution guidance](https://developer.apple.com/documentation/technologyoverviews/fonts).
+## System Settings
 
-The clock uses a real **Bold** face: locally installed SF Pro Display Bold/SF Pro Bold, or bundled **Inter Display Bold** from the [official Inter 4.1 release](https://github.com/rsms/inter/releases/tag/v4.1). It is rasterized at its displayed pixel size, including at 4K, instead of enlarging a small glyph atlas. The texture is reused between frames and replaced when the minute, font, or window size changes. Inter's [OFL license](../src/main/resources/assets/ember-client/fonts/Inter-OFL.txt) ships with the font.
+- **General:** 12/24-hour time, date, menu-only System/English/French language, Minecraft options.
+- **Appearance:** Live Chrome, static Chrome and Midnight thumbnails; HSV accent picker; blur amount; UI scale; light/dark glass.
+- **Animations:** enable animations, speed, wallpaper parallax, dock magnification.
+- **Audio:** Minecraft menu soundtrack and volume; UI click sounds. Minecraft's global sound preferences remain in their own store.
+- **Performance:** 30-240 menu FPS cap, blur, reduced motion. Global FPS and minimized/AFK limits still apply; VSync can impose a lower cap.
+- **Accounts:** list, add, switch and confirm removal; Microsoft browser sign-in plus existing Offline/Session/Altening backends. The existing Ember account store handles credentials; menu preferences never contain them. Account operations are blocked while playing a world.
+- **About:** client/game/mod versions, credits, classic-menu switch. The vanilla title screen retains its Ember-menu button.
 
-**Change menu** offers Chrome/Midnight wallpapers, a 12/24-hour clock, and Classic Minecraft. The classic title screen has an **Ember menu** button to switch back. These preferences also live under **Gear → Start menu** and travel with appearance configs. The selected wallpaper is used on out-of-world submenus. In-world menus retain their normal background behavior.
+The sidebar search filters sections. Content scrolls in compact windows. Tab focuses enabled controls and scrolls them into view; Ctrl/Cmd+F focuses search. Changes apply live and save to **`config/ember/menu.json`**, resolved through Fabric Loader. Writes are debounced, serialized from client-thread snapshots, and atomically replaced where supported. Invalid input is clamped; malformed files load defaults and are preserved until a later explicit preference change/save. Existing clock/wallpaper preferences migrate on first use. Menu preferences are separate from gameplay appearance profiles.
 
-Both 2560 × 1440 wallpapers ship inside the JAR; booting never downloads an image. Cover scaling preserves image proportions on normal, tall, and ultrawide windows. Photo credits in the lower corner link to the original images; source and license information are in [the asset credits](../src/main/resources/assets/ember-client/textures/menu/CREDITS.md).
+## Rendering and assets
 
-`python scripts/check_start_menu.py` runs the production screen against lightweight game collaborators and a recording renderer. It covers input isolation, held Enter, mouse/keyboard actions, parent return, three GUI scales, classic mode, out-of-world guards, wallpaper cover, and asset packaging. It writes layout previews to `build/start-menu`. Rendering is also checked in the development client.
+All new assets live under `src/main/resources/assets/ember/`:
+
+- `font/ui.json`, `font/inter.ttf`: native Inter regular font, 16 logical-pixel base, 2x oversampling.
+- `font/clock.json`, `font/inter_display_light.ttf`: native Inter Display Light, 96 logical-pixel base, 3x oversampling.
+- `font/ofl.txt`: Inter license. SF Pro is not bundled.
+- `textures/menu/chrome.png`, `midnight.png`: bundled 2560 x 1440 wallpapers.
+- `textures/menu/chrome_blur.png`, `midnight_blur.png`: 320 x 180 prefiltered versions, sampled behind rounded glass panels and during settings transitions.
+- `textures/menu/credits.md`: source links and wallpaper licensing.
+- `menu_lang/en_us.json`, `fr_fr.json`: menu text (English source labels are the fallback).
+- `sounds.json`: `ember:ui.click` aliases Minecraft's existing UI click event; no external sound download is required.
+
+**Live Chrome** animates the bundled chrome image with slow breathing/translation; it does not decode a video. Static wallpapers still support separately controlled mouse parallax. Wallpaper switching crossfades cached resource identifiers; vignette, shadows, corners and borders use native GUI commands. Glass is a cheap wallpaper-based approximation, not real-time background refraction. Disabling blur removes filtered sampling and leaves tinted panels. No framebuffer capture, raw GL call or old RenderSystem shader binding is required.
+
+Text height is normalized to the bundled Inter cap heights (12 body / 70 clock), so small-window labels retain their intended visible size. The providers use vertical shifts of 5 (body) and 64 (clock) to align Inter cap heights with the top-based layout despite Minecraft's fixed text baseline. Font JSON IDs are `ember:ui` and `ember:clock`. In 1.21.11, `Style.withFont` takes `new StyleSpriteSource.Font(Identifier.of(...))`; DrawContext matrices are a `Matrix3x2fStack`. Text uses `drawText(TextRenderer, Text, x, y, color, false)`. Texture commands use `RenderPipelines.GUI_TEXTURED` and the current `drawTexture` overload with source region and texture dimensions. Font providers automatically resolve `ember:inter.ttf` below `assets/ember/font/`.
+
+The native Minecraft resource system caches/owns textures and glyph atlases. The menu caches labels/widths and control objects. A Fabric resource-loader-v1 synchronous reloader invalidates menu labels/layout after a resource-pack reload; it does not allocate or upload textures itself.
+
+## Integration
+
+`EmberMenuClient` is an additional **client** entrypoint in `fabric.mod.json`. Existing metadata and entrypoints are preserved. `EmberMenuMinecraftMixin` replaces an incoming vanilla `TitleScreen` through `MinecraftClient.setScreen` with an `@ModifyVariable` at HEAD (`argsOnly=true`). The existing `TitleScreenMixin` retains a render-time fallback for early startup and the classic-menu return button. The replacement is disabled while in a world or when classic mode is selected.
+
+The mixin list additionally contains `EmberMenuFpsMixin`, `EmberMenuSoundMixin` and `EmberMenuScreenMixin` for the menu cap, menu-only music multiplier and incoming native-screen fade. `EmberMenuBackgroundMixin` provides the shared wallpaper on out-of-world vanilla child screens. `GameRendererMixin` skips Ember's older glass-capture path for native MenuScreen instances.
+
+No new Gradle dependency is needed: the existing build already supplies Fabric API resource-loader-v1, Gson, MixinExtras and Minecraft text rendering. Keep **Java 21** and the repository's **1.21.11 Yarn mappings**. The full-code export includes the actual build and metadata files, with existing dependencies preserved; the menu module relies on Ember's existing account/authentication services rather than inventing a second credential store.
+
+Build and checks (PowerShell):
+
+```powershell
+$env:JAVA_HOME = 'C:/Program Files/Java/jdk-21'
+./gradlew.bat build --no-daemon -Prelease_version=1.9.11-dev
+python scripts/check_start_menu.py
+python scripts/check_accounts.py
+python scripts/check_account_login.py
+python scripts/check_rain_status.py
+```
+
+The headless menu check runs production springs/dock/config code, compares 15/30/60/144/240 FPS, checks magnification/hit areas/bounce/reduced motion, round-trips preferences across JVMs and validates assets/font providers/metadata. Gradle compiles native GUI classes against the real game. In-client checks are still needed for a new renderer/resource-pack combination.
+
+## Customization
+
+- **Colors/layout/timing:** `MenuTheme.java`, `Dock.java`, `EmberTitleScreen.java`.
+- **Defaults/ranges:** `MenuConfig.java`.
+- **Settings sections/controls:** `MenuSettingsScreen.java`, `MenuControl.java`.
+- **Extra wallpapers:** add an enum item and cached identifiers in `WallpaperRenderer`, add matching sharp/blur resources and localized labels, then adjust the picker layout to fit additional tiles.
+- **Wallpaper art:** replace the two sharp PNGs at their existing dimensions; regenerate each 320 x 180 blur image with Lanczos downsampling and a Gaussian blur around 4 pixels.
+- **Typography:** replace the licensed TTF files or edit native font providers; retain an appropriate font license and Minecraft fallback.
+- **Click sounds:** replace the event in `sounds.json`, or add `assets/ember/sounds/menu/click.ogg` and a file sound named `ember:menu/click`.
+- **Additional languages:** add `menu_lang/<locale>.json` and extend `MenuLanguage.locale()` and the language segmented control.
+
+Verified API references: [DrawContext 1.21.11](https://maven.fabricmc.net/docs/yarn-1.21.11+build.3/net/minecraft/client/gui/DrawContext.html), [Style 1.21.11](https://maven.fabricmc.net/docs/yarn-1.21.11+build.3/net/minecraft/text/Style.html). The code uses Yarn names, not Mojang mappings.

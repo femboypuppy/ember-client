@@ -1,0 +1,18 @@
+{
+  "providers": [
+    {
+      "type": "ttf",
+      "file": "ember:inter_display_light.ttf",
+      "size": 96,
+      "oversample": 3,
+      "shift": [
+        0,
+        64
+      ]
+    },
+    {
+      "type": "reference",
+      "id": "minecraft:default"
+    }
+  ]
+}
