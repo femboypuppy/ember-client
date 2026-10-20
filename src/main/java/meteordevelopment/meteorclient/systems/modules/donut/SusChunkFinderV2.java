@@ -132,6 +132,44 @@ public class SusChunkFinderV2 extends Module {
         .build()
     );
 
+    private final Setting<Boolean> cocoa = sgPlants.add(new BoolSetting.Builder()
+        .name("cocoa")
+        .description("Jungles where nearly every cocoa pod is ripe: trees get them at a random age, a third ripe.")
+        .defaultValue(true)
+        .onChanged(v -> remeasure())
+        .build()
+    );
+
+    private final Setting<Boolean> beeNests = sgPlants.add(new BoolSetting.Builder()
+        .name("bee-nests")
+        .description("Natural bee nests holding honey: they generate empty, and only fill while players are near. Plains, birch and flower forests.")
+        .defaultValue(true)
+        .onChanged(v -> remeasure())
+        .build()
+    );
+
+    private final Setting<Boolean> activityPlates = sgRender.add(new BoolSetting.Builder()
+        .name("activity-plates")
+        .description("Mark every chunk whose plants are mostly grown with a plate at the plants' height, so active areas show while you fly over them, before a zone forms.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<SettingColor> plateColor = sgRender.add(new ColorSetting.Builder()
+        .name("plate-color")
+        .description("Color of the activity plates.")
+        .defaultValue(new SettingColor(255, 70, 50, 70))
+        .visible(activityPlates::get)
+        .build()
+    );
+
+    private final Setting<Boolean> activityAlerts = sgRender.add(new BoolSetting.Builder()
+        .name("activity-alerts")
+        .description("Notify as soon as you pass a patch of grown chunks (once per patch), without waiting for a whole zone.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<SettingColor> zoneColor = sgRender.add(new ColorSetting.Builder()
         .name("zone-color")
         .description("Color of grown chunks in a zone. Chunks with nothing to measure are drawn fainter.")
@@ -399,13 +437,13 @@ public class SusChunkFinderV2 extends Module {
 
         ChunkSection[] sections = chunk.getSectionArray();
         int minY = chunk.getBottomY();
-        boolean k = kelp.get(), c = cactus.get(), s = sugarCane.get(), a = amethyst.get();
+        boolean k = kelp.get(), c = cactus.get(), s = sugarCane.get(), a = amethyst.get(), co = cocoa.get(), b = beeNests.get();
         int r = radius();
         Sensitivity sens = sensitivity.get();
 
         worker.submit(() -> {
             try {
-                int[] m = measure(sections, minY, k, c, s, a);
+                int[] m = measure(sections, minY, k, c, s, a, co, b);
                 record(key, m, r, sens);
             } catch (Throwable t) {
                 MeteorClient.LOG.warn("Sus chunk v2 measure failed", t);
@@ -432,9 +470,10 @@ public class SusChunkFinderV2 extends Module {
                 }
             }
 
-            // Zones held back by the publish throttle while chunks were pouring in.
+            // Zones held back by the publish throttle while chunks were pouring in, and activity not yet told about.
             worker.submit(() -> {
                 if (zonesDirty && windowRadius > 0) publish(windowRadius, true);
+                flushAlerts();
             });
         }
 
@@ -452,7 +491,7 @@ public class SusChunkFinderV2 extends Module {
         Block b = state.getBlock();
         return b == Blocks.KELP || b == Blocks.KELP_PLANT || b == Blocks.CACTUS || b == Blocks.SUGAR_CANE
             || b == Blocks.AMETHYST_CLUSTER || b == Blocks.LARGE_AMETHYST_BUD || b == Blocks.MEDIUM_AMETHYST_BUD
-            || b == Blocks.SMALL_AMETHYST_BUD;
+            || b == Blocks.SMALL_AMETHYST_BUD || b == Blocks.COCOA || b == Blocks.BEE_NEST;
     }
 
     private static BlockState at(ChunkSection[] sections, int minY, int x, int y, int z) {
@@ -461,12 +500,18 @@ public class SusChunkFinderV2 extends Module {
         return sections[index].getBlockState(x, (y - minY) & 15, z);
     }
 
+    /** What a chunk's measurement holds, by index: see {@link #measure}. */
+    private static final int M_G = 0, M_N = 1, M_CLUSTERS = 2, M_BUDS = 3, M_KELP_G = 4, M_KELP_N = 5, M_CACTUS_G = 6, M_CACTUS_N = 7,
+        M_CANE_G = 8, M_CANE_N = 9, M_COCOA_G = 10, M_COCOA_N = 11, M_BEES_G = 12, M_BEES_N = 13, M_Y_SUM = 14, M_Y_COUNT = 15, M_SIZE = 16;
+
     /**
      * Worker thread.
      *
-     * @return {grown plants, plants that could have grown, geode clusters, geode buds of any size}
+     * @return indexed by the M_ constants: grown plants and plants that could have grown (all kinds pooled), geode
+     * clusters and buds, the same per plant for the card, and the height of the grown plants (sum and count)
      */
-    private static int[] measure(ChunkSection[] sections, int minY, boolean useKelp, boolean useCactus, boolean useCane, boolean useAmethyst) {
+    private static int[] measure(ChunkSection[] sections, int minY, boolean useKelp, boolean useCactus, boolean useCane, boolean useAmethyst,
+                                 boolean useCocoa, boolean useBees) {
         int[] kelpBottom = new int[256], kelpTop = new int[256], kelpAge = new int[256];
         int[] cactusTop = new int[256], cactusAge = new int[256];
         int[] caneTop = new int[256], caneRun = new int[256], caneAge = new int[256];
@@ -474,6 +519,9 @@ public class SusChunkFinderV2 extends Module {
         java.util.Arrays.fill(cactusTop, Integer.MIN_VALUE);
         java.util.Arrays.fill(caneTop, Integer.MIN_VALUE);
         int clusterCount = 0, budCount = 0;
+        int cocoaPods = 0, cocoaRipe = 0, nests = 0, nestsWithHoney = 0;
+        long ySum = 0;
+        int yCount = 0;
 
         for (int i = 0; i < sections.length; i++) {
             ChunkSection section = sections[i];
@@ -504,6 +552,22 @@ public class SusChunkFinderV2 extends Module {
                             budCount++;
                         } else if (b == Blocks.LARGE_AMETHYST_BUD || b == Blocks.MEDIUM_AMETHYST_BUD || b == Blocks.SMALL_AMETHYST_BUD) {
                             budCount++;
+                        } else if (b == Blocks.COCOA && useCocoa) {
+                            // Jungle trees get their pods at a random age 0-2: a third are ripe naturally.
+                            cocoaPods++;
+                            if (state.get(Properties.AGE_2) >= 2) {
+                                cocoaRipe++;
+                                ySum += y;
+                                yCount++;
+                            }
+                        } else if (b == Blocks.BEE_NEST && useBees) {
+                            // Nests generate empty of honey; any honey means bees worked while players were near.
+                            nests++;
+                            if (state.get(Properties.HONEY_LEVEL) > 0) {
+                                nestsWithHoney++;
+                                ySum += y;
+                                yCount++;
+                            }
                         }
                     }
                 }
@@ -520,6 +584,8 @@ public class SusChunkFinderV2 extends Module {
                 if (kelpAge[column] >= 24 || height >= 12) {
                     kelpG++;
                     kelpN++;
+                    ySum += kelpTop[column];
+                    yCount++;
                 } else {
                     // Still able to grow (water above) yet hasn't: evidence nobody stayed. At the surface
                     // it could be either, so it doesn't count.
@@ -532,21 +598,48 @@ public class SusChunkFinderV2 extends Module {
             // A flower on top stops it, so those say nothing.
             if (useCactus && cactusTop[column] != Integer.MIN_VALUE && at(sections, minY, x, cactusTop[column] + 1, z).isAir()) {
                 cactusN++;
-                if (cactusAge[column] >= AGED) cactusG++;
+                if (cactusAge[column] >= AGED) {
+                    cactusG++;
+                    ySum += cactusTop[column];
+                    yCount++;
+                }
             }
 
             // Sugar cane generates 2-4 tall at age 0; only a two-tall top ages (taller ones are done).
             if (useCane && caneTop[column] != Integer.MIN_VALUE && caneRun[column] == 2
                 && at(sections, minY, x, caneTop[column] + 1, z).isAir()) {
                 caneN++;
-                if (caneAge[column] >= AGED) caneG++;
+                if (caneAge[column] >= AGED) {
+                    caneG++;
+                    ySum += caneTop[column];
+                    yCount++;
+                }
             }
         }
-        g = kelpG + cactusG + caneG;
-        n = kelpN + cactusN + caneN;
+        // Cocoa: only the ripe pods beyond the natural third count as grown.
+        int cocoaG = (int) Math.round(Math.max(0, cocoaRipe - cocoaPods / 3.0) * 1.5);
+        g = kelpG + cactusG + caneG + cocoaG + nestsWithHoney;
+        n = kelpN + cactusN + caneN + cocoaPods + nests;
 
         if (!useAmethyst) clusterCount = budCount = 0;
-        return new int[] {g, n, clusterCount, budCount, kelpG, kelpN, cactusG, cactusN, caneG, caneN};
+        int[] m = new int[M_SIZE];
+        m[M_G] = g;
+        m[M_N] = n;
+        m[M_CLUSTERS] = clusterCount;
+        m[M_BUDS] = budCount;
+        m[M_KELP_G] = kelpG;
+        m[M_KELP_N] = kelpN;
+        m[M_CACTUS_G] = cactusG;
+        m[M_CACTUS_N] = cactusN;
+        m[M_CANE_G] = caneG;
+        m[M_CANE_N] = caneN;
+        m[M_COCOA_G] = cocoaG;
+        m[M_COCOA_N] = cocoaPods;
+        m[M_BEES_G] = nestsWithHoney;
+        m[M_BEES_N] = nests;
+        m[M_Y_SUM] = (int) Math.min(Integer.MAX_VALUE, Math.max(Integer.MIN_VALUE, ySum));
+        m[M_Y_COUNT] = yCount;
+        return m;
     }
 
     // Zones (worker thread)
@@ -558,16 +651,20 @@ public class SusChunkFinderV2 extends Module {
             clearMeasurements();
             return;
         }
-        if (m[1] > 0) {
-            grown.put(key, m[0]);
-            samples.put(key, m[1]);
+        if (m[M_N] > 0) {
+            grown.put(key, m[M_G]);
+            samples.put(key, m[M_N]);
         }
-        if (m[3] > 0) {
-            clusters.put(key, m[2]);
-            buds.put(key, m[3]);
+        if (m[M_BUDS] > 0) {
+            clusters.put(key, m[M_CLUSTERS]);
+            buds.put(key, m[M_BUDS]);
         }
         // Per plant, only for the inspection card.
-        if (m[5] > 0 || m[7] > 0 || m[9] > 0) byType.put(key, new int[] {m[4], m[5], m[6], m[7], m[8], m[9]});
+        if (m[M_KELP_N] > 0 || m[M_CACTUS_N] > 0 || m[M_CANE_N] > 0 || m[M_COCOA_N] > 0 || m[M_BEES_N] > 0) {
+            byType.put(key, new int[] {m[M_KELP_G], m[M_KELP_N], m[M_CACTUS_G], m[M_CACTUS_N], m[M_CANE_G], m[M_CANE_N],
+                m[M_COCOA_G], m[M_COCOA_N], m[M_BEES_G], m[M_BEES_N]});
+        }
+        plate(key, m);
         add(key, m, r);
 
         int cx = ChunkPos.getPackedX(key), cz = ChunkPos.getPackedZ(key);
@@ -575,6 +672,76 @@ public class SusChunkFinderV2 extends Module {
             for (int dz = -r - 2; dz <= r + 2; dz++) evaluate(ChunkPos.toLong(cx + dx, cz + dz), r, sens);
         }
         publish(r, false);
+    }
+
+    /** A chunk whose plants are mostly grown, drawn as a plate at their height. */
+    public record Plate(int chunkX, int chunkZ, int y, int percent, int grownPlants, int plants) {}
+
+    /** Mostly-grown chunks of this place (worker writes, render thread reads). */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Plate> plates = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int PLATES_CAP = 50_000;
+    /** Grown chunks not yet told about, and chunks already part of a patch someone was told about. */
+    private final LongSet pendingAlert = new LongOpenHashSet(), alerted = new LongOpenHashSet();
+    private long lastAlertAt;
+
+    /**
+     * Worker thread. A chunk with enough plants that are mostly grown becomes a plate and, unless it belongs to a patch
+     * already announced, part of the next activity alert.
+     */
+    private void plate(long key, int[] m) {
+        int plants = m[M_N] + m[M_BUDS];
+        if (plants < 4) return;
+        double g = pooledGrown(m[M_G], m[M_CLUSTERS], m[M_BUDS]);
+        int percent = (int) Math.round(100 * Math.min(1, g / plants));
+        if (percent < 60 || g < 3) return;
+        if (plates.size() >= PLATES_CAP) return;
+        int y = m[M_Y_COUNT] > 0 ? m[M_Y_SUM] / m[M_Y_COUNT] : 63;
+        plates.put(key, new Plate(ChunkPos.getPackedX(key), ChunkPos.getPackedZ(key), y, percent, (int) Math.round(g), plants));
+        if (percent >= 75 && !nearAlerted(key)) pendingAlert.add(key);
+    }
+
+    private boolean nearAlerted(long key) {
+        int cx = ChunkPos.getPackedX(key), cz = ChunkPos.getPackedZ(key);
+        for (int dx = -4; dx <= 4; dx++) {
+            for (int dz = -4; dz <= 4; dz++) if (alerted.contains(ChunkPos.toLong(cx + dx, cz + dz))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Worker thread, every second: one alert per patch of grown chunks, at most every 3 seconds. A patch counts as told
+     * once alerted, so flying over it again (or its other chunks arriving) stays quiet.
+     */
+    private void flushAlerts() {
+        if (pendingAlert.isEmpty() || System.currentTimeMillis() - lastAlertAt < 3000) return;
+        lastAlertAt = System.currentTimeMillis();
+        long first = pendingAlert.iterator().nextLong();
+        int fx = ChunkPos.getPackedX(first), fz = ChunkPos.getPackedZ(first);
+        // This patch: the pending chunks within 4 chunks of the first one. The rest wait for the next alert.
+        int count = 0;
+        long sx = 0, sz = 0;
+        for (long key : pendingAlert.toLongArray()) {
+            int cx = ChunkPos.getPackedX(key), cz = ChunkPos.getPackedZ(key);
+            if (Math.abs(cx - fx) > 4 || Math.abs(cz - fz) > 4) continue;
+            pendingAlert.remove(key);
+            alerted.add(key);
+            count++;
+            sx += cx;
+            sz += cz;
+        }
+        // Chunks of this same patch arriving later aren't alerts of their own.
+        for (long key : pendingAlert.toLongArray()) if (nearAlerted(key)) pendingAlert.remove(key);
+        if (alerted.size() > MAP_CAP) alerted.clear();
+
+        int x = (int) (sx / count) * 16 + 8, z = (int) (sz / count) * 16 + 8;
+        int n = count;
+        MeteorClient.LOG.info("[Ember SusChunkV2] Activity: {} grown chunk(s) around {}, {}", n, x, z);
+        if (!activityAlerts.get()) return;
+        mc.execute(() -> {
+            String text = n + " grown chunk" + (n == 1 ? "" : "s") + " around " + x + ", " + z;
+            if (!EmberNotificationsHud.shouldInterceptChat()) info("Activity: (highlight)%s", text);
+            EmberNotificationsHud.push("Activity detected", text, EmberNotificationsHud.WARN);
+        });
     }
 
     /** Adds a chunk's measurement to the squares it sits in, and to the rings it borders. */
@@ -729,7 +896,7 @@ public class SusChunkFinderV2 extends Module {
         int cx = ChunkPos.getPackedX(center), cz = ChunkPos.getPackedZ(center);
         int size = 2 * r + 1;
         int[] cells = new int[size * size];
-        int[] types = new int[6];
+        int[] types = new int[10];
         int grownChunks = 0, quietChunks = 0, emptyChunks = 0;
         for (int dz = -r; dz <= r; dz++) {
             for (int dx = -r; dx <= r; dx++) {
@@ -742,7 +909,7 @@ public class SusChunkFinderV2 extends Module {
                 else if (cell >= 50) grownChunks++;
                 else quietChunks++;
                 int[] t = byType.get(key);
-                if (t != null) for (int i = 0; i < 6; i++) types[i] += t[i];
+                if (t != null) for (int i = 0; i < Math.min(t.length, types.length); i++) types[i] += t[i];
             }
         }
 
@@ -750,6 +917,8 @@ public class SusChunkFinderV2 extends Module {
         if (types[1] > 0) details.add("Kelp grown past world generation: " + types[0] + "/" + types[1]);
         if (types[3] > 0) details.add("Cactus tops aged 9+ min: " + types[2] + "/" + types[3]);
         if (types[5] > 0) details.add("Sugar cane aged 9+ min: " + types[4] + "/" + types[5]);
+        if (types[7] > 0) details.add("Cocoa ripe beyond the natural third: " + types[6] + "/" + types[7]);
+        if (types[9] > 0) details.add("Bee nests holding honey: " + types[8] + "/" + types[9]);
         int c = winC.get(center), b = winB.get(center);
         if (b > 0) details.add("Geode clusters: " + c + "/" + b + " (" + Math.round(100.0 * c / b) + "%, natural ~25%)");
         details.add("Chunks: " + grownChunks + " grown, " + quietChunks + " not, " + emptyChunks + " nothing to measure");
@@ -802,6 +971,9 @@ public class SusChunkFinderV2 extends Module {
         byType.clear();
         measured.clear();
         announced.clear();
+        plates.clear();
+        pendingAlert.clear();
+        alerted.clear();
         windowRadius = -1;
         for (Long2IntOpenHashMap map : List.of(winG, winN, winC, winB, winM, ringG, ringN, ringC, ringB, fitIn, fitOut, borderIn, borderOut)) map.clear();
         candidates.clear();
@@ -922,6 +1094,8 @@ public class SusChunkFinderV2 extends Module {
         if (best != null) infoZone = best;
         hoverPulse = EmberAnim.approach(hoverPulse, best != null ? 1f : 0f, dt, 0.08);
 
+        if (activityPlates.get()) drawPlates(event, px, pz, range);
+
         for (Zone zone : shown) {
             drawZone(event, zone, planeY);
             if (beacons.get()) {
@@ -930,6 +1104,21 @@ public class SusChunkFinderV2 extends Module {
             }
         }
         if (tracers.get()) drawTracers(event, shown, px, pz);
+    }
+
+    /** A plate one block above each grown chunk's plants (the water surface for kelp), within render-range. */
+    private void drawPlates(Render3DEvent event, double px, double pz, double rangeSq) {
+        Color fill = plateColor.get();
+        Color edge = new Color(fill.r, fill.g, fill.b, Math.min(255, fill.a * 3));
+        for (Plate plate : plates.values()) {
+            double x0 = plate.chunkX * 16.0, z0 = plate.chunkZ * 16.0;
+            double dx = x0 + 8 - px, dz = z0 + 8 - pz;
+            if (dx * dx + dz * dz > rangeSq) continue;
+            // Stronger growth, more solid.
+            int alpha = (int) (fill.a * Math.min(1, 0.5 + (plate.percent - 60) / 80.0));
+            double y = plate.y + 1;
+            event.renderer.box(x0, y, z0, x0 + 16, y, z0 + 16, new Color(fill.r, fill.g, fill.b, alpha), edge, ShapeMode.Both, 0);
+        }
     }
 
     private static double distanceSq(Zone zone, double x, double z) {

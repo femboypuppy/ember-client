@@ -148,7 +148,13 @@ public class AHSell extends Module {
     }
 
     /** "$ 467", "$1.2K", "$ 1,500,000": the price line of an auction house listing. */
-    private static final Pattern PRICE_LINE = Pattern.compile("\\$\\s*([0-9][0-9,]*(?:\\.[0-9]+)?\\s*[kmbtKMBT]?)");
+    private static final Pattern PRICE_LINE = Pattern.compile("\\$\\s*([0-9][0-9,]*(?:\\.[0-9]+)?(?:\\s?[kmbtKMBT](?![A-Za-z]))?)");
+
+    /** A listing it made: amount, whole-listing price, when. */
+    private record Own(int count, long price, long at) {}
+
+    /** What it listed lately, so its own auctions aren't taken for the cheapest and undercut. */
+    private final java.util.ArrayDeque<Own> own = new java.util.ArrayDeque<>();
     private static final int NEXT_PAGE_SLOT = 53;
 
     private Step step = Step.NEXT;
@@ -299,10 +305,13 @@ public class AHSell extends Module {
             }
             case SELL -> {
                 if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
+                // Typing in chat or dead: wait rather than open the inventory over it.
+                else if (mc.currentScreen != null) return;
                 clicks.clear();
                 planMove();
                 if (clicks.isEmpty()) {
-                    step = held() > 0 ? Step.SEND : Step.NEXT;
+                    // More than one listing's worth that couldn't be split (no free slot): never list it all.
+                    step = held() > 0 && held() <= amount.get() ? Step.SEND : Step.NEXT;
                     return;
                 }
                 // The server ignores clicks sent with the inventory closed, all at once: the item only looks moved.
@@ -325,7 +334,7 @@ public class AHSell extends Module {
                     if (clicks.isEmpty()) {
                         mc.player.closeHandledScreen();
                         InvUtils.swap(sellSlot.get() - 1, false);
-                        step = Step.SEND;
+                        step = held() > 0 && held() <= amount.get() ? Step.SEND : Step.NEXT;
                         timer = 10;
                     }
                     return;
@@ -349,6 +358,8 @@ public class AHSell extends Module {
                 listedMessage = false;
                 serverLinesToLog = 4;
                 mc.player.networkHandler.sendChatCommand("ah sell " + at);
+                own.addLast(new Own(count, at, System.currentTimeMillis()));
+                while (own.size() > 50) own.removeFirst();
                 MeteorClient.LOG.info("[Ember AHSell] /ah sell {} for {} x{}", at, item.get(), count);
                 waited = 0;
                 step = Step.CONFIRM;
@@ -436,7 +447,7 @@ public class AHSell extends Module {
      */
     private void planMove() {
         PlayerInventory inv = mc.player.getInventory();
-        int sell = sellSlot.get() - 1, want = amount.get();
+        int sell = sellSlot.get() - 1, want = Math.min(amount.get(), item.get().getMaxCount());
         int sellId = SlotUtils.indexToId(sell);
         ItemStack current = inv.getStack(sell);
 
@@ -464,8 +475,12 @@ public class AHSell extends Module {
             if (i == sell || !inv.getStack(i).isOf(item.get())) continue;
             int count = inv.getStack(i).getCount(), take = Math.min(want - have, count);
             clicks.add(new int[] {SlotUtils.indexToId(i), 0});
-            for (int k = 0; k < take; k++) clicks.add(new int[] {sellId, 1});
-            if (take < count) clicks.add(new int[] {SlotUtils.indexToId(i), 0});
+            // The whole stack: one left click. Part of it: one right click per item, then the rest goes back.
+            if (take == count) clicks.add(new int[] {sellId, 0});
+            else {
+                for (int k = 0; k < take; k++) clicks.add(new int[] {sellId, 1});
+                clicks.add(new int[] {SlotUtils.indexToId(i), 0});
+            }
             return;
         }
     }
@@ -516,12 +531,15 @@ public class AHSell extends Module {
     private void read(GenericContainerScreenHandler handler) {
         Inventory inventory = handler.getInventory();
         int listings = Math.min(inventory.size(), (handler.getRows() - 1) * 9), priced = 0;
+        long now = System.currentTimeMillis();
+        own.removeIf(o -> now - o.at > 48 * 3_600_000L);
+        java.util.List<Own> mine = new java.util.ArrayList<>(own);
         for (int i = 0; i < listings; i++) {
             ItemStack stack = inventory.getStack(i);
             long total = priceOf(stack);
             if (total <= 0) continue;
             priced++;
-            if (!sameItem(stack)) continue;
+            if (!sameItem(stack) || isOwn(stack, mine)) continue;
             matches++;
             cheapestEach = Math.min(cheapestEach, (double) total / stack.getCount());
         }
@@ -551,10 +569,44 @@ public class AHSell extends Module {
         LoreComponent lore = stack.get(DataComponentTypes.LORE);
         if (lore == null) return -1;
         for (Text line : lore.lines()) {
-            Matcher m = PRICE_LINE.matcher(line.getString());
+            String s = line.getString();
+            if (s.contains("each") || s.contains("Worth")) continue;
+            Matcher m = PRICE_LINE.matcher(s);
             if (m.find()) return parsePrice(m.group(1));
         }
         return -1;
+    }
+
+    /**
+     * One of its own auctions: you're named as the seller, or it has the amount and (shown) price of a listing it made
+     * in the last two days. Each of `mine` is matched once; matched ones are taken out of the list.
+     */
+    private boolean isOwn(ItemStack listing, java.util.List<Own> mine) {
+        String me = mc.player.getGameProfile().name();
+        LoreComponent lore = listing.get(DataComponentTypes.LORE);
+        Pattern name = Pattern.compile("(?<![A-Za-z0-9_])" + Pattern.quote(me) + "(?![A-Za-z0-9_])");
+        if (lore != null) for (Text line : lore.lines()) if (name.matcher(line.getString()).find()) return true;
+        FlipBot.Shown shown = shownPrice(listing);
+        if (shown == null) return false;
+        for (Own o : mine) {
+            if (o.count == listing.getCount() && Math.abs(o.price - shown.value()) <= shown.slack() + 1) {
+                mine.remove(o);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static FlipBot.Shown shownPrice(ItemStack stack) {
+        LoreComponent lore = stack.get(DataComponentTypes.LORE);
+        if (lore == null) return null;
+        for (Text line : lore.lines()) {
+            String s = line.getString();
+            if (s.contains("each") || s.contains("Worth")) continue;
+            Matcher m = PRICE_LINE.matcher(s);
+            if (m.find()) return FlipBot.shown(m.group(1));
+        }
+        return null;
     }
 
     /** What /ah searches by: the item's plain name, e.g. "gold nugget". */
