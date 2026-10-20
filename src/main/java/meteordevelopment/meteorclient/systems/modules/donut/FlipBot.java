@@ -9,6 +9,7 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
@@ -62,6 +63,9 @@ import java.util.regex.Pattern;
  * stock instead of following the price down; it sells again once the price comes back.
  */
 public class FlipBot extends Module {
+    /** A price: a number with an optional k/m/b/t right after it (not the first letter of the next word: "$150 by"). */
+    private static final String AMOUNT = "([0-9][0-9,]*(?:\\.[0-9]+)?(?:\\s?[kmbtKMBT](?![A-Za-z]))?)";
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgProfit = settings.createGroup("Profit");
     private final SettingGroup sgRisk = settings.createGroup("Stop Loss");
@@ -111,8 +115,8 @@ public class FlipBot extends Module {
 
     private final Setting<Integer> maxOrders = sgGeneral.add(new IntSetting.Builder()
         .name("max-items")
-        .description("How many different items it invests in at once.")
-        .defaultValue(2)
+        .description("How many different items it flips at once. A new one is only bought once an item's stock is sold (or held through a crash). 1 = one item at a time.")
+        .defaultValue(1)
         .range(1, 18)
         .sliderRange(1, 6)
         .build()
@@ -120,10 +124,10 @@ public class FlipBot extends Module {
 
     private final Setting<Integer> maxOrderAmount = sgGeneral.add(new IntSetting.Builder()
         .name("max-order-amount")
-        .description("Most items in one order.")
-        .defaultValue(1000)
+        .description("Most items in one order. Orders are also kept to what your auction slots can sell soon: one full set of listings until it has seen how fast the item sells.")
+        .defaultValue(512)
         .range(1, 100000)
-        .sliderRange(64, 5000)
+        .sliderRange(16, 2048)
         .build()
     );
 
@@ -228,18 +232,18 @@ public class FlipBot extends Module {
     );
 
     private final Setting<Integer> perListing = sgSell.add(new IntSetting.Builder()
-        .name("amount-per-listing")
-        .description("Items in each auction listing.")
-        .defaultValue(1)
-        .range(1, 64)
-        .sliderRange(1, 64)
+        .name("listing-size")
+        .description("Items in each auction listing. 0 matches the auction house: singles for items people list one at a time, stacks for items sold by the stack (ender pearls...).")
+        .defaultValue(0)
+        .range(0, 64)
+        .sliderRange(0, 64)
         .build()
     );
 
     private final Setting<Integer> maxListings = sgSell.add(new IntSetting.Builder()
         .name("max-listings")
-        .description("Your auction house slot limit: it waits when this many of its listings are up.")
-        .defaultValue(10)
+        .description("Your auction house slot limit (20 on DonutSMP): it waits when this many of its listings are up, and buys no more than these slots can sell soon.")
+        .defaultValue(20)
         .range(1, 100)
         .sliderRange(1, 45)
         .build()
@@ -293,7 +297,8 @@ public class FlipBot extends Module {
     );
 
     public FlipBot() {
-        super(Categories.Donut, "flip-bot", "Buys items through /orders and sells them on the auction house by itself, picking what's worth flipping and backing off when prices crash.");    }
+        super(Categories.Donut, "flip-bot", "Buys items through /orders and sells them on the auction house by itself, picking what's worth flipping and backing off when prices crash.");
+    }
 
     // ------------------------------------------------------------------ saved state
 
@@ -304,19 +309,39 @@ public class FlipBot extends Module {
         int delivered, collected, listed, sold;
         long revenue;
         long createdAt, lastSeen, closedAt;
-        /** PENDING (just placed), OPEN, CLOSED (no longer buying, stock may remain), DONE (all sold). */
+        /**
+         * PENDING (Create Order pressed, not yet seen in Your Orders), OPEN, CANCELLING (cancel clicked, not yet seen
+         * cancelled), CLOSED (no longer buying, stock may remain), DONE (all sold).
+         */
         String state = "PENDING";
         boolean cancelWanted;
-        int missedChecks;
+        int missedChecks, cancelTries;
+        long noCancelUntil;
+    }
+
+    /** An order that may still be buying. */
+    private static boolean live(Position p) {
+        return p.state.equals("PENDING") || p.state.equals("OPEN") || p.state.equals("CANCELLING");
     }
 
     static final class Obs {
         long t;
-        /** Cheapest, second cheapest and the average of the five cheapest auctions, per item. */
+        /** Cheapest, second cheapest and the average of the five cheapest auctions, per item, other sellers only. */
         double ahEach, ah2nd, ahLow5;
-        int ahCount;
-        double orderEach;
+        /** How far each of the two cheapest can really be from the shown price, per item. */
+        double ahSlack, ah2ndSlack;
+        int ahCount, ownCount;
+        /** How many items the cheapest listings usually hold (1 for singles, 16 or 64 for items sold by the stack). */
+        int lot;
+        double orderEach, orderSlack;
         boolean hasOrder, full, crash;
+    }
+
+    /** An auction price to beat: per item, how far the real price can be from what's shown, and the listing's size. */
+    private record Ask(double each, double slack, int count) {
+        Ask(double each, double slack) {
+            this(each, slack, 1);
+        }
     }
 
     static final class ItemInfo {
@@ -327,7 +352,16 @@ public class FlipBot extends Module {
         long soldUnits, soldValue;
         long firstSale;
         boolean discovered;
+        /** When /orders last showed someone ordering it. */
+        long seenInOrders;
+        /** The usual auction listing size last seen (0 not known yet). */
+        int lot;
+        /** When its stock first went missing from the inventory, this session (not saved: a restart starts over). */
+        transient long missingSince;
     }
+
+    /** Most discovered items scanned besides the watchlist: the ones seen in /orders most recently. */
+    private static final int MAX_DISCOVERED = 30;
 
     static final class Listing {
         String item;
@@ -343,7 +377,8 @@ public class FlipBot extends Module {
         long profit;
     }
 
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    // Not pretty-printed: it's rewritten after every scan. NaN/Infinity allowed so one bad number can't stop saving.
+    private static final Gson GSON = new GsonBuilder().serializeSpecialFloatingPointValues().create();
     private State state;
     private long lastSave;
 
@@ -410,7 +445,9 @@ public class FlipBot extends Module {
     @Override
     public void onActivate() {
         // Also runs on every join while on: keep the saved state, just restart what was in progress.
+        leaving = false;
         if (state == null) load();
+        if (Modules.get().isActive(AHSell.class)) warning("AH Sell is on too: turn it off, both use the sell slot and the auction house.");
         abortJob(null);
         backoffUntil = System.currentTimeMillis() + 3000;
         nextOrderCheck = 0;
@@ -425,13 +462,31 @@ public class FlipBot extends Module {
     public void onDeactivate() {
         abortJob(null);
         save();
+        // Meteor also calls this on every disconnect, with the module staying on: only a real stop says so.
+        if (leaving) {
+            leaving = false;
+            return;
+        }
         if (state != null) info("Stopped. Profit so far: %s. Open: %s.", money(state.profit), openSummary());
         sessionStart = 0;
     }
 
-    @EventHandler
+    private boolean leaving;
+
+    /** Runs before Modules' own leave handler, which deactivates the module. */
+    @EventHandler(priority = meteordevelopment.orbit.EventPriority.HIGHEST)
     private void onLeave(GameLeftEvent event) {
-        job = null;
+        leaving = true;
+        // Let the job book whatever it already did (a listing sent, items collected) before it's dropped.
+        Job j = job;
+        setJob(null);
+        if (j != null && mc.player != null) {
+            try {
+                j.onFail.run();
+            } catch (RuntimeException e) {
+                MeteorClient.LOG.warn("[Ember FlipBot] Cleanup of \"{}\" on leaving threw", j.name, e);
+            }
+        }
         save();
     }
 
@@ -477,15 +532,23 @@ public class FlipBot extends Module {
         }
     }
 
-    private void start(Job j) {
+    /** What the current job is ("ordering Dispenser"), for the network thread, which mustn't touch the job itself. */
+    private volatile String jobKind = "";
+
+    private void setJob(Job j) {
         job = j;
+        jobKind = j == null ? "" : j.name;
+    }
+
+    private void start(Job j) {
+        setJob(j);
         status = j.name;
         MeteorClient.LOG.info("[Ember FlipBot] Job: {}", j.name);
     }
 
     private void abortJob(String why) {
         if (job != null && why != null) MeteorClient.LOG.info("[Ember FlipBot] Job \"{}\" stopped: {}", job.name, why);
-        job = null;
+        setJob(null);
         if (mc.player != null && (mc.currentScreen instanceof GenericContainerScreen || mc.currentScreen instanceof InventoryScreen)) mc.player.closeHandledScreen();
         else if (mc.currentScreen instanceof DialogScreen<?>) mc.setScreen(null);
     }
@@ -508,20 +571,35 @@ public class FlipBot extends Module {
             }
             Job j = job;
             Step s = j.steps.get(j.index);
+            boolean finished = false;
             try {
                 if (s.fn.tick(j.ticks++)) {
                     j.index++;
                     j.ticks = 0;
-                    if (job == j && j.index >= j.steps.size()) {
-                        job = null;
-                        j.onDone.run();
-                    }
+                    finished = job == j && j.index >= j.steps.size();
                 } else if (j.ticks > s.timeout) throw new Fail(s.what + " took too long");
-            } catch (Fail f) {
-                abortJob(f.getMessage());
+            } catch (RuntimeException e) {
+                // Fail is the expected way out; anything else (a menu vanishing between ticks) is handled the same,
+                // so one surprise can't wedge the bot or take the game down with it.
+                if (!(e instanceof Fail)) MeteorClient.LOG.warn("[Ember FlipBot] Step \"{}\" of \"{}\" threw", s.what, j.name, e);
+                abortJob(e instanceof Fail ? e.getMessage() : s.what + ": " + e);
                 backoffUntil = now + 20_000;
                 status = "retrying soon";
-                j.onFail.run();
+                try {
+                    j.onFail.run();
+                } catch (RuntimeException e2) {
+                    MeteorClient.LOG.warn("[Ember FlipBot] Cleanup after \"{}\" threw", j.name, e2);
+                }
+            }
+            // Outside the try: a job that finished must never also run its failure cleanup (it would book twice).
+            if (finished) {
+                setJob(null);
+                try {
+                    j.onDone.run();
+                } catch (RuntimeException e) {
+                    MeteorClient.LOG.warn("[Ember FlipBot] Finishing \"{}\" threw", j.name, e);
+                    backoffUntil = now + 20_000;
+                }
             }
             return;
         }
@@ -534,19 +612,44 @@ public class FlipBot extends Module {
             backoffUntil = now + 3000;
             return;
         }
-        // The player is using a menu or typing: don't fight them for the screen.
+        // The player is using a menu or typing: don't fight them for the screen. A menu nobody touches for 3 minutes
+        // (a server dialog left open, a stuck "waiting for response") gets closed, so an overnight run can't stall.
         if (mc.currentScreen != null) {
             status = "paused, menu open";
+            // Moving the mouse means someone's using it: only a menu left alone for 3 minutes counts as stuck.
+            double mouse = mc.mouse.getX() * 31 + mc.mouse.getY();
+            if (mc.currentScreen != idleScreen || mouse != idleMouse) {
+                idleScreen = mc.currentScreen;
+                idleMouse = mouse;
+                idleSince = now;
+            } else if (now - idleSince > 180_000 && (mc.currentScreen instanceof DialogScreen<?> || mc.currentScreen instanceof GenericContainerScreen
+                || mc.currentScreen instanceof net.minecraft.client.gui.screen.dialog.WaitingForResponseScreen)) {
+                MeteorClient.LOG.info("[Ember FlipBot] Closing a screen left open for 3 minutes: {}", mc.currentScreen.getClass().getSimpleName());
+                if (mc.currentScreen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen<?>) mc.player.closeHandledScreen();
+                else mc.setScreen(null);
+                idleScreen = null;
+            }
             return;
         }
-        plan(now);
+        idleScreen = null;
+        try {
+            plan(now);
+        } catch (RuntimeException e) {
+            MeteorClient.LOG.warn("[Ember FlipBot] Planning threw", e);
+            backoffUntil = now + 30_000;
+        }
     }
+
+    private Screen idleScreen;
+    private long idleSince;
+    private double idleMouse;
 
     // ------------------------------------------------------------------ what to do next
 
     private void plan(long now) {
+        checkMissingStock(now);
         boolean anyOpen = false;
-        for (Position p : state.positions) if (p.state.equals("PENDING") || p.state.equals("OPEN") || p.cancelWanted) anyOpen = true;
+        for (Position p : state.positions) if (live(p)) anyOpen = true;
         boolean collectable = false;
         for (Position p : state.positions) if (!p.state.equals("DONE") && p.delivered > p.collected) collectable = true;
 
@@ -564,23 +667,34 @@ public class FlipBot extends Module {
             return;
         }
 
-        // 3. Learn which items people order.
+        // 3. Keep an eye on what it holds (stop loss, outbids) even while busy.
+        boolean free = canInvest(now);
+        Item held = nextScan(now, true);
+        if (held != null && !free) {
+            startScan(held, false);
+            return;
+        }
+        if (!free) {
+            status = stockCount() > 0 || anyOpen ? "flipping, waiting for sales" : "waiting";
+            return;
+        }
+
+        // 4. Free to buy: learn which items people order, then, once every candidate has been looked at, invest in
+        // the best one that's passed its checks; otherwise scan the next item. (Searching only happens now: while
+        // it's flipping something it sells, it doesn't shop.)
         if (discover.get() && now >= nextDiscover) {
             nextDiscover = now + 30 * 60_000L;
             startDiscover();
             return;
         }
-
-        // 4. Once every candidate has been looked at, invest in the best one that's passed its checks; otherwise
-        // scan the next item. (Investing goes first: with many items a scan round can outlast rescan-minutes.)
-        if (canInvest(now) && everyoneScanned(now)) {
+        if (everyoneScanned(now)) {
             Pick pick = bestPick(now);
             if (pick != null) {
                 startOrder(pick);
                 return;
             }
         }
-        Item scan = nextScan(now);
+        Item scan = nextScan(now, false);
         if (scan != null) {
             startScan(scan, false);
             return;
@@ -591,17 +705,23 @@ public class FlipBot extends Module {
     private List<Item> candidates() {
         LinkedHashSet<Item> set = new LinkedHashSet<>(watchlist.get());
         if (discover.get()) {
-            for (Map.Entry<String, ItemInfo> e : state.items.entrySet()) if (e.getValue().discovered) set.add(item(e.getKey()));
+            state.items.entrySet().stream()
+                .filter(e -> e.getValue().discovered)
+                .sorted((a, b) -> Long.compare(b.getValue().seenInOrders, a.getValue().seenInOrders))
+                .limit(MAX_DISCOVERED)
+                .forEach(e -> set.add(item(e.getKey())));
         }
         for (Position p : state.positions) if (!p.state.equals("DONE")) set.add(item(p.item));
         set.remove(Items.AIR);
         return new ArrayList<>(set);
     }
 
-    private Item nextScan(long now) {
+    /** The candidate due a scan the longest; with onlyHeld, only items it has an order or stock in. */
+    private Item nextScan(long now, boolean onlyHeld) {
         Item oldest = null;
         long oldestAt = Long.MAX_VALUE;
         for (Item item : candidates()) {
+            if (onlyHeld && !hasStake(item)) continue;
             ItemInfo info = info(item);
             if (now < info.cooldownUntil && !hasStake(item)) continue;
             if (now - info.lastScan < rescan.get() * 60_000L) continue;
@@ -625,10 +745,18 @@ public class FlipBot extends Module {
 
     private boolean canInvest(long now) {
         if (now < orderSlotsFullUntil || now < noMoneyUntil) return false;
-        int open = 0;
-        for (Position p : state.positions) if (p.state.equals("PENDING") || p.state.equals("OPEN")) open++;
-        // Stock held through a crash doesn't block other items, but deliveries need room to land in.
-        return open < maxOrders.get() && freeSlots() >= 6 && budgetLeft() > 0;
+        // Items being flipped: an open order, or stock not yet listed. One held through a crash doesn't count, so
+        // the bot moves on while it waits for the price to come back; nor do listings already up, waiting to sell.
+        Set<String> busy = new HashSet<>();
+        for (Position p : state.positions) {
+            if (p.state.equals("DONE")) continue;
+            boolean stock = p.collected > p.listed || p.delivered > p.collected;
+            if (live(p) || stock && now >= info(item(p.item)).cooldownUntil) busy.add(p.item);
+        }
+        // Then: auction slots with room for the new item, deliveries with room to land in, and what's already coming
+        // fitting in a couple of rounds of slots: quick flips, not stock that never sells.
+        return busy.size() < maxOrders.get() && activeListings() < maxListings.get() * 3 / 4 && freeSlots() >= 6 && budgetLeft() > 0
+            && pipelineListings() < 2.0 * maxListings.get();
     }
 
     private long committed() {
@@ -667,19 +795,26 @@ public class FlipBot extends Module {
             Obs o = latestFull(item);
             if (o == null || now - o.t > Math.max(rescan.get() * 120_000L, 20 * 60_000L) || !o.hasOrder || o.ahCount == 0) continue;
             if (info.goodStreak < confirmScans.get()) continue;
-            long buy = bidPrice(o.orderEach);
-            double net = listPrice(sellAgainst(o), 1) * (1 - tax.get() / 100);
+            long buy = bidPrice(o.orderEach, o.orderSlack);
+            double net = netEach(o);
             double ratio = net / buy;
             if (ratio < minProfit.get()) continue;
             // max-per-item covers what's already tied up in the item (unsold stock), not just the new order.
             long cap = Math.min(parsePrice(maxPerItem.get()) - committed(item), left);
             int amount = (int) Math.min(maxOrderAmount.get(), cap / Math.max(1, buy));
-            // What it sold in the past bounds how much it buys: about a day of its own sales, never under a stack.
+            // Small, quick flips: no more than one full set of auction slots of it (in the size it sells in), or,
+            // once it's seen how fast the item sells, about six hours of its own sales if that's more.
+            int lot = lotSize(item);
+            long slotsFull = (long) maxListings.get() * lot;
+            long sixHours = 0;
             if (info.soldUnits > 0 && info.firstSale > 0) {
                 double hours = Math.max(1, (now - info.firstSale) / 3_600_000.0);
-                amount = (int) Math.min(amount, Math.max(64, info.soldUnits / hours * 24));
+                sixHours = (long) (info.soldUnits / hours * 6);
             }
-            if (amount < 1) continue;
+            amount = (int) Math.min(amount, Math.max(slotsFull, sixHours));
+            // Scraps aren't worth an order (and the visits to collect it): under four listings' worth and under
+            // 1% of max-per-item, wait until more money is free.
+            if (amount < 1 || amount < lot * 4 && (double) amount * buy < parsePrice(maxPerItem.get()) / 100.0) continue;
             double score = (net - buy) * amount;
             if (best == null || score > best.score) best = new Pick(item, buy, amount, ratio, score);
         }
@@ -701,6 +836,28 @@ public class FlipBot extends Module {
         return null;
     }
 
+    /** Items per listing: the setting, or (0) the size people list this item in on the auction house. */
+    private int lotSize(Item item) {
+        int max = Math.max(1, item.getMaxCount());
+        if (perListing.get() > 0) return Math.min(perListing.get(), max);
+        int lot = info(item).lot;
+        return Math.max(1, Math.min(lot, max));
+    }
+
+    /**
+     * Listings' worth of stock on the way to the auction house: bought and not listed yet, plus what open orders will
+     * still bring in. Kept to a couple of auction houses full, so it never buys more than it can sell soon.
+     */
+    private double pipelineListings() {
+        double lots = 0;
+        for (Position p : state.positions) {
+            if (p.state.equals("DONE")) continue;
+            int coming = (live(p) ? p.amount : p.delivered) - p.listed;
+            lots += Math.max(0, coming) / (double) lotSize(item(p.item));
+        }
+        return lots;
+    }
+
     private int unlisted(Item item) {
         int n = 0;
         for (Position p : state.positions) if (p.item.equals(id(item)) && !p.state.equals("DONE")) n += p.collected - p.listed;
@@ -713,14 +870,77 @@ public class FlipBot extends Module {
         return n;
     }
 
+    /**
+     * Its listings still up. One that's been up two days with no sale seen has most likely expired back to the auction
+     * house's Your Items: it stops counting, and its items count as unlisted stock again (sold again if they're
+     * claimed back into the inventory, written off by checkMissingStock if they aren't).
+     */
     private int activeListings() {
         long now = System.currentTimeMillis();
-        state.listings.removeIf(l -> now - l.at > 48 * 3_600_000L);
+        for (Iterator<Listing> it = state.listings.iterator(); it.hasNext(); ) {
+            Listing l = it.next();
+            if (now - l.at <= 48 * 3_600_000L) continue;
+            it.remove();
+            int left = l.units;
+            for (Position p : state.positions) {
+                if (!p.item.equals(l.item) || p.state.equals("DONE")) continue;
+                int take = Math.min(left, p.listed - p.sold);
+                p.listed -= take;
+                left -= take;
+                if (left <= 0) break;
+            }
+            warning("A %s listing has been up 2 days with no sale seen. If it expired, claim it from the auction house's Your Items: it gets sold again.", name(item(l.item)));
+        }
         return state.listings.size();
     }
 
+    private long nextStockCheck;
+
+    /**
+     * Stock it should be holding but isn't in the inventory (died, moved by hand, an expired listing never claimed)
+     * for half an hour is written off as a loss, so it stops counting against the budget and the position can finish.
+     */
+    private void checkMissingStock(long now) {
+        if (now < nextStockCheck) return;
+        nextStockCheck = now + 60_000;
+        Set<String> items = new HashSet<>();
+        for (Position p : state.positions) if (!p.state.equals("DONE")) items.add(p.item);
+        for (String id : items) {
+            Item item = item(id);
+            ItemInfo info = info(item);
+            int missing = unlisted(item) - count(item);
+            if (missing <= 0) {
+                info.missingSince = 0;
+                continue;
+            }
+            if (info.missingSince == 0) {
+                info.missingSince = now;
+                continue;
+            }
+            if (now - info.missingSince < 30 * 60_000L) continue;
+            info.missingSince = 0;
+            int left = missing;
+            long cost = 0;
+            for (Position p : state.positions) {
+                if (!p.item.equals(id) || p.state.equals("DONE")) continue;
+                int take = Math.min(left, p.collected - p.listed);
+                if (take <= 0) continue;
+                p.listed += take;
+                p.sold += take;
+                cost += p.priceEach * take;
+                left -= take;
+                if (left <= 0) break;
+            }
+            state.profit -= cost;
+            warning("%d %s it bought aren't in your inventory any more: written off (%s).", missing, name(item), money(cost));
+            trade("missing", item, missing, -cost, "not in the inventory for 30 minutes");
+            finishPositions();
+            save();
+        }
+    }
+
     private boolean hasOpenOrder(Item item) {
-        for (Position p : state.positions) if (p.item.equals(id(item)) && (p.state.equals("PENDING") || p.state.equals("OPEN"))) return true;
+        for (Position p : state.positions) if (p.item.equals(id(item)) && live(p)) return true;
         return false;
     }
 
@@ -733,9 +953,10 @@ public class FlipBot extends Module {
     private double costEach(Item item) {
         long cost = 0, units = 0;
         for (Position p : state.positions) {
-            if (!p.item.equals(id(item)) || p.state.equals("DONE")) continue;
-            cost += p.priceEach * (long) Math.max(1, p.collected - p.sold);
-            units += Math.max(1, p.collected - p.sold);
+            int held = p.collected - p.sold;
+            if (!p.item.equals(id(item)) || p.state.equals("DONE") || held <= 0) continue;
+            cost += p.priceEach * held;
+            units += held;
         }
         return units == 0 ? 0 : (double) cost / units;
     }
@@ -764,9 +985,9 @@ public class FlipBot extends Module {
      * The auction price to undercut: the cheapest, unless it's a lone listing far under the rest (a troll or one
      * panicking seller) while the item as a whole isn't crashing; then the next one.
      */
-    private double sellAgainst(Obs o) {
-        if (o.ahCount >= 2 && o.ahEach < o.ah2nd * (1 - crashDrop.get() / 100.0) && !o.crash) return o.ah2nd;
-        return o.ahEach;
+    private Ask sellAgainst(Obs o) {
+        if (o.ahCount >= 2 && o.ahEach < o.ah2nd * (1 - crashDrop.get() / 100.0) && !o.crash) return new Ask(o.ah2nd, o.ah2ndSlack);
+        return new Ask(o.ahEach, o.ahSlack);
     }
 
     /**
@@ -783,26 +1004,32 @@ public class FlipBot extends Module {
         return values.get(values.size() / 2);
     }
 
-    /** Just above the best order for an item, beating the shown price's rounding too. */
-    private long bidPrice(double topShown) {
-        double above = topShown + roundingSlack(topShown);
+    /** Just above the best order for an item (its real price can be up to `slack` over what's shown), plus outbid-by. */
+    private long bidPrice(double topShown, double slack) {
+        double above = topShown + slack;
         String by = outbid.get().trim();
-        double add = by.endsWith("%") ? above * parsePercent(by) / 100 : Math.max(0, parsePrice(by));
+        double add = by.endsWith("%") ? above * Math.max(0, parsePercent(by)) / 100 : Math.max(0, parsePrice(by));
         return (long) Math.ceil(above + Math.max(1, add));
     }
 
-    /** What a listing of `units` goes for: just under the cheapest, beating the shown price's rounding. */
-    private long listPrice(double cheapestEachShown, int units) {
-        double below = cheapestEachShown * units - roundingSlack(cheapestEachShown * units);
-        return (long) Math.floor(below - Math.max(0, parsePrice(undercutBy.get())));
+    /** What a listing of `units` goes for: under the cheapest even at the low end of its shown rounding. */
+    private long listPrice(Ask cheapest, int units) {
+        double below = (cheapest.each - cheapest.slack) * units;
+        return Math.max(1, (long) Math.floor(below - Math.max(0, parsePrice(undercutBy.get()))));
     }
 
-    /** DonutSMP shows prices as 9.2K or 1.5M, so the real price can be up to half a step away. */
-    private static double roundingSlack(double shown) {
-        if (shown >= 1e9) return 0.05e9;
-        if (shown >= 1e6) return 0.05e6;
-        if (shown >= 1e3) return 50;
+    /** How far a single price shown with one decimal ("9.2K", "1.5M") can be from the real one. */
+    private static double singleSlack(double price) {
+        if (price >= 1e12) return 0.05e12;
+        if (price >= 1e9) return 0.05e9;
+        if (price >= 1e6) return 0.05e6;
+        if (price >= 1e3) return 50;
         return 0;
+    }
+
+    /** What one item nets after tax when listed against the market now. */
+    private double netEach(Obs o) {
+        return listPrice(sellAgainst(o), 1) * (1 - tax.get() / 100);
     }
 
     /**
@@ -816,6 +1043,7 @@ public class FlipBot extends Module {
         // Panic selling is many cheap listings, not one: judge by the five cheapest together.
         boolean crashed = ref > 0 && o.ahCount > 0 && o.ahLow5 < ref * (1 - crashDrop.get() / 100.0);
         o.crash = crashed;
+        if (o.ahCount > 0 && o.lot > 0) info.lot = o.lot;
         info.obs.add(o);
         info.obs.removeIf(x -> now - x.t > 24 * 3_600_000L);
         while (info.obs.size() > 200) info.obs.removeFirst();
@@ -833,19 +1061,19 @@ public class FlipBot extends Module {
         }
 
         double ratio = 0;
-        double net = o.ahCount > 0 ? listPrice(sellAgainst(o), 1) * (1 - tax.get() / 100) : 0;
-        if (o.hasOrder && o.ahCount > 0) ratio = net / bidPrice(o.orderEach);
+        double net = o.ahCount > 0 ? netEach(o) : 0;
+        if (o.hasOrder && o.ahCount > 0) ratio = net / bidPrice(o.orderEach, o.orderSlack);
         if (o.full && !crashed) info.goodStreak = ratio >= minProfit.get() ? info.goodStreak + 1 : 0;
 
         // An order that no longer pays (or whose item is crashing): stop buying.
         for (Position p : state.positions) {
-            if (!p.item.equals(id(item)) || !p.state.equals("OPEN") || p.cancelWanted || o.ahCount == 0) continue;
+            if (!p.item.equals(id(item)) || !p.state.equals("OPEN") || p.cancelWanted || o.ahCount == 0 || now < p.noCancelUntil) continue;
             double nowRatio = net / p.priceEach;
             if (crashed && nowRatio < minProfit.get() || nowRatio < minProfit.get() * 0.85) {
                 p.cancelWanted = true;
                 nextOrderCheck = 0;
                 info("Cancelling the %s order: it would only make %.2fx now.", name(item), nowRatio);
-            } else if (followOutbids.get() && o.hasOrder && o.orderEach > p.priceEach + roundingSlack(p.priceEach)
+            } else if (followOutbids.get() && o.hasOrder && o.orderEach - o.orderSlack > p.priceEach
                 && now - info.lastReorder > 30 * 60_000L && ratio >= minProfit.get()) {
                 p.cancelWanted = true;
                 info.lastReorder = now;
@@ -854,8 +1082,8 @@ public class FlipBot extends Module {
                 info("Someone outbid the %s order (%s vs yours %s): ordering again above them.", name(item), money(o.orderEach), money(p.priceEach));
             }
         }
-        MeteorClient.LOG.info("[Ember FlipBot] Scan {}: ah {} x{} (low5 {}, usual {}), order {}, ratio {}, streak {}{}", name(item),
-            o.ahCount > 0 ? (long) o.ahEach : "-", o.ahCount, (long) o.ahLow5, (long) ref, o.hasOrder ? (long) o.orderEach : "-",
+        MeteorClient.LOG.info("[Ember FlipBot] Scan {}: ah {} x{} (+{} own, low5 {}, usual {}), order {}, ratio {}, streak {}{}", name(item),
+            o.ahCount > 0 ? (long) o.ahEach : "-", o.ahCount, o.ownCount, (long) o.ahLow5, (long) ref, o.hasOrder ? (long) o.orderEach : "-",
             String.format(Locale.ROOT, "%.2f", ratio), info.goodStreak, crashed ? " CRASH" : "");
         save();
     }
@@ -884,7 +1112,13 @@ public class FlipBot extends Module {
             info(item).lastAhScan = o.t;
             recordScan(item, o);
         };
-        j.onFail = () -> info(item).lastScan = System.currentTimeMillis() - rescan.get() * 30_000L;
+        j.onFail = () -> {
+            long now = System.currentTimeMillis();
+            // Try again in half a rescan; and don't retry a failed price check right away (a rate-limited /ah
+            // only stays locked longer if it's hammered).
+            if (!ahOnly) info(item).lastScan = now - rescan.get() * 30_000L;
+            else info(item).holdUntil = now + 2 * 60_000L;
+        };
         start(j);
     }
 
@@ -893,30 +1127,66 @@ public class FlipBot extends Module {
             .then("open /ah", 2, t -> command("ah " + searchName(item)))
             .then("auction house", 120, t -> settled(t, "Auction", 20))
             .then("read auctions", 2, t -> {
-                List<Double> each = new ArrayList<>();
+                List<Ask> asks = new ArrayList<>();
+                List<Listing> mine = new ArrayList<>();
+                for (Listing l : state.listings) if (l.item.equals(id(item))) mine.add(l);
                 GenericContainerScreenHandler h = container();
                 if (h == null) throw new Fail("auction house closed");
-                int listings = (h.getRows() - 1) * 9;
+                int listings = Math.min(h.getInventory().size(), (h.getRows() - 1) * 9);
                 for (int i = 0; i < listings; i++) {
                     ItemStack stack = h.getInventory().getStack(i);
                     if (!sameItem(stack, item)) continue;
-                    long total = priceOf(stack);
-                    if (total > 0) each.add((double) total / stack.getCount());
+                    Shown total = priceOf(stack);
+                    if (total == null || total.value <= 0) continue;
+                    // Its own listings aren't competition: undercutting them would walk the price down by itself.
+                    if (isOwnListing(stack, total, mine)) {
+                        o.ownCount++;
+                        continue;
+                    }
+                    // A stack's total is rounded coarsely ("1.3M" for 30): beating that for sure would cost a few
+                    // percent, so per item it's held to what a single listing at that price is rounded by.
+                    double each = (double) total.value / stack.getCount();
+                    asks.add(new Ask(each, Math.min(total.slack / stack.getCount(), singleSlack(each)), stack.getCount()));
                 }
-                Collections.sort(each);
-                o.ahCount = each.size();
-                if (!each.isEmpty()) {
-                    o.ahEach = each.getFirst();
-                    o.ah2nd = each.size() > 1 ? each.get(1) : o.ahEach;
+                asks.sort(Comparator.comparingDouble(Ask::each));
+                o.ahCount = asks.size();
+                if (!asks.isEmpty()) {
+                    o.ahEach = asks.getFirst().each;
+                    o.ahSlack = asks.getFirst().slack;
+                    Ask second = asks.size() > 1 ? asks.get(1) : asks.getFirst();
+                    o.ah2nd = second.each;
+                    o.ah2ndSlack = second.slack;
                     double sum = 0;
-                    int n = Math.min(5, each.size());
-                    for (int i = 0; i < n; i++) sum += each.get(i);
+                    int n = Math.min(5, asks.size());
+                    for (int i = 0; i < n; i++) sum += asks.get(i).each;
                     o.ahLow5 = sum / n;
+                    // The usual listing size among the ten cheapest: what buyers of this item take in one go.
+                    List<Integer> counts = new ArrayList<>();
+                    for (int i = 0; i < Math.min(10, asks.size()); i++) counts.add(asks.get(i).count);
+                    Collections.sort(counts);
+                    o.lot = counts.get(counts.size() / 2);
                 }
                 return true;
             })
             .pause(10)
             .then("close", 2, t -> closeMenu());
+    }
+
+    /**
+     * One of the bot's own auctions: the lore names you as the seller, or it matches a listing the bot made (same
+     * amount, same price as shown). Each of `mine` is matched once; matched ones are taken out of the list.
+     */
+    private boolean isOwnListing(ItemStack stack, Shown total, List<Listing> mine) {
+        String me = mc.player.getGameProfile().name();
+        // Your name as a whole word ("Bob" isn't "Bobby123").
+        if (!me.isEmpty() && Pattern.compile("(?<![A-Za-z0-9_])" + Pattern.quote(me) + "(?![A-Za-z0-9_])").matcher(loreText(stack)).find()) return true;
+        for (Listing l : mine) {
+            if (l.units == stack.getCount() && Math.abs(l.price - total.value) <= total.slack + 1) {
+                mine.remove(l);
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The orders menu's sort button (a hopper listing the sorts). */
@@ -940,10 +1210,14 @@ public class FlipBot extends Module {
             .then("sorted", 120, t -> before[0] == null || settled(t, "Orders", 6));
     }
 
+    /** Sorted by Most Per Item, or no way to tell (then the page is read as it is: the best price on it still counts). */
     private boolean sortedPerItem() {
         GenericContainerScreenHandler h = container();
+        if (h == null) throw new Fail("orders menu closed");
         int filter = filterSlot(h);
-        return filter < 0 || selectedOption(h.getInventory().getStack(filter)).contains("Per Item");
+        if (filter < 0) return true;
+        String selected = selectedOption(h.getInventory().getStack(filter));
+        return selected.isEmpty() || selected.equals("Most Per Item");
     }
 
     private void orderLookup(Job j, Item item, Obs o) {
@@ -964,6 +1238,7 @@ public class FlipBot extends Module {
                     if (isOurs(item, line)) continue;
                     if (!o.hasOrder || line.each > o.orderEach) {
                         o.orderEach = line.each;
+                        o.orderSlack = line.slack;
                         o.hasOrder = true;
                     }
                 }
@@ -975,8 +1250,8 @@ public class FlipBot extends Module {
 
     private boolean isOurs(Item item, OrderLine line) {
         for (Position p : state.positions) {
-            if (!p.item.equals(id(item)) || !(p.state.equals("OPEN") || p.state.equals("PENDING"))) continue;
-            if (line.amount == p.amount && Math.abs(line.each - p.priceEach) <= roundingSlack(p.priceEach) + 1) return true;
+            if (!p.item.equals(id(item)) || !live(p)) continue;
+            if (line.amount == p.amount && line.priced(p.priceEach)) return true;
         }
         return false;
     }
@@ -1006,15 +1281,17 @@ public class FlipBot extends Module {
         j.pause(10).then("close", 2, t -> closeMenu());
         j.onDone = () -> {
             int added = 0;
+            long now = System.currentTimeMillis();
             for (Item item : seen) {
+                if (item == Items.AIR) continue;
                 ItemInfo info = info(item);
                 if (!info.discovered && !watchlist.get().contains(item)) added++;
                 info.discovered = true;
+                info.seenInOrders = now;
             }
-            // Keep the list of discovered items from growing without end: drop ones not seen for a day.
-            long now = System.currentTimeMillis();
-            for (Map.Entry<String, ItemInfo> e : state.items.entrySet()) {
-                if (e.getValue().discovered && !seen.contains(item(e.getKey())) && now - e.getValue().lastScan > 24 * 3_600_000L && e.getValue().lastScan > 0) e.getValue().discovered = false;
+            // Keep the list of discovered items from growing without end: drop ones nobody has ordered for a day.
+            for (ItemInfo info : state.items.values()) {
+                if (info.discovered && now - info.seenInOrders > 24 * 3_600_000L) info.discovered = false;
             }
             MeteorClient.LOG.info("[Ember FlipBot] Orders show {} items, {} new to scan", seen.size(), added);
             save();
@@ -1033,6 +1310,7 @@ public class FlipBot extends Module {
         p.priceEach = pick.priceEach;
         p.amount = pick.amount;
         orderFail = null;
+        createPressed = false;
         j.then("wait to open orders", 2000, t -> gapPassed())
             .then("open /orders", 2, t -> command("orders"))
             .then("orders", 120, t -> settled(t, "Orders", 12))
@@ -1040,6 +1318,7 @@ public class FlipBot extends Module {
             .then("your orders", 120, t -> settled(t, "Your Orders", 10))
             .then("new order", 2, t -> {
                 GenericContainerScreenHandler h = container();
+                if (h == null) throw new Fail("your orders closed");
                 int slot = findSlot(h, s -> s.getName().getString().contains("New Order"));
                 if (slot < 0) {
                     orderSlotsFullUntil = System.currentTimeMillis() + 30 * 60_000L;
@@ -1051,7 +1330,7 @@ public class FlipBot extends Module {
             .then("choose item dialog", 100, t -> dialogWith("Search") != null && textField(0) != null)
             .then("search item", 10, t -> {
                 if (t < 6) return false;
-                textField(0).setText(searchName(item));
+                field().setText(searchName(item));
                 last[0] = mc.currentScreen;
                 return press(b -> b.equalsIgnoreCase("Search"));
             })
@@ -1064,28 +1343,38 @@ public class FlipBot extends Module {
             .then("amount dialog", 100, t -> mc.currentScreen != last[0] && dialogWith("Next") != null && textField(0) != null)
             .then("type amount", 10, t -> {
                 if (t < 6) return false;
-                textField(0).setText(Integer.toString(pick.amount));
+                field().setText(Integer.toString(pick.amount));
                 last[0] = mc.currentScreen;
                 return press(b -> b.equalsIgnoreCase("Next"));
             })
             .then("price dialog", 100, t -> mc.currentScreen != last[0] && dialogWith("Review Order") != null && textField(0) != null)
             .then("type price", 10, t -> {
                 if (t < 6) return false;
-                textField(0).setText(Long.toString(pick.priceEach));
+                field().setText(Long.toString(pick.priceEach));
                 last[0] = mc.currentScreen;
                 return press(b -> b.equalsIgnoreCase("Review Order"));
             })
             .then("review dialog", 100, t -> mc.currentScreen != last[0] && dialogWith("Create Order") != null)
             .then("create order", 20, t -> {
                 if (t < 10) return false;
+                // Check the review before paying: the right item, amount and price, or nothing is created.
                 String text = screenText(mc.currentScreen);
-                if (!text.contains(Integer.toString(pick.amount)) && !text.contains(String.format(Locale.ROOT, "%,d", pick.amount))) {
-                    throw new Fail("review shows the wrong amount: " + text);
+                Matcher amount = Pattern.compile("Amount:\\s*" + AMOUNT).matcher(text);
+                if (amount.find()) {
+                    // "100", "1,000" or "1.2K": compare within what the display can round away.
+                    Shown s = shown(amount.group(1));
+                    if (s != null && Math.abs(s.value - pick.amount) > s.slack * 2 + 1) throw new Fail("review shows the wrong amount: " + text);
                 }
-                Matcher shown = Pattern.compile("Item:\\s*([^|\\n]+)").matcher(text);
-                if (shown.find() && !shown.group(1).trim().equalsIgnoreCase(name(item))) throw new Fail("review shows the wrong item: " + shown.group(1).trim());
+                Matcher shownItem = Pattern.compile("Item:\\s*([^|\\n]+)").matcher(text);
+                if (shownItem.find() && !shownItem.group(1).trim().equalsIgnoreCase(name(item))) throw new Fail("review shows the wrong item: " + shownItem.group(1).trim());
+                Matcher each = Pattern.compile("Price:\\s*" + PRICE_LINE.pattern()).matcher(text);
+                if (each.find()) {
+                    Shown s = shown(each.group(1));
+                    if (s != null && Math.abs(s.value - pick.priceEach) > s.slack * 2 + 1) throw new Fail("review shows the wrong price: " + each.group(1));
+                }
                 p.createdAt = System.currentTimeMillis();
                 press(b -> b.equalsIgnoreCase("Create Order"));
+                createPressed = true;
                 // Tracked from here on, even if the reply is missed: the next visit to Your Orders confirms it or
                 // drops it, so a created order is never left unwatched (or ordered twice).
                 state.positions.add(p);
@@ -1105,15 +1394,17 @@ public class FlipBot extends Module {
             save();
         };
         j.onFail = () -> {
-            if (orderFail != null) {
-                // The server refused it: nothing was created.
-                state.positions.remove(p);
-                warning("Couldn't order %s: %s", name(item), orderFail);
-                if (orderFail.toLowerCase(Locale.ROOT).contains("money")) noMoneyUntil = System.currentTimeMillis() + 15 * 60_000L;
-                if (orderFail.toLowerCase(Locale.ROOT).contains("limit")) orderSlotsFullUntil = System.currentTimeMillis() + 30 * 60_000L;
-            } else if (state.positions.contains(p)) {
-                nextOrderCheck = System.currentTimeMillis() + 8000;
+            String why = orderFail;
+            if (why != null) {
+                warning("Couldn't order %s: %s", name(item), why);
+                if (why.toLowerCase(Locale.ROOT).contains("money") || why.toLowerCase(Locale.ROOT).contains("afford") || why.toLowerCase(Locale.ROOT).contains("insufficient")) {
+                    noMoneyUntil = System.currentTimeMillis() + 15 * 60_000L;
+                }
+                if (why.toLowerCase(Locale.ROOT).contains("limit")) orderSlotsFullUntil = System.currentTimeMillis() + 30 * 60_000L;
             }
+            // Whatever the reply said, a pressed Create Order stays tracked (PENDING) until Your Orders shows whether
+            // the order exists: two visits without it and it's forgotten. Never drop a live order on a guess.
+            if (state.positions.contains(p)) nextOrderCheck = System.currentTimeMillis() + 8000;
             info(item).goodStreak = 0;
             save();
         };
@@ -1121,25 +1412,45 @@ public class FlipBot extends Module {
     }
 
     private volatile String orderFail;
+    private volatile boolean createPressed;
+
+    /** The dialog's (first) text box; gone means the dialog was replaced or closed under us. */
+    private TextFieldWidget field() {
+        TextFieldWidget f = textField(0);
+        if (f == null) throw new Fail("the dialog's text box is gone");
+        return f;
+    }
 
     // ------------------------------------------------------------------ jobs: your orders (collect, cancel)
 
-    private record OrderLine(double each, int delivered, int amount, boolean completed, boolean cancelled) {}
+    /** An order as its lore shows it; `slack` is how far the real price each can be from the shown one. */
+    private record OrderLine(double each, double slack, int delivered, int amount, boolean completed, boolean cancelled) {
+        /** Whether this line can be an order placed at exactly `priceEach` (a full display step either way). */
+        boolean priced(long priceEach) {
+            return Math.abs(each - priceEach) <= slack * 2 + 1;
+        }
+    }
 
-    private static final Pattern EACH = Pattern.compile("\\$\\s*([0-9][0-9,]*(?:\\.[0-9]+)?\\s*[kmbtKMBT]?)\\s*each");
+    private static final Pattern EACH = Pattern.compile("\\$\\s*" + AMOUNT + "\\s*each");
     private static final Pattern DELIVERED = Pattern.compile("([0-9][0-9,]*)\\s*/\\s*([0-9][0-9,]*)\\s*Delivered");
     private static final Pattern REQUESTED = Pattern.compile("([0-9][0-9,]*)\\s*requested");
 
     private static OrderLine orderLine(ItemStack stack) {
         LoreComponent lore = stack.get(DataComponentTypes.LORE);
         if (lore == null) return null;
-        double each = -1;
+        double each = -1, slack = 0;
         int delivered = 0, amount = 0;
         boolean completed = false, cancelled = false;
         for (Text line : lore.lines()) {
             String s = line.getString();
             Matcher m = EACH.matcher(s);
-            if (m.find()) each = parsePrice(m.group(1));
+            if (m.find()) {
+                Shown shown = shown(m.group(1));
+                if (shown != null) {
+                    each = shown.value;
+                    slack = shown.slack;
+                }
+            }
             m = DELIVERED.matcher(s);
             if (m.find()) {
                 delivered = Integer.parseInt(m.group(1).replace(",", ""));
@@ -1151,7 +1462,7 @@ public class FlipBot extends Module {
             if (lower.contains("completed")) completed = true;
             if (lower.contains("cancelled") || lower.contains("canceled") || lower.contains("expired")) cancelled = true;
         }
-        return each > 0 ? new OrderLine(each, delivered, amount, completed, cancelled) : null;
+        return each > 0 ? new OrderLine(each, slack, delivered, amount, completed, cancelled) : null;
     }
 
     /** Opens Your Orders, matches what's there to the bot's positions, then collects or cancels one order. */
@@ -1159,7 +1470,7 @@ public class FlipBot extends Module {
         Job j = new Job("checking orders");
         int[] target = {-1};
         Position[] which = {null};
-        boolean[] cancel = {false};
+        boolean[] cancel = {false}, collecting = {false}, emptyStorage = {false};
         int[] before = {0};
         j.then("wait to open orders", 2000, t -> gapPassed())
             .then("open /orders", 2, t -> command("orders"))
@@ -1168,10 +1479,11 @@ public class FlipBot extends Module {
             .then("your orders", 120, t -> settled(t, "Your Orders", 10))
             .then("read your orders", 2, t -> {
                 GenericContainerScreenHandler h = container();
+                if (h == null) throw new Fail("your orders closed");
                 Map<Position, Integer> slots = matchOrders(h);
-                // One action per visit: a cancel first, then the biggest collect that fits.
+                // One action per visit: a cancel first, then a collect, if there's room.
                 for (Map.Entry<Position, Integer> e : slots.entrySet()) {
-                    if (e.getKey().cancelWanted && e.getKey().state.equals("OPEN")) {
+                    if (e.getKey().cancelWanted && (e.getKey().state.equals("OPEN") || e.getKey().state.equals("CANCELLING"))) {
                         which[0] = e.getKey();
                         target[0] = e.getValue();
                         cancel[0] = true;
@@ -1195,7 +1507,9 @@ public class FlipBot extends Module {
                     job.then("pause", 15, x -> x >= 10).then("close", 2, x -> closeMenu());
                     return true;
                 }
-                click(container(), target[0], SlotActionType.PICKUP);
+                GenericContainerScreenHandler h = container();
+                if (h == null) throw new Fail("your orders closed");
+                click(h, target[0], SlotActionType.PICKUP);
                 return true;
             })
             .then("edit order", 120, t -> settled(t, "Edit Order", 8))
@@ -1203,6 +1517,7 @@ public class FlipBot extends Module {
                 Position p = which[0];
                 if (cancel[0]) {
                     GenericContainerScreenHandler h = container();
+                    if (h == null) throw new Fail("edit order closed");
                     int slot = findSlot(h, s -> s.getName().getString().toLowerCase(Locale.ROOT).contains("cancel"));
                     if (slot < 0) slot = findSlot(h, s -> s.isOf(Items.RED_CONCRETE) || s.isOf(Items.RED_WOOL) || s.isOf(Items.BARRIER));
                     if (slot < 0) throw new Fail("no cancel button");
@@ -1210,23 +1525,24 @@ public class FlipBot extends Module {
                     job.steps.subList(job.index + 1, job.steps.size()).clear();
                     job.then("confirm cancel", 60, x -> {
                         if (x < 20) return false;
-                        // A confirmation menu or dialog, if DonutSMP asks.
+                        // A confirmation dialog or menu, if DonutSMP asks. Only a screen that says it's one: never
+                        // click around in Your Orders itself.
                         if (mc.currentScreen instanceof DialogScreen<?>) {
                             press(b -> b.toLowerCase(Locale.ROOT).matches(".*(confirm|yes|cancel order).*"));
                             return true;
                         }
                         GenericContainerScreenHandler c = container();
-                        if (c != null && !mc.currentScreen.getTitle().getString().contains("Edit Order")) {
+                        if (c != null && mc.currentScreen.getTitle().getString().toLowerCase(Locale.ROOT).matches(".*(confirm|are you sure).*")) {
                             int ok = findSlot(c, s -> s.getName().getString().toLowerCase(Locale.ROOT).matches(".*(confirm|yes).*") || s.isOf(Items.LIME_STAINED_GLASS_PANE) || s.isOf(Items.LIME_CONCRETE));
                             if (ok >= 0) click(c, ok, SlotActionType.PICKUP);
                         }
                         return true;
                     }).pause(20).then("close", 2, x -> closeMenu());
+                    // Not trusted yet: the next visit checks the order really shows cancelled (or is gone).
                     j.onDone = () -> {
-                        p.cancelWanted = false;
-                        p.state = "CLOSED";
-                        p.closedAt = System.currentTimeMillis();
-                        trade("cancel", item(p.item), p.amount - p.delivered, (long) p.priceEach * (p.amount - p.delivered), "refund for undelivered");
+                        p.state = "CANCELLING";
+                        p.cancelTries++;
+                        p.missedChecks = 0;
                         nextOrderCheck = System.currentTimeMillis() + 5000;
                         save();
                     };
@@ -1236,16 +1552,22 @@ public class FlipBot extends Module {
             })
             .then("collect items", 120, t -> settled(t, "Collect", 8))
             .then("take items", 400, t -> {
-                if (t == 0) before[0] = count(item(which[0].item));
+                Item item = item(which[0].item);
+                if (t == 0) {
+                    before[0] = count(item);
+                    collecting[0] = true;
+                }
                 if (t % 5 != 4) return false;
                 GenericContainerScreenHandler h = container();
                 if (h == null) throw new Fail("collect menu closed");
                 if (freeSlots() <= 1) return true;
-                Item item = item(which[0].item);
                 int got = count(item) - before[0];
                 if (got >= which[0].delivered - which[0].collected) return true;
                 int slot = findSlot(h, s -> s.isOf(item));
-                if (slot < 0 || slot >= h.getRows() * 9) return true;
+                if (slot < 0) {
+                    if (t < 10) emptyStorage[0] = true;
+                    return true;
+                }
                 click(h, slot, SlotActionType.QUICK_MOVE);
                 return false;
             })
@@ -1253,20 +1575,47 @@ public class FlipBot extends Module {
             .then("close", 2, t -> closeMenu())
             .then("count", 20, t -> {
                 if (t < 10) return false;
-                Position p = which[0];
-                int got = Math.max(0, count(item(p.item)) - before[0]);
-                got = Math.min(got, p.delivered - p.collected);
-                p.collected += got;
-                if (got > 0) {
-                    trade("collect", item(p.item), got, (long) p.priceEach * got, "");
-                    info("Collected %d %s (%d/%d delivered so far).", got, name(item(p.item)), p.delivered, p.amount);
-                }
-                // More waiting, and room for it: come back soon.
-                if (p.delivered > p.collected && freeSlots() > 1) nextOrderCheck = System.currentTimeMillis() + 5000;
-                save();
+                collecting[0] = false;
+                bookCollected(which[0], before[0], emptyStorage[0]);
                 return true;
             });
+        j.onFail = () -> {
+            Position p = which[0];
+            if (p == null) return;
+            // Whatever was already taken still counts.
+            if (collecting[0]) bookCollected(p, before[0], false);
+            if (cancel[0] && ++p.cancelTries >= 3) giveUpCancel(p);
+            save();
+        };
         start(j);
+    }
+
+    /** Adds what a collect brought into the inventory to the order's collected count. */
+    private void bookCollected(Position p, int before, boolean emptyStorage) {
+        Item item = item(p.item);
+        int got = Math.max(0, Math.min(count(item) - before, p.delivered - p.collected));
+        p.collected += got;
+        if (got > 0) {
+            trade("collect", item, got, p.priceEach * got, "");
+            info("Collected %d %s (%d/%d delivered so far).", got, name(item), p.delivered, p.amount);
+            // More waiting, and room for it: come back soon.
+            if (p.delivered > p.collected && freeSlots() > 1) nextOrderCheck = System.currentTimeMillis() + 5000;
+        } else if (emptyStorage) {
+            // Delivered but not there to collect: taken by hand. Count it as collected (it's in the inventory if
+            // it was taken here, and sells with the rest) so it isn't looked for again and again.
+            MeteorClient.LOG.info("[Ember FlipBot] {} order shows {} delivered but nothing to collect", name(item), p.delivered - p.collected);
+            p.collected = p.delivered;
+        }
+        save();
+    }
+
+    private void giveUpCancel(Position p) {
+        p.cancelWanted = false;
+        p.cancelTries = 0;
+        // Don't come back to it on the next scan: leave it alone for two hours.
+        p.noCancelUntil = System.currentTimeMillis() + 2 * 3_600_000L;
+        if (p.state.equals("CANCELLING")) p.state = "OPEN";
+        warning("Couldn't cancel the %s order after %d tries; leaving it running.", name(item(p.item)), p.cancelTries);
     }
 
     /** Your Orders: updates each position from its order and returns where each one sits. */
@@ -1274,15 +1623,24 @@ public class FlipBot extends Module {
         Map<Position, Integer> slots = new LinkedHashMap<>();
         Set<Integer> used = new HashSet<>();
         long now = System.currentTimeMillis();
-        for (Position p : state.positions) {
-            if (p.state.equals("DONE") || p.state.equals("CLOSED") && p.delivered <= p.collected) continue;
+        // A page with neither orders nor New Order slots hasn't loaded: don't count anything as missing from it.
+        boolean loaded = findSlot(h, s -> orderLine(s) != null || s.getName().getString().contains("New Order")) >= 0;
+        // Live orders pick their lines first, so a just-closed order can't take the line of a new one like it.
+        List<Position> order = new ArrayList<>();
+        for (Position p : state.positions) if (live(p)) order.add(p);
+        for (Position p : state.positions) if (!live(p)) order.add(p);
+        for (Position p : order) {
+            // Closed orders keep being looked at for a while: deliveries can land just before a cancel goes through.
+            if (p.state.equals("DONE") || p.state.equals("CLOSED") && p.delivered <= p.collected && now - p.closedAt > 15 * 60_000L) continue;
             Item item = item(p.item);
             for (int i = 0; i < Math.min(45, h.getInventory().size()); i++) {
                 if (used.contains(i)) continue;
                 ItemStack stack = h.getInventory().getStack(i);
                 if (!stack.isOf(item)) continue;
                 OrderLine line = orderLine(stack);
-                if (line == null || line.amount != p.amount || Math.abs(line.each - p.priceEach) > roundingSlack(p.priceEach) + 1) continue;
+                if (line == null || line.amount != p.amount || !line.priced(p.priceEach)) continue;
+                // A closed order's line can only be one that shows it's over.
+                if (p.state.equals("CLOSED") && !line.completed && !line.cancelled) continue;
                 used.add(i);
                 slots.put(p, i);
                 int newly = line.delivered - p.delivered;
@@ -1294,24 +1652,35 @@ public class FlipBot extends Module {
                     info("The %s order is up.", name(item));
                 }
                 if (newly > 0) MeteorClient.LOG.info("[Ember FlipBot] {} order: {}/{} delivered", name(item), p.delivered, p.amount);
-                if (p.state.equals("OPEN") && (line.completed || line.cancelled || p.delivered >= p.amount)) {
+                boolean cancelling = p.state.equals("CANCELLING");
+                if ((p.state.equals("OPEN") || cancelling) && (line.completed || line.cancelled || p.delivered >= p.amount)) {
                     p.state = "CLOSED";
                     p.closedAt = now;
                     p.cancelWanted = false;
-                    info("The %s order is %s: %d delivered.", name(item), line.cancelled ? "over" : "complete", p.delivered);
+                    if (cancelling && line.cancelled) {
+                        long refund = p.priceEach * (p.amount - p.delivered);
+                        trade("cancel", item, p.amount - p.delivered, refund, "refund for undelivered");
+                        info("Cancelled the %s order: %d delivered, %s refunded.", name(item), p.delivered, money(refund));
+                    } else {
+                        info("The %s order is %s: %d delivered.", name(item), line.cancelled ? "over" : "complete", p.delivered);
+                    }
+                } else if (cancelling && p.cancelTries >= 3) {
+                    giveUpCancel(p);
                 }
                 break;
             }
-            if (!slots.containsKey(p)) {
-                // Placed but never seen: the order didn't go through. Seen before but gone: collected out and removed.
+            if (!slots.containsKey(p) && loaded) {
+                // Placed but never seen: the order didn't go through. Seen before but gone: removed by the server
+                // (cancelled with nothing to collect, or collected out).
                 p.missedChecks++;
                 if (p.state.equals("PENDING") && p.missedChecks >= 2) {
                     p.state = "DONE";
-                    warning("The %s order never showed up in Your Orders; forgetting it.", name(item));
-                } else if ((p.state.equals("OPEN") || p.state.equals("CLOSED")) && p.missedChecks >= 2) {
-                    // Gone from Your Orders: nothing more to collect from it.
-                    if (p.state.equals("OPEN")) p.closedAt = now;
+                    info("The %s order didn't go through; forgetting it.", name(item));
+                } else if (!p.state.equals("PENDING") && p.missedChecks >= 2) {
+                    if (live(p)) p.closedAt = now;
+                    if (p.state.equals("CANCELLING")) trade("cancel", item, p.amount - p.delivered, p.priceEach * (p.amount - p.delivered), "order gone");
                     p.state = "CLOSED";
+                    p.cancelWanted = false;
                     p.delivered = p.collected;
                 }
             }
@@ -1349,7 +1718,8 @@ public class FlipBot extends Module {
             return;
         }
         Obs o = latest(item);
-        int units = Math.min(perListing.get(), Math.min(unlisted(item), count(item)));
+        int units = Math.min(lotSize(item), Math.min(unlisted(item), count(item)));
+        if (units <= 0) return;
         long floor = floorEach(item) * units;
         // During a crash (and its cooldown) don't sell under the pre-crash level, however far above cost that is:
         // the dip is panic, and selling into it only feeds it.
@@ -1380,6 +1750,8 @@ public class FlipBot extends Module {
         long price = at;
         Job j = new Job("selling " + name(item));
         int slot = sellSlot.get() - 1;
+        boolean[] sent = {false};
+        int[] had = {0};
         moves.clear();
         j.then("open inventory", 2, t -> {
             InvUtils.swap(slot, false);
@@ -1387,7 +1759,7 @@ public class FlipBot extends Module {
             return true;
         })
             .pause(6)
-            .then("move item", 200, t -> {
+            .then("move item", 200 + units * 12, t -> {
                 if (!(mc.currentScreen instanceof InventoryScreen)) throw new Fail("inventory closed");
                 if (t % 3 != 0) return false;
                 if (moves.isEmpty()) {
@@ -1411,20 +1783,25 @@ public class FlipBot extends Module {
                 listedMessage = false;
                 listFail = null;
                 serverLinesToLog = 3;
+                had[0] = count(item);
                 mc.player.networkHandler.sendChatCommand("ah sell " + price);
+                sent[0] = true;
                 return true;
             })
             .then("listed", 70, t -> {
+                if (listedMessage || !mc.player.getInventory().getStack(slot).isOf(item)) return true;
                 if (listFail != null) throw new Fail(listFail);
-                return listedMessage || !mc.player.getInventory().getStack(slot).isOf(item);
+                return false;
             });
         lastListAttempt = now;
-        j.onDone = () -> {
-            // Listed past the count's limit: an older listing must have sold unseen. Book the oldest as sold.
-            if (activeListings() >= maxListings.get() && !state.listings.isEmpty()) {
+        Runnable booked = () -> {
+            // Listed past the count's limit: an older listing must have sold unseen (offline). Book the oldest as
+            // sold, if it's been up a while.
+            if (activeListings() >= maxListings.get() && !state.listings.isEmpty()
+                && System.currentTimeMillis() - state.listings.getFirst().at > 10 * 60_000L) {
                 Listing oldest = state.listings.getFirst();
                 MeteorClient.LOG.info("[Ember FlipBot] Slot free although {} listings are counted: booking the oldest ({}) as sold", activeListings(), oldest.item);
-                sold(name(item(oldest.item)), oldest.price);
+                sold(name(item(oldest.item)), new Shown(oldest.price, 0));
             }
             int left = units;
             for (Position p : state.positions) {
@@ -1444,7 +1821,13 @@ public class FlipBot extends Module {
             backoffUntil = System.currentTimeMillis() + 2000;
             save();
         };
+        j.onDone = booked;
         j.onFail = () -> {
+            // /ah sell was sent and the items are gone: it went up, whatever else happened.
+            if (sent[0] && count(item) <= had[0] - units) {
+                booked.run();
+                return;
+            }
             listingsFullUntil = System.currentTimeMillis() + 2 * 60_000L;
             info("A %s listing didn't go through (auction slots full?): trying again in 2 minutes.", name(item));
         };
@@ -1478,8 +1861,12 @@ public class FlipBot extends Module {
             if (i == sell || !inv.getStack(i).isOf(item)) continue;
             int count = inv.getStack(i).getCount(), take = Math.min(want - have, count);
             moves.add(new int[] {SlotUtils.indexToId(i), 0});
-            for (int k = 0; k < take; k++) moves.add(new int[] {sellId, 1});
-            if (take < count) moves.add(new int[] {SlotUtils.indexToId(i), 0});
+            // The whole stack: one left click. Part of it: one right click per item, then the rest goes back.
+            if (take == count) moves.add(new int[] {sellId, 0});
+            else {
+                for (int k = 0; k < take; k++) moves.add(new int[] {sellId, 1});
+                moves.add(new int[] {SlotUtils.indexToId(i), 0});
+            }
             return;
         }
         throw new Fail("out of " + name(item));
@@ -1492,7 +1879,8 @@ public class FlipBot extends Module {
 
     // ------------------------------------------------------------------ server messages
 
-    private static final Pattern SOLD = Pattern.compile("^(\\S+) bought your (.+?) for \\$\\s*([0-9][0-9,]*(?:\\.[0-9]+)?\\s*[kmbtKMBT]?)");
+    /** "forgottendays bought your Dispenser for $69.8K", possibly after a rank or prefix. */
+    private static final Pattern SOLD = Pattern.compile("\\S+ bought your (.+?) for \\$\\s*" + AMOUNT);
 
     /** Network thread: queue what the server says, read on the next tick. */
     @EventHandler
@@ -1504,10 +1892,22 @@ public class FlipBot extends Module {
         String s = text.getString().trim();
         if (s.isEmpty()) return;
         if (s.startsWith("You listed")) listedMessage = true;
-        String lower = s.toLowerCase(Locale.ROOT);
-        if (job != null && job.name.startsWith("ordering") && (lower.contains("enough money") || lower.contains("order limit") || lower.contains("cannot") || lower.contains("can't"))) orderFail = s;
-        if (job != null && job.name.startsWith("selling") && (lower.contains("listing limit") || lower.contains("maximum") || lower.contains("must hold"))) listFail = s;
+        String kind = jobKind;
+        // Only the server's own replies count, not something a player typed in chat ("name: ..." / "name >> ...").
+        if (!looksLikeChat(s)) {
+            String lower = s.toLowerCase(Locale.ROOT);
+            if (createPressed && kind.startsWith("ordering") && (lower.contains("enough money") || lower.contains("order limit")
+                || lower.contains("cannot afford") || lower.contains("insufficient"))) orderFail = s;
+            if (kind.startsWith("selling") && (lower.contains("listing limit") || lower.contains("maximum amount") || lower.contains("must hold"))) listFail = s;
+        }
         serverLines.add(s);
+    }
+
+    /** "name: hi", "[VIP] name >> hi", "[Lv 5] [VIP] name -> hi": a player's chat line, ranks in front allowed. */
+    private static final Pattern CHAT_LINE = Pattern.compile("^(?:\\[[^\\]]*\\]\\s*)*\\S{1,40}\\s*(:|\\u00BB|>>|->)\\s");
+
+    private static boolean looksLikeChat(String s) {
+        return CHAT_LINE.matcher(s).find();
     }
 
     private void drainServerLines() {
@@ -1518,23 +1918,32 @@ public class FlipBot extends Module {
                 MeteorClient.LOG.info("[Ember FlipBot] Server: {}", s);
             }
             Matcher m = SOLD.matcher(s);
-            if (m.find()) sold(m.group(2).trim(), parsePrice(m.group(3)));
+            Shown price = null;
+            if (!looksLikeChat(s) && m.find()) price = shown(m.group(2));
+            if (price != null) sold(m.group(1).trim(), price);
             else if (job != null && job.name.startsWith("ordering")) MeteorClient.LOG.info("[Ember FlipBot] Server: {}", s);
         }
     }
 
-    /** "x bought your Dispenser for $69.8K": book the sale against the oldest matching listing. */
-    private void sold(String itemName, long shown) {
-        Listing match = null;
+    /**
+     * "x bought your Dispenser for $69.8K": book the sale against the oldest of its listings at that price. A sale
+     * that matches none of them closely (one of your own, by hand) isn't booked.
+     */
+    private void sold(String itemName, Shown shown) {
+        Listing match = null, near = null;
         for (Listing l : state.listings) {
             if (!name(item(l.item)).equalsIgnoreCase(itemName)) continue;
-            if (match == null) match = l;
-            if (Math.abs(l.price - shown) <= roundingSlack(l.price) + 1) {
+            if (Math.abs(l.price - shown.value) <= shown.slack + 1) {
                 match = l;
                 break;
             }
+            if (near == null && Math.abs(l.price - shown.value) <= shown.value * 0.1) near = l;
         }
-        if (match == null) return;
+        if (match == null) match = near;
+        if (match == null) {
+            MeteorClient.LOG.info("[Ember FlipBot] A {} sold for {} that isn't one of its listings", itemName, shown.value);
+            return;
+        }
         state.listings.remove(match);
         Item item = item(match.item);
         long net = Math.round(match.price * (1 - tax.get() / 100));
@@ -1587,6 +1996,8 @@ public class FlipBot extends Module {
         GenericContainerScreenHandler h = container();
         if (h == null || !mc.currentScreen.getTitle().getString().contains(title)) return false;
         String sig = signatureOf(h);
+        // A menu the server hasn't filled yet looks just like a settled empty one: give it two seconds.
+        if (sig.isEmpty() && t < 40) return false;
         if (sig.equals(settleSig)) settleStable++;
         else {
             settleSig = sig;
@@ -1649,28 +2060,41 @@ public class FlipBot extends Module {
         return sb.toString();
     }
 
-    /** The highlighted option of a filter button's lore: the "â€¢" line that isn't greyed out. */
+    private static final String[] SORTS = {"Most Per Item", "Most Paid", "Recently Listed"};
+
+    /**
+     * The highlighted option of the orders sort button: of the lore lines naming a sort, the one that isn't greyed
+     * out (whatever bullet the server puts in front of it). Empty when it can't tell.
+     */
     private static String selectedOption(ItemStack stack) {
         LoreComponent lore = stack.get(DataComponentTypes.LORE);
         if (lore == null) return "";
-        String fallback = "";
+        String selected = "";
+        int bright = 0;
         for (Text line : lore.lines()) {
-            String s = line.getString().trim();
-            if (!s.startsWith("â€¢") && !s.startsWith("-") && !s.startsWith("Â»") && !s.startsWith("â–¶")) continue;
-            Integer rgb = firstColor(line);
-            if (rgb == null || !isGrey(rgb)) return s;
-            if (s.startsWith("Â»") || s.startsWith("â–¶")) fallback = s;
+            String s = line.getString();
+            String sort = null;
+            for (String name : SORTS) if (s.contains(name)) sort = name;
+            if (sort == null) continue;
+            Integer rgb = lastColor(line);
+            if (rgb == null || !isGrey(rgb)) {
+                selected = sort;
+                bright++;
+            }
         }
-        return fallback;
+        // Every option bright (no colours sent) means there's nothing to tell them apart by.
+        return bright == 1 ? selected : "";
     }
 
-    private static Integer firstColor(Text text) {
+    /** The colour of the last non-blank piece of a line (the option's name, after any bullet). */
+    private static Integer lastColor(Text text) {
         Integer[] out = {null};
         text.visit((Style style, String string) -> {
-            if (string.isBlank()) return Optional.empty();
-            TextColor color = style.getColor();
-            out[0] = color == null ? null : color.getRgb();
-            return Optional.of(Boolean.TRUE);
+            if (!string.isBlank()) {
+                TextColor color = style.getColor();
+                out[0] = color == null ? null : color.getRgb();
+            }
+            return Optional.empty();
         }, Style.EMPTY);
         return out[0];
     }
@@ -1717,6 +2141,7 @@ public class FlipBot extends Module {
 
     private boolean pressWidget(ButtonWidget b) {
         if (b == null) throw new Fail("button gone");
+        if (!b.active) throw new Fail("button \"" + b.getMessage().getString() + "\" is disabled");
         b.onPress(null);
         return true;
     }
@@ -1798,19 +2223,39 @@ public class FlipBot extends Module {
         return enchants == null || enchants.isEmpty();
     }
 
-    private static final Pattern PRICE_LINE = Pattern.compile("\\$\\s*([0-9][0-9,]*(?:\\.[0-9]+)?\\s*[kmbtKMBT]?)");
+    private static final Pattern PRICE_LINE = Pattern.compile("\\$\\s*" + AMOUNT);
 
-    private static long priceOf(ItemStack stack) {
-        if (stack.isEmpty()) return -1;
+    /** A price as DonutSMP shows it, and how far the real price can be from it ("9.2K" is 9,150 to 9,250). */
+    record Shown(long value, double slack) {}
+
+    static Shown shown(String text) {
+        long value = parsePrice(text);
+        if (value < 0) return null;
+        String s = text.trim().toLowerCase(Locale.ROOT).replace(",", "").replace(" ", "");
+        double unit = switch (s.isEmpty() ? ' ' : s.charAt(s.length() - 1)) {
+            case 'k' -> 1e3;
+            case 'm' -> 1e6;
+            case 'b' -> 1e9;
+            case 't' -> 1e12;
+            default -> 0;
+        };
+        int dot = s.indexOf('.');
+        int decimals = dot < 0 ? 0 : s.length() - 1 - dot - (unit > 0 ? 1 : 0);
+        return new Shown(value, unit * 0.5 * Math.pow(10, -decimals));
+    }
+
+    /** A listing's price, from the "$ 467" line of its lore. */
+    private static Shown priceOf(ItemStack stack) {
+        if (stack.isEmpty()) return null;
         LoreComponent lore = stack.get(DataComponentTypes.LORE);
-        if (lore == null) return -1;
+        if (lore == null) return null;
         for (Text line : lore.lines()) {
             String s = line.getString();
             if (s.contains("each") || s.contains("Worth")) continue;
             Matcher m = PRICE_LINE.matcher(s);
-            if (m.find()) return parsePrice(m.group(1));
+            if (m.find()) return shown(m.group(1));
         }
-        return -1;
+        return null;
     }
 
     static long parsePrice(String text) {
@@ -1827,7 +2272,7 @@ public class FlipBot extends Module {
 
     // ------------------------------------------------------------------ balance
 
-    private static final Pattern MONEY = Pattern.compile("\\$\\s*([0-9][0-9,]*(?:\\.[0-9]+)?\\s*[kmbtKMBT]?)");
+    private static final Pattern MONEY = Pattern.compile("\\$\\s*" + AMOUNT);
 
     /** Your balance from the sidebar's money line, if it has one. */
     private Long readBalance() {
@@ -1842,7 +2287,7 @@ public class FlipBot extends Module {
             if (!lower.contains("money") && !lower.contains("balance")) continue;
             Matcher m = MONEY.matcher(line);
             if (m.find()) return parsePrice(m.group(1));
-            m = Pattern.compile("([0-9][0-9,]*(?:\\.[0-9]+)?[kmbtKMBT]?)").matcher(line);
+            m = Pattern.compile(AMOUNT).matcher(line);
             if (m.find()) return parsePrice(m.group(1));
         }
         return null;
