@@ -129,10 +129,9 @@ public class AHSell extends Module {
         .build()
     );
 
-    private enum Step { NEXT, LOOKUP, TURNING, CLOSING, SELL, SEND, CONFIRM }
+    private enum Step { NEXT, LOOKUP, TURNING, CLOSING, SELL, MOVE, SEND, CONFIRM }
 
-    /** Whether ready() moved items this time, and server inventory updates still to log. */
-    private boolean moved;
+    /** Server inventory updates still to log, after moving items. */
     private volatile int inventoryLinesToLog;
 
     private String pageBefore = "";
@@ -213,8 +212,10 @@ public class AHSell extends Module {
             case NEXT -> {
                 if (System.currentTimeMillis() < nextAllowed) return;
                 if (mc.currentScreen != null) return;
-                int have = ready();
-                if (have <= 0) return;
+                if (available() <= 0) {
+                    waitFor("out of " + item.get().getName().getString().toLowerCase(Locale.ROOT));
+                    return;
+                }
                 waitingFor = "";
                 InvUtils.swap(sellSlot.get() - 1, false);
                 boolean fresh = cachedMatches >= 0 && System.currentTimeMillis() - cachedAt < priceCheck.get() * 1000L;
@@ -298,19 +299,40 @@ public class AHSell extends Module {
             }
             case SELL -> {
                 if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
-                moved = false;
-                int count = ready();
-                if (count <= 0) {
-                    step = Step.NEXT;
+                clicks.clear();
+                planMove();
+                if (clicks.isEmpty()) {
+                    step = held() > 0 ? Step.SEND : Step.NEXT;
                     return;
                 }
-                InvUtils.swap(sellSlot.get() - 1, false);
-                // After moving items, give the server a moment to take them, and log what it says the slot holds.
-                step = Step.SEND;
-                if (moved) {
-                    inventoryLinesToLog = 6;
+                // The server ignores clicks sent with the inventory closed, all at once: the item only looks moved.
+                // So, like a person: open the inventory, one click at a time, close it.
+                inventoryLinesToLog = 8;
+                mc.setScreen(new net.minecraft.client.gui.screen.ingame.InventoryScreen(mc.player));
+                step = Step.MOVE;
+                timer = 6;
+            }
+            case MOVE -> {
+                if (!(mc.currentScreen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen)) {
+                    // Closed by the player or the server: start the move over.
+                    clicks.clear();
+                    step = Step.SELL;
                     timer = 10;
+                    return;
                 }
+                if (clicks.isEmpty()) {
+                    planMove();
+                    if (clicks.isEmpty()) {
+                        mc.player.closeHandledScreen();
+                        InvUtils.swap(sellSlot.get() - 1, false);
+                        step = Step.SEND;
+                        timer = 10;
+                    }
+                    return;
+                }
+                int[] c = clicks.removeFirst();
+                mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, c[0], c[1], SlotActionType.PICKUP, mc.player);
+                timer = 3;
             }
             case SEND -> {
                 int sell = sellSlot.get() - 1;
@@ -391,63 +413,61 @@ public class AHSell extends Module {
         }
     }
 
+    /** Clicks still to make, as {slot id, mouse button}: one move at a time, each leaving the cursor empty. */
+    private final java.util.ArrayDeque<int[]> clicks = new java.util.ArrayDeque<>();
+
+    /** How many of the item the sell slot holds. */
+    private int held() {
+        ItemStack stack = mc.player.getInventory().getStack(sellSlot.get() - 1);
+        return stack.isOf(item.get()) ? stack.getCount() : 0;
+    }
+
+    /** How many of the item are in the inventory, sell slot included. */
+    private int available() {
+        PlayerInventory inv = mc.player.getInventory();
+        int n = 0;
+        for (int i = 0; i < 36; i++) if (inv.getStack(i).isOf(item.get())) n += inv.getStack(i).getCount();
+        return n;
+    }
+
     /**
-     * Puts one listing's worth of the item in the sell slot, taking it from anywhere in the inventory.
-     *
-     * @return how many are there now, 0 when there's nothing to sell yet
+     * The next move towards one listing's worth of the item in the sell slot, as clicks: clear the slot of anything
+     * else, put back any extra, or bring more from elsewhere in the inventory. Nothing queued means the slot is ready.
      */
-    private int ready() {
+    private void planMove() {
         PlayerInventory inv = mc.player.getInventory();
         int sell = sellSlot.get() - 1, want = amount.get();
-        int syncId = mc.player.playerScreenHandler.syncId;
+        int sellId = SlotUtils.indexToId(sell);
         ItemStack current = inv.getStack(sell);
 
-        // Something else in the sell slot: move it out of the way.
         if (!current.isEmpty() && !current.isOf(item.get())) {
             int free = emptyMainSlot(inv);
             if (free < 0) {
                 waitFor("sell slot taken, inventory full");
-                return 0;
+                return;
             }
-            click(syncId, SlotUtils.indexToId(sell), 0, SlotActionType.PICKUP, mc.player);
-            click(syncId, SlotUtils.indexToId(free), 0, SlotActionType.PICKUP, mc.player);
-            current = inv.getStack(sell);
+            clicks.add(new int[] {sellId, 0});
+            clicks.add(new int[] {SlotUtils.indexToId(free), 0});
+            return;
         }
-        // Too many: put the extra back.
         if (current.isOf(item.get()) && current.getCount() > want) {
             int free = emptyMainSlot(inv);
-            if (free < 0) return current.getCount();
-            click(syncId, SlotUtils.indexToId(sell), 0, SlotActionType.PICKUP, mc.player);
-            for (int i = 0; i < want; i++) click(syncId, SlotUtils.indexToId(sell), 1, SlotActionType.PICKUP, mc.player);
-            click(syncId, SlotUtils.indexToId(free), 0, SlotActionType.PICKUP, mc.player);
-            return inv.getStack(sell).getCount();
+            if (free < 0) return;
+            clicks.add(new int[] {sellId, 0});
+            for (int i = 0; i < want; i++) clicks.add(new int[] {sellId, 1});
+            clicks.add(new int[] {SlotUtils.indexToId(free), 0});
+            return;
         }
-        // Top it up from the rest of the inventory, one item at a time.
         int have = current.isOf(item.get()) ? current.getCount() : 0;
-        while (have < want) {
-            int from = -1;
-            for (int i = 0; i < 36; i++) {
-                if (i != sell && inv.getStack(i).isOf(item.get())) {
-                    from = i;
-                    break;
-                }
-            }
-            if (from < 0) break;
-            int take = Math.min(want - have, inv.getStack(from).getCount());
-            click(syncId, SlotUtils.indexToId(from), 0, SlotActionType.PICKUP, mc.player);
-            for (int i = 0; i < take; i++) click(syncId, SlotUtils.indexToId(sell), 1, SlotActionType.PICKUP, mc.player);
-            if (!mc.player.currentScreenHandler.getCursorStack().isEmpty()) {
-                click(syncId, SlotUtils.indexToId(from), 0, SlotActionType.PICKUP, mc.player);
-            }
-            have += take;
+        if (have >= want) return;
+        for (int i = 0; i < 36; i++) {
+            if (i == sell || !inv.getStack(i).isOf(item.get())) continue;
+            int count = inv.getStack(i).getCount(), take = Math.min(want - have, count);
+            clicks.add(new int[] {SlotUtils.indexToId(i), 0});
+            for (int k = 0; k < take; k++) clicks.add(new int[] {sellId, 1});
+            if (take < count) clicks.add(new int[] {SlotUtils.indexToId(i), 0});
+            return;
         }
-        if (have <= 0) waitFor("out of " + item.get().getName().getString().toLowerCase(Locale.ROOT));
-        return have;
-    }
-
-    private void click(int syncId, int slotId, int button, SlotActionType action, net.minecraft.entity.player.PlayerEntity player) {
-        moved = true;
-        mc.interactionManager.clickSlot(syncId, slotId, button, action, player);
     }
 
     private void waitFor(String why) {
