@@ -1750,7 +1750,7 @@ public class FlipBot extends Module {
         long price = at;
         Job j = new Job("selling " + name(item));
         int slot = sellSlot.get() - 1;
-        boolean[] sent = {false};
+        boolean[] sent = {false}, synced = {false};
         int[] had = {0};
         moves.clear();
         j.then("open inventory", 2, t -> {
@@ -1764,7 +1764,15 @@ public class FlipBot extends Module {
                 if (t % 3 != 0) return false;
                 if (moves.isEmpty()) {
                     planMove(item, units);
-                    if (moves.isEmpty()) return true;
+                    if (moves.isEmpty()) {
+                        if (synced[0]) return true;
+                        // Already in the slot, but the server may not agree (then /ah sell gets no answer): pick it
+                        // up and put it back, which makes the server send what's really there.
+                        int sellId = SlotUtils.indexToId(slot);
+                        moves.add(new int[] {sellId, 0});
+                        moves.add(new int[] {sellId, 0});
+                    }
+                    synced[0] = true;
                 }
                 int[] c = moves.removeFirst();
                 mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, c[0], c[1], SlotActionType.PICKUP, mc.player);
@@ -1776,6 +1784,8 @@ public class FlipBot extends Module {
                 return true;
             })
             .pause(10)
+            // /ah sell 2 s after closing the auction house got no answer at all on DonutSMP; 3 s+ worked.
+            .then("gap after the auction house", 200, t -> System.currentTimeMillis() - lastClosedAt >= 3500)
             .then("list", 2, t -> {
                 ItemStack held = mc.player.getInventory().getStack(slot);
                 if (!held.isOf(item) || held.getCount() != units) throw new Fail("sell slot holds " + held);
@@ -1789,9 +1799,11 @@ public class FlipBot extends Module {
                 return true;
             })
             .then("listed", 70, t -> {
-                if (listedMessage || !mc.player.getInventory().getStack(slot).isOf(item)) return true;
+                // "You listed" confirms it. "You have too many listed items" (slots full) also takes the item out of the
+                // sell slot, so an empty slot only counts once a refusal had time to arrive.
+                if (listedMessage) return true;
                 if (listFail != null) throw new Fail(listFail);
-                return false;
+                return t >= 40 && !mc.player.getInventory().getStack(slot).isOf(item);
             });
         lastListAttempt = now;
         Runnable booked = () -> {
@@ -1898,7 +1910,8 @@ public class FlipBot extends Module {
             String lower = s.toLowerCase(Locale.ROOT);
             if (createPressed && kind.startsWith("ordering") && (lower.contains("enough money") || lower.contains("order limit")
                 || lower.contains("cannot afford") || lower.contains("insufficient"))) orderFail = s;
-            if (kind.startsWith("selling") && (lower.contains("listing limit") || lower.contains("maximum amount") || lower.contains("must hold"))) listFail = s;
+            if (kind.startsWith("selling") && (lower.contains("too many listed") || lower.contains("listing limit") || lower.contains("maximum amount")
+                || lower.contains("must hold"))) listFail = s;
         }
         serverLines.add(s);
     }
@@ -2006,8 +2019,11 @@ public class FlipBot extends Module {
         return t >= minTicks && settleStable >= 8;
     }
 
+    private long lastClosedAt;
+
     private boolean closeMenu() {
         if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
+        lastClosedAt = System.currentTimeMillis();
         lastMenuAt = Math.max(lastMenuAt, System.currentTimeMillis() - menuGap.get() * 1000L + 1500);
         return true;
     }
