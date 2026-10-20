@@ -1,7 +1,6 @@
 package meteordevelopment.meteorclient.systems.modules.donut;
 
 import meteordevelopment.meteorclient.MeteorClient;
-import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
@@ -69,8 +68,8 @@ public class AHSell extends Module {
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
-        .description("Seconds between listings.")
-        .defaultValue(3)
+        .description("Seconds between listings. DonutSMP stops opening the auction house for a while if it's used too fast.")
+        .defaultValue(5)
         .range(1, 600)
         .sliderRange(1, 30)
         .build()
@@ -110,6 +109,16 @@ public class AHSell extends Module {
         .build()
     );
 
+    private final Setting<Integer> priceCheck = sgUndercut.add(new IntSetting.Builder()
+        .name("price-check-every")
+        .description("Seconds between auction house price checks; listings in between use the last price seen. 0 checks before every listing, which DonutSMP may rate-limit.")
+        .defaultValue(30)
+        .range(0, 3600)
+        .sliderRange(0, 300)
+        .visible(undercut::get)
+        .build()
+    );
+
     private final Setting<Integer> pages = sgUndercut.add(new IntSetting.Builder()
         .name("pages")
         .description("Auction house pages to read each time.")
@@ -132,7 +141,13 @@ public class AHSell extends Module {
     private double cheapestEach;
     private int matches;
     private String waitingFor = "";
-    private int chatLinesToLog;
+    /** Server messages to log after a command: chat, above the hotbar and titles. */
+    private volatile int serverLinesToLog;
+    private volatile boolean listedMessage;
+    /** Last price check: cheapest per item and how many listings matched, and when. */
+    private double cachedEach = Double.MAX_VALUE;
+    private int cachedMatches = -1;
+    private long cachedAt;
 
     public AHSell() {
         super(Categories.Donut, "ah-sell", "Sells a chosen item on the auction house one listing at a time, undercutting the cheapest, until you turn it off.");
@@ -145,6 +160,8 @@ public class AHSell extends Module {
         nextAllowed = 0;
         listed = 0;
         waitingFor = "";
+        cachedMatches = -1;
+        cachedAt = 0;
         if (item.get() == Items.AIR) {
             error("Pick the item to sell first (the item setting).");
             toggle();
@@ -183,7 +200,10 @@ public class AHSell extends Module {
                 if (have <= 0) return;
                 waitingFor = "";
                 InvUtils.swap(sellSlot.get() - 1, false);
-                if (!undercut.get()) {
+                boolean fresh = cachedMatches >= 0 && System.currentTimeMillis() - cachedAt < priceCheck.get() * 1000L;
+                if (!undercut.get() || fresh) {
+                    cheapestEach = cachedEach;
+                    matches = Math.max(0, cachedMatches);
                     step = Step.SELL;
                     return;
                 }
@@ -192,17 +212,28 @@ public class AHSell extends Module {
                 page = 1;
                 waited = stable = 0;
                 lastMatches = -1;
+                serverLinesToLog = 3;
                 mc.player.networkHandler.sendChatCommand("ah " + searchName(item.get()));
                 step = Step.LOOKUP;
             }
             case LOOKUP -> {
-                // Results fill in a moment after the menu opens: read once the listings stop changing.
+                // The menu can open on the usual page and switch to the search results a moment later: read only once
+                // the listings have stayed the same for half a second.
                 waited++;
                 GenericContainerScreenHandler handler = container();
                 if (handler == null) {
                     if (waited > 100) {
-                        warning("The auction house didn't open: listing at price-each.");
-                        step = Step.SELL;
+                        // Usually DonutSMP's limit on opening the auction house: back off instead of hammering it.
+                        if (cachedMatches >= 0 && System.currentTimeMillis() - cachedAt < 300_000) {
+                            cheapestEach = cachedEach;
+                            matches = cachedMatches;
+                            step = Step.SELL;
+                        } else {
+                            waitingFor = "auction house closed, retry in " + retryWait.get() + "s";
+                            info("The auction house didn't open (used too fast?): trying again in %d seconds.", retryWait.get());
+                            nextAllowed = System.currentTimeMillis() + retryWait.get() * 1000L;
+                            step = Step.NEXT;
+                        }
                     }
                     return;
                 }
@@ -210,7 +241,7 @@ public class AHSell extends Module {
                 if (seen == lastMatches) stable++;
                 else stable = 0;
                 lastMatches = seen;
-                if ((seen > 0 && stable >= 4) || waited > 60) {
+                if ((seen > 0 && waited >= 20 && stable >= 10) || waited > 80) {
                     read(handler);
                     ItemStack next = handler.getInventory().size() > NEXT_PAGE_SLOT ? handler.getInventory().getStack(NEXT_PAGE_SLOT) : ItemStack.EMPTY;
                     if (page < pages.get() && next.isOf(Items.ARROW)) {
@@ -220,8 +251,12 @@ public class AHSell extends Module {
                         step = Step.TURNING;
                     } else {
                         mc.player.closeHandledScreen();
+                        cachedEach = cheapestEach;
+                        cachedMatches = matches;
+                        cachedAt = System.currentTimeMillis();
                         step = Step.SELL;
-                        timer = 4;
+                        // A short gap between closing the menu and the next command.
+                        timer = 20;
                     }
                 }
             }
@@ -241,16 +276,18 @@ public class AHSell extends Module {
                 }
                 InvUtils.swap(sellSlot.get() - 1, false);
                 long at = listingPrice(count);
+                listedMessage = false;
+                serverLinesToLog = 4;
                 mc.player.networkHandler.sendChatCommand("ah sell " + at);
                 MeteorClient.LOG.info("[Ember AHSell] /ah sell {} for {} x{}", at, item.get(), count);
-                chatLinesToLog = 4;
                 waited = 0;
                 step = Step.CONFIRM;
             }
             case CONFIRM -> {
-                // Listed if the item left the sell slot; still there after 3 seconds means the server said no.
+                // Listed when the server says "You listed ..." or the item left the sell slot; neither after 3
+                // seconds means it said no.
                 ItemStack inSlot = mc.player.getInventory().getStack(sellSlot.get() - 1);
-                if (!inSlot.isOf(item.get())) {
+                if (listedMessage || !inSlot.isOf(item.get())) {
                     listed++;
                     step = Step.NEXT;
                     nextAllowed = System.currentTimeMillis() + delay.get() * 1000L;
@@ -264,12 +301,34 @@ public class AHSell extends Module {
         }
     }
 
-    /** What the server says after /ah sell, logged so its wording can be learned. */
+    /**
+     * Network thread. What the server says after a command, in chat, above the hotbar or as a title, logged so its
+     * wording (a cooldown, full auction slots) can be learned; "You listed" confirms a listing.
+     */
     @EventHandler
-    private void onMessage(ReceiveMessageEvent event) {
-        if (chatLinesToLog <= 0) return;
-        chatLinesToLog--;
-        MeteorClient.LOG.info("[Ember AHSell] Server: {}", event.getMessage().getString());
+    private void onPacket(meteordevelopment.meteorclient.events.packets.PacketEvent.Receive event) {
+        Text text = null;
+        String where = "chat";
+        if (event.packet instanceof net.minecraft.network.packet.s2c.play.GameMessageS2CPacket p) {
+            text = p.content();
+            if (p.overlay()) where = "above hotbar";
+        } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.OverlayMessageS2CPacket p) {
+            text = p.text();
+            where = "above hotbar";
+        } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.TitleS2CPacket p) {
+            text = p.text();
+            where = "title";
+        } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.SubtitleS2CPacket p) {
+            text = p.text();
+            where = "subtitle";
+        }
+        if (text == null) return;
+        String s = text.getString();
+        if (s.startsWith("You listed")) listedMessage = true;
+        if (serverLinesToLog > 0 && !s.isBlank()) {
+            serverLinesToLog--;
+            MeteorClient.LOG.info("[Ember AHSell] Server ({}): {}", where, s);
+        }
     }
 
     /**
@@ -381,8 +440,13 @@ public class AHSell extends Module {
             matches++;
             cheapestEach = Math.min(cheapestEach, (double) total / stack.getCount());
         }
-        MeteorClient.LOG.info("[Ember AHSell] Page {}: {} priced listings, {} of {} so far, cheapest each {}", page, priced, matches, item.get(),
-            matches == 0 ? "-" : cheapestEach);
+        StringBuilder names = new StringBuilder();
+        for (int i = 0; i < Math.min(6, listings); i++) {
+            ItemStack stack = inventory.getStack(i);
+            if (!stack.isEmpty()) names.append(stack.getName().getString()).append(" ").append(priceOf(stack)).append("; ");
+        }
+        MeteorClient.LOG.info("[Ember AHSell] Page {} of \"{}\": {} priced listings, {} of {} so far, cheapest each {}; first: {}", page,
+            mc.currentScreen == null ? "?" : mc.currentScreen.getTitle().getString(), priced, matches, item.get(), matches == 0 ? "-" : cheapestEach, names);
     }
 
     /** A plain one of the chosen item: renamed or enchanted copies are priced differently. */
