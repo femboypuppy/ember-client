@@ -100,6 +100,14 @@ public class AHSell extends Module {
         .build()
     );
 
+    private final Setting<Boolean> matchListingSize = sgUndercut.add(new BoolSetting.Builder()
+        .name("match-listing-size")
+        .description("Compare auctions with the same item count as your listing. Prevents bulk discounts from pricing single items. Disable to compare all per-item prices.")
+        .defaultValue(true)
+        .visible(undercut::get)
+        .build()
+    );
+
     private final Setting<String> minPrice = sgUndercut.add(new StringSetting.Builder()
         .name("min-price-each")
         .description("Never sell one item for less than this, whatever the auction house says (a troll listing at $1 can't drag yours down). Empty for no minimum.")
@@ -129,20 +137,21 @@ public class AHSell extends Module {
         .build()
     );
 
-    private enum Step { NEXT, LOOKUP, TURNING, CLOSING, SELL, MOVE, SEND, CONFIRM }
+    private enum Step { NEXT, LOOKUP, TURNING, CLOSING, SELL, MOVE, SELECT, SEND, CONFIRM }
 
     /** Server inventory updates still to log, after moving items. */
     private volatile int inventoryLinesToLog;
 
     private String pageBefore = "";
+    private String stablePage = "";
 
-    /** The first few listings of a page, to tell when the next page has replaced it. */
+    /** Every listing matters: counts and prices can change while the number of priced slots stays the same. */
     private static String signature(GenericContainerScreenHandler handler) {
         StringBuilder sb = new StringBuilder();
         Inventory inventory = handler.getInventory();
-        for (int i = 0; i < Math.min(9, inventory.size()); i++) {
+        for (int i = 0; i < Math.min((handler.getRows() - 1) * 9, inventory.size()); i++) {
             ItemStack stack = inventory.getStack(i);
-            sb.append(stack.getItem()).append(stack.getCount()).append(priceOf(stack)).append('|');
+            sb.append(i).append(':').append(stack.getItem()).append(':').append(stack.getCount()).append(':').append(priceOf(stack)).append(':').append(stack.getName().getString()).append('|');
         }
         return sb.toString();
     }
@@ -158,8 +167,16 @@ public class AHSell extends Module {
     private static final int NEXT_PAGE_SLOT = 53;
 
     private Step step = Step.NEXT;
-    private int timer, waited, page, stable, lastMatches, listed;
+    private int timer, waited, page, stable, listed;
     private long nextAllowed;
+    private long sellNotBefore;
+    private Item cycleItem, cachedItem;
+    private int cycleAmount, cycleConfiguredAmount, cachedAmount;
+    private boolean cycleMatchSize, cachedMatchSize;
+    private Own pendingOwn;
+    private volatile String pendingCommand;
+    private volatile boolean commandSent, inventoryCloseSent;
+    private volatile long commandSentAt;
     private double cheapestEach;
     private int matches;
     private String waitingFor = "";
@@ -188,6 +205,9 @@ public class AHSell extends Module {
         waitingFor = "";
         cachedMatches = -1;
         cachedAt = 0;
+        pendingOwn = null;
+        pendingCommand = null;
+        commandSent = inventoryCloseSent = listedMessage = slotsFull = false;
         if (item.get() == Items.AIR) {
             error("Pick the item to sell first (the item setting).");
             toggle();
@@ -201,7 +221,8 @@ public class AHSell extends Module {
 
     @Override
     public void onDeactivate() {
-        if (mc.player != null && step != Step.NEXT && mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
+        if (mc.player != null && step != Step.NEXT && (mc.currentScreen instanceof GenericContainerScreen || mc.currentScreen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen)) mc.player.closeHandledScreen();
+        pendingCommand = null;
         if (listed > 0) info("Listed %d this time.", listed);
     }
 
@@ -213,6 +234,12 @@ public class AHSell extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.interactionManager == null) return;
+        if (step != Step.NEXT && (item.get() != cycleItem || matchListingSize.get() != cycleMatchSize || amount.get() != cycleConfiguredAmount)) {
+            if (mc.currentScreen instanceof GenericContainerScreen || mc.currentScreen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen) mc.player.closeHandledScreen();
+            clicks.clear(); pendingCommand = null; pendingOwn = null; cachedMatches = -1;
+            step = Step.NEXT; timer = 10;
+            return;
+        }
         if (timer > 0) {
             timer--;
             return;
@@ -227,9 +254,14 @@ public class AHSell extends Module {
                     return;
                 }
                 waitingFor = "";
+                cycleItem = item.get();
+                cycleConfiguredAmount = amount.get();
+                cycleAmount = Math.min(Math.min(amount.get(), item.get().getMaxCount()), available());
+                cycleMatchSize = matchListingSize.get();
                 synced = false;
                 InvUtils.swap(sellSlot.get() - 1, false);
-                boolean fresh = cachedMatches >= 0 && System.currentTimeMillis() - cachedAt < priceCheck.get() * 1000L;
+                boolean sameMarket = cachedItem == cycleItem && cachedAmount == cycleAmount && cachedMatchSize == cycleMatchSize;
+                boolean fresh = sameMarket && cachedMatches >= 0 && System.currentTimeMillis() - cachedAt < priceCheck.get() * 1000L;
                 if (!undercut.get() || fresh) {
                     cheapestEach = cachedEach;
                     matches = Math.max(0, cachedMatches);
@@ -240,7 +272,7 @@ public class AHSell extends Module {
                 matches = 0;
                 page = 1;
                 waited = stable = 0;
-                lastMatches = -1;
+                stablePage = "";
                 serverLinesToLog = 3;
                 mc.player.networkHandler.sendChatCommand("ah " + searchName(item.get()));
                 step = Step.LOOKUP;
@@ -253,24 +285,22 @@ public class AHSell extends Module {
                 if (handler == null) {
                     if (waited > 100) {
                         // Usually DonutSMP's limit on opening the auction house: back off instead of hammering it.
-                        if (cachedMatches >= 0 && System.currentTimeMillis() - cachedAt < 300_000) {
-                            cheapestEach = cachedEach;
-                            matches = cachedMatches;
-                            step = Step.SELL;
-                        } else {
-                            waitingFor = "auction house closed, retry in " + retryWait.get() + "s";
-                            info("The auction house didn't open (used too fast?): trying again in %d seconds.", retryWait.get());
-                            nextAllowed = System.currentTimeMillis() + retryWait.get() * 1000L;
-                            step = Step.NEXT;
-                        }
+                        waitingFor = "auction house closed, retry in " + retryWait.get() + "s";
+                        info("The auction house didn't open (used too fast?): trying again in %d seconds.", retryWait.get());
+                        nextAllowed = System.currentTimeMillis() + retryWait.get() * 1000L;
+                        step = Step.NEXT;
                     }
                     return;
                 }
                 int seen = countPriced(handler);
-                if (seen == lastMatches) stable++;
-                else stable = 0;
-                lastMatches = seen;
-                if ((seen > 0 && waited >= 20 && stable >= 10) || waited > 80) {
+                String snapshot = signature(handler);
+                if (snapshot.equals(stablePage)) stable++;
+                else { stablePage = snapshot; stable = 0; }
+                if (waited >= 120 && stable < 10) {
+                    mc.player.closeHandledScreen();
+                    waitFor("auction prices still changing");step = Step.NEXT;return;
+                }
+                if (stable >= 10 && (seen > 0 && waited >= 20 || waited > 80)) {
                     read(handler);
                     ItemStack next = handler.getInventory().size() > NEXT_PAGE_SLOT ? handler.getInventory().getStack(NEXT_PAGE_SLOT) : ItemStack.EMPTY;
                     if (page < pages.get() && next.isOf(Items.ARROW)) {
@@ -283,6 +313,7 @@ public class AHSell extends Module {
                         cachedEach = cheapestEach;
                         cachedMatches = matches;
                         cachedAt = System.currentTimeMillis();
+                        cachedItem = cycleItem; cachedAmount = cycleAmount; cachedMatchSize = cycleMatchSize;
                         // Like a person: a moment on the menu before closing it, and before the next command. Closing
                         // the auction house mid-load, then commanding right away, seems to lock it for a minute.
                         step = Step.CLOSING;
@@ -299,15 +330,15 @@ public class AHSell extends Module {
                 }
                 if (!signature(handler).equals(pageBefore) || ++waited >= 60) {
                     waited = stable = 0;
-                    lastMatches = -1;
+                    stablePage = "";
                     step = Step.LOOKUP;
                 }
             }
             case CLOSING -> {
                 if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
                 step = Step.SELL;
-                // /ah sell sent 2 s after closing the auction house got no answer at all; 3 s+ worked.
-                timer = 70;
+                // Prepare the item now; SELECT enforces the command gap after the final inventory close.
+                timer = 10;
             }
             case SELL -> {
                 if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
@@ -322,7 +353,9 @@ public class AHSell extends Module {
                         return;
                     }
                     if (synced) {
-                        step = Step.SEND;
+                        inventoryCloseSent = true;
+                        sellNotBefore = System.currentTimeMillis() + 3500;
+                        step = Step.SELECT;
                         return;
                     }
                     // Already in the slot, but the server may not agree (then /ah sell gets no answer at all): pick
@@ -350,11 +383,17 @@ public class AHSell extends Module {
                 if (clicks.isEmpty()) {
                     planMove();
                     if (clicks.isEmpty()) {
+                        if (!mc.player.currentScreenHandler.getCursorStack().isEmpty()) {
+                            waitFor("item still on the inventory cursor");step = Step.NEXT;return;
+                        }
+                        inventoryCloseSent = false;
                         mc.player.closeHandledScreen();
                         InvUtils.swap(sellSlot.get() - 1, false);
-                        step = held() > 0 && held() <= amount.get() ? Step.SEND : Step.NEXT;
-                        // A moment for the server's answer to the clicks before /ah sell.
-                        timer = 12;
+                        step = held() > 0 && held() <= amount.get() ? Step.SELECT : Step.NEXT;
+                        // The final inventory close is another GUI action. The auction-house-only
+                        // delay previously expired before this close and sent /ah sell just 0.6s later.
+                        sellNotBefore = System.currentTimeMillis() + 3500;
+                        timer = 2;
                     }
                     return;
                 }
@@ -362,53 +401,104 @@ public class AHSell extends Module {
                 mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, c[0], c[1], SlotActionType.PICKUP, mc.player);
                 timer = 3;
             }
+            case SELECT -> {
+                if (mc.currentScreen != null || System.currentTimeMillis() < sellNotBefore) return;
+                if (!inventoryCloseSent) {
+                    saleFeedback("Inventory close was blocked. Check XCarry or packet buffering before retrying.");
+                    waitFor("inventory close blocked");step = Step.NEXT;return;
+                }
+                InvUtils.swap(sellSlot.get() - 1, false);
+                mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket(sellSlot.get() - 1));
+                step = Step.SEND;timer = 2;
+            }
             case SEND -> {
+                if (mc.currentScreen != null) { step = Step.SELECT; sellNotBefore = System.currentTimeMillis() + 3500; return; }
                 int sell = sellSlot.get() - 1;
                 ItemStack held = mc.player.getInventory().getStack(sell);
-                if (!held.isOf(item.get())) {
+                if (!held.isOf(item.get()) || held.getCount() != cycleAmount || !mc.player.currentScreenHandler.getCursorStack().isEmpty()) {
                     MeteorClient.LOG.info("[Ember AHSell] Sell slot no longer holds the item ({}): getting it again", held);
                     step = Step.SELL;
                     return;
                 }
-                // Tell the server again which slot is held, so /ah sell takes this one.
-                mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket(sell));
+                if (mc.player.getInventory().getSelectedSlot() != sell) { step = Step.SELECT; return; }
                 int count = held.getCount();
                 long at = listingPrice(count);
+                if (at <= 0) { waitFor("invalid listing price; check price settings");step = Step.NEXT;return; }
                 listedMessage = false;
                 slotsFull = false;
                 serverLinesToLog = 4;
-                mc.player.networkHandler.sendChatCommand("ah sell " + at);
-                own.addLast(new Own(count, at, System.currentTimeMillis()));
-                while (own.size() > 50) own.removeFirst();
+                pendingOwn = new Own(count, at, System.currentTimeMillis());
+                pendingCommand = "ah sell " + at;
+                commandSent = false;
+                commandSentAt = 0;
+                mc.player.networkHandler.sendChatCommand(pendingCommand);
+                mc.inGameHud.getChatHud().addToMessageHistory("/" + pendingCommand);
                 MeteorClient.LOG.info("[Ember AHSell] /ah sell {} for {} x{}", at, item.get(), count);
                 waited = 0;
                 step = Step.CONFIRM;
             }
             case CONFIRM -> {
-                // Listed when the server says "You listed ...". "You have too many listed items" means the slots are
-                // full: the server also takes the item out of the sell slot then, so an empty slot alone only counts
-                // once a refusal had time to arrive. No answer at all after 3 seconds: it ignored the command.
+                // An emptied slot is not proof of a listing: refusals and other inventory actions
+                // can also remove it. Only book a listing after the server's confirmation.
                 ItemStack inSlot = mc.player.getInventory().getStack(sellSlot.get() - 1);
                 waited++;
                 if (slotsFull) {
                     waitingFor = "auction slots full, retry in " + retryWait.get() + "s";
-                    info("Your auction slots are full: trying again in %d seconds.", retryWait.get());
+                    saleFeedback("Your auction slots are full: retry in " + retryWait.get() + " seconds.");
                     step = Step.NEXT;
+                    pendingCommand = null; pendingOwn = null;
                     nextAllowed = System.currentTimeMillis() + retryWait.get() * 1000L;
-                } else if (listedMessage || !inSlot.isOf(item.get()) && waited >= 40) {
+                } else if (listedMessage) {
                     listed++;
+                    if (pendingOwn != null) own.addLast(pendingOwn);
+                    while (own.size() > 50) own.removeFirst();
+                    saleFeedback("Server confirmed the auction listing.");
+                    pendingCommand = null; pendingOwn = null;
                     step = Step.NEXT;
                     nextAllowed = System.currentTimeMillis() + delay.get() * 1000L;
-                } else if (waited >= 60) {
+                } else if (commandSent ? System.currentTimeMillis() - commandSentAt >= 5000 : waited >= 100) {
                     int retry = Math.min(15, retryWait.get());
                     waitingFor = "no answer, retry in " + retry + "s";
-                    info("The server didn't answer /ah sell: trying again in %d seconds.", retry);
+                    if (!commandSent) {
+                        saleFeedback("The client did not dispatch /" + pendingCommand + ". AH Sell stopped; check packet cancellation or buffering.");
+                        pendingCommand = null;pendingOwn = null;toggle();return;
+                    }
+                    saleFeedback("No server confirmation for /" + pendingCommand + "; " + (inSlot.isOf(item.get()) ? "the item is still in the sell slot" : "the item moved, so the sale is unconfirmed") + ". Retry in " + retry + " seconds.");
+                    pendingCommand = null; pendingOwn = null;
                     MeteorClient.LOG.info("[Ember AHSell] No answer to /ah sell; the sell slot holds {}", inSlot);
                     step = Step.NEXT;
                     nextAllowed = System.currentTimeMillis() + retry * 1000L;
                 }
             }
         }
+    }
+
+    /** Local audit feedback stays visible in chat even when module info is routed to HUD notifications. */
+    private void saleFeedback(String message) {
+        info(message);
+        if (mc.inGameHud != null) mc.inGameHud.getChatHud().addMessage(Text.literal("[AH Sell] " + message));
+    }
+
+    @EventHandler
+    private void onGameLeft(meteordevelopment.meteorclient.events.game.GameLeftEvent event) {
+        step = Step.NEXT;timer = 0;nextAllowed = 0;
+        cachedMatches = -1;pendingCommand = null;pendingOwn = null;
+        clicks.clear();own.clear();
+    }
+
+    @EventHandler
+    private void onSent(meteordevelopment.meteorclient.events.packets.PacketEvent.Sent event) {
+        if (event.packet instanceof net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket p && p.getSyncId() == 0) inventoryCloseSent = true;
+        String command = null;
+        if (event.packet instanceof net.minecraft.network.packet.c2s.play.CommandExecutionC2SPacket p) command = p.command();
+        else if (event.packet instanceof net.minecraft.network.packet.c2s.play.ChatCommandSignedC2SPacket p) command = p.command();
+        if (pendingCommand == null || !pendingCommand.equals(command)) return;
+        commandSentAt = System.currentTimeMillis();
+        commandSent = true;
+        String dispatched = command;
+        mc.execute(() -> {
+            if (isActive() && dispatched.equals(pendingCommand)) saleFeedback("Sent /" + dispatched + " for " + cycleAmount + " " + item.get().getName().getString() + ". Waiting for server confirmation.");
+        });
     }
 
     /**
@@ -446,9 +536,9 @@ public class AHSell extends Module {
         }
         if (text == null) return;
         String s = text.getString();
-        if (s.startsWith("You listed")) listedMessage = true;
+        if (pendingCommand != null && confirmsListing(s)) listedMessage = true;
         String lower = s.toLowerCase(java.util.Locale.ROOT);
-        if (lower.contains("too many listed") || lower.contains("listing limit")) slotsFull = true;
+        if (pendingCommand != null && (lower.contains("too many listed") || lower.contains("listing limit"))) slotsFull = true;
         if (serverLinesToLog > 0 && !s.isBlank()) {
             serverLinesToLog--;
             MeteorClient.LOG.info("[Ember AHSell] Server ({}): {}", where, s);
@@ -529,21 +619,24 @@ public class AHSell extends Module {
 
     private long listingPrice(int count) {
         long each = parsePrice(price.get());
-        if (!undercut.get()) return each * count;
+        if (!undercut.get()) return fallbackPrice(each, count, 0);
         String name = item.get().getName().getString();
+        long minimumEach = minPrice.get().isBlank() ? 0 : parsePrice(minPrice.get());
         if (matches == 0) {
-            info("No %s on the auction house: listing at price-each (%s each).", name, each);
-            return each * count;
+            long fallback = fallbackPrice(each, count, minimumEach);
+            info("No %s auctions%s: using price-each with your minimum (%s for %d).", name, cycleMatchSize ? " with " + count + " items" : " matching", fallback, count);
+            return fallback;
         }
-        long by = Math.max(0, parsePrice(undercutBy.get()));
+        long by = parsePrice(undercutBy.get());
         long cheapest = (long) Math.floor(cheapestEach * count);
-        long at = Math.max(1, cheapest - by);
-        long floor = minPrice.get().isBlank() ? 0 : parsePrice(minPrice.get()) * count;
-        if (at < floor) {
+        long at = undercutPrice(cheapestEach, count, by, minimumEach);
+        if (at < 0) return at;
+        long floor = minimumEach * count;
+        if (Math.max(1, cheapest - by) < floor) {
             info("Cheapest %s is %s for %d: staying at your minimum, %s.", name, cheapest, count, floor);
             return floor;
         }
-        info("Cheapest %s is %s for %d (%d listings seen): listing at %s.", name, cheapest, count, matches, at);
+        info("Cheapest comparable %s: %s for %d (%d listings). Whole-listing price: %s.", name, cheapest, count, matches, at);
         return at;
     }
 
@@ -571,13 +664,15 @@ public class AHSell extends Module {
             if (total <= 0) continue;
             priced++;
             if (!sameItem(stack) || isOwn(stack, mine)) continue;
+            double each = comparablePrice(total, stack.getCount(), cycleAmount, cycleMatchSize);
+            if (each == Double.MAX_VALUE) continue;
             matches++;
-            cheapestEach = Math.min(cheapestEach, (double) total / stack.getCount());
+            cheapestEach = Math.min(cheapestEach, each);
         }
         StringBuilder names = new StringBuilder();
         for (int i = 0; i < Math.min(6, listings); i++) {
             ItemStack stack = inventory.getStack(i);
-            if (!stack.isEmpty()) names.append(stack.getName().getString()).append(" ").append(priceOf(stack)).append("; ");
+            if (!stack.isEmpty()) names.append(stack.getName().getString()).append(" x").append(stack.getCount()).append(" total ").append(priceOf(stack)).append("; ");
         }
         MeteorClient.LOG.info("[Ember AHSell] Page {} of \"{}\": {} priced listings, {} of {} so far, cheapest each {}; first: {}", page,
             mc.currentScreen == null ? "?" : mc.currentScreen.getTitle().getString(), priced, matches, item.get(), matches == 0 ? "-" : cheapestEach, names);
@@ -596,16 +691,8 @@ public class AHSell extends Module {
 
     /** The listing's price, from the "$ 467" line of its lore. */
     private static long priceOf(ItemStack stack) {
-        if (stack.isEmpty()) return -1;
-        LoreComponent lore = stack.get(DataComponentTypes.LORE);
-        if (lore == null) return -1;
-        for (Text line : lore.lines()) {
-            String s = line.getString();
-            if (s.contains("each") || s.contains("Worth")) continue;
-            Matcher m = PRICE_LINE.matcher(s);
-            if (m.find()) return parsePrice(m.group(1));
-        }
-        return -1;
+        FlipBot.Shown shown = shownPrice(stack);
+        return shown == null ? -1 : shown.value();
     }
 
     /**
@@ -632,12 +719,38 @@ public class AHSell extends Module {
         LoreComponent lore = stack.get(DataComponentTypes.LORE);
         if (lore == null) return null;
         for (Text line : lore.lines()) {
-            String s = line.getString();
-            if (s.contains("each") || s.contains("Worth")) continue;
-            Matcher m = PRICE_LINE.matcher(s);
-            if (m.find()) return FlipBot.shown(m.group(1));
+            String token = totalPriceToken(line.getString());
+            if (token != null) return FlipBot.shown(token);
         }
         return null;
+    }
+
+    static String totalPriceToken(String text) {
+        String clean = text.replaceAll("\u00a7.", "").replace('\u00a0', ' ').replace('\u202f', ' ');
+        String lower = clean.toLowerCase(Locale.ROOT);
+        if (lower.contains("each") || lower.contains("per item") || lower.contains("/item") || lower.contains("worth") || lower.contains("balance") || lower.contains("tax") || lower.contains("fee")) return null;
+        Matcher match = PRICE_LINE.matcher(clean);
+        return match.find() ? match.group(1) : null;
+    }
+
+    static double comparablePrice(long total, int count, int intendedCount, boolean sameSize) {
+        if (total <= 0 || count <= 0 || intendedCount <= 0 || sameSize && count != intendedCount) return Double.MAX_VALUE;
+        return (double) total / count;
+    }
+
+    static long undercutPrice(double each, int count, long by, long minimumEach) {
+        if (!Double.isFinite(each) || each <= 0 || count <= 0 || by < 0 || minimumEach < 0) return -1;
+        return Math.max(Math.max(1, (long) Math.floor(each * count) - by), minimumEach * count);
+    }
+
+    static long fallbackPrice(long each, int count, long minimumEach) {
+        if (each <= 0 || count <= 0 || minimumEach < 0) return -1;
+        return Math.max(each, minimumEach) * count;
+    }
+
+    static boolean confirmsListing(String text) {
+        String clean = text.replaceAll("\u00a7.", "").strip();
+        return clean.matches("(?i)^(?:\\[[^\\]]+\\]\\s*|[\u00bb\u203a>\u2713\u2714]\\s*)*you (?:have )?listed\\b.*");
     }
 
     /** What /ah searches by: the item's plain name, e.g. "gold nugget". */

@@ -117,6 +117,15 @@ val checkLyrics by tasks.registering(JavaExec::class) {
 
 tasks.named("check") { dependsOn(checkLyrics) }
 
+val checkAuctions by tasks.registering(JavaExec::class) {
+    dependsOn(tasks.named("lyricsChecksClasses"))
+    classpath = sourceSets["lyricsChecks"].runtimeClasspath
+    mainClass.set("meteordevelopment.meteorclient.systems.modules.donut.AHSellChecks")
+    enableAssertions = true
+}
+
+tasks.named("check") { dependsOn(checkAuctions) }
+
 val checkVisuals by tasks.registering(JavaExec::class) {
     dependsOn(tasks.named("lyricsChecksClasses"))
     classpath = sourceSets["lyricsChecks"].runtimeClasspath
