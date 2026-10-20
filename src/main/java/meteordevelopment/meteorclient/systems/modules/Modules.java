@@ -563,6 +563,7 @@ public class Modules extends System<Modules> {
         add(new NoRender());
         add(new PopChams());
         add(new StorageESP());
+        add(new SpawnerESP());
         add(new TimeChanger());
         add(new Tracers());
         add(new Trail());

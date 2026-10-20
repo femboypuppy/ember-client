@@ -25,7 +25,7 @@ stubs[P+'MeteorClient.java'] = '''package meteordevelopment.meteorclient;
 public class MeteorClient {
  public static final java.io.File FOLDER=new java.io.File(".");public static final Client mc=new Client();public static final meteordevelopment.orbit.EventBus EVENT_BUS=new meteordevelopment.orbit.EventBus();public static final Log LOG=new Log();
  public static class Log{public void error(String s,Object... args){}}
- public static class Client{public World world;public Object player,screen;public final Keyboard keyboard=new Keyboard();public final Window window=new Window();public Window getWindow(){return window;}public void setScreen(Object s){screen=s;}}
+ public static class Client{public World world;public Object player,screen;public final Keyboard keyboard=new Keyboard();public final Window window=new Window();public Window getWindow(){return window;}public void setScreen(Object s){screen=s;}public void execute(Runnable action){action.run();}}
  public static class Window{public double scale=1;public double getScaleFactor(){return scale;}}
  public static class Keyboard{String value="";public String getClipboard(){return value;}public void setClipboard(String s){value=s;}}
  public static class World{public boolean weather=true,sky=true;public float strength;public final Properties properties=new Properties();public boolean canHaveWeather(){return weather;}public World getDimension(){return this;}public boolean hasSkyLight(){return sky;}public Properties getLevelProperties(){return properties;}public float getRainGradient(float delta){return strength;}}
@@ -34,6 +34,9 @@ public class MeteorClient {
 stubs[P+'utils/PostInit.java']='package meteordevelopment.meteorclient.utils;public @interface PostInit{}'
 stubs[P+'events/game/GameLeftEvent.java']='package meteordevelopment.meteorclient.events.game;public class GameLeftEvent{}'
 stubs[P+'events/world/TickEvent.java']='package meteordevelopment.meteorclient.events.world;public class TickEvent{public static class Post{}}'
+stubs[P+'events/packets/PacketEvent.java']='package meteordevelopment.meteorclient.events.packets;public class PacketEvent{public static class Receive{public final Object packet;public Receive(Object p){packet=p;}}}'
+stubs['net/minecraft/network/packet/s2c/play/GameStateChangeS2CPacket.java']='''package net.minecraft.network.packet.s2c.play;
+public class GameStateChangeS2CPacket{public static final Object RAIN_STARTED=new Object(),RAIN_STOPPED=new Object(),RAIN_GRADIENT_CHANGED=new Object();private final Object reason;private final float value;public GameStateChangeS2CPacket(Object r,float v){reason=r;value=v;}public Object getReason(){return reason;}public float getValue(){return value;}}'''
 stubs[P+'systems/hud/elements/EmberNotificationsHud.java']='''package meteordevelopment.meteorclient.systems.hud.elements;
 public class EmberNotificationsHud{public enum Kind{INFO}public static final java.util.List<String> messages=new java.util.ArrayList<>();public static void push(int id,String title,String body,Kind kind){messages.add(title);}}'''
 stubs[P+'utils/render/WeatherSimulation.java']='package meteordevelopment.meteorclient.utils.render;public class WeatherSimulation{public enum Kind{Rain,Snow,Leaves,Ash,Petals}}'
@@ -99,7 +102,7 @@ public class RainAndSettingsChecks{
   var c=Config.get();c.customWeather.set(false);MeteorClient.mc.world=new MeteorClient.World();MeteorClient.mc.player=new Object();weather(false,0);weather(true,0);
   require(messages.equals(java.util.List.of("Rain has started"))&&EmberRainStatus.indicatorVisible(),"Start notification and icon appear once");
   for(int i=0;i<1000;i++)weather(true,1);require(messages.size()==1,"Steady rain must not spam notifications");
-  weather(false,1);require(messages.size()==2&&messages.get(1).equals("Rain is about to stop")&&EmberRainStatus.indicatorVisible()&&EmberRainStatus.ending(),"The server stop flag announces easing while rain is still visible");
+  weather(false,1);require(messages.size()==2&&messages.get(1).equals("Rain is easing")&&EmberRainStatus.indicatorVisible()&&EmberRainStatus.ending(),"The server stop flag announces easing while rain is still visible");
   for(int i=99;i>0;i--)weather(false,i/100f);require(messages.size()==2&&EmberRainStatus.indicatorVisible(),"Keep the icon throughout the fade-out");
   weather(false,0);require(messages.size()==3&&!EmberRainStatus.indicatorVisible(),"Remove the icon only when rain has stopped");
   c.rainNotifications.set(false);weather(true,1);require(messages.size()==3&&EmberRainStatus.indicatorVisible(),"Notifications and icon have independent toggles");c.rainStatusIcon.set(false);require(!EmberRainStatus.indicatorVisible(),"Disabling the icon applies immediately");c.rainStatusIcon.set(true);c.rainNotifications.set(true);weather(true,1);require(messages.size()==3,"Enabling notifications during rain must not invent a new start");
@@ -111,7 +114,7 @@ public class RainAndSettingsChecks{
   for(var style:WeatherSimulation.Kind.values())if(style!=WeatherSimulation.Kind.Rain){
    c.weatherStyle.set(style);weather(false,0);int baseline=messages.size();require(!EmberRainStatus.indicatorVisible(),"Non-rain particles do not invent server rain");
    weather(true,0);require(EmberRainStatus.indicatorVisible()&&messages.size()==baseline+1&&messages.get(baseline).equals("Rain has started"),style+" cannot suppress server rain start");
-   weather(true,1);weather(false,1);require(EmberRainStatus.ending()&&messages.get(messages.size()-1).equals("Rain is about to stop"),style+" cannot suppress the easing alert");
+   weather(true,1);weather(false,1);require(EmberRainStatus.ending()&&messages.get(messages.size()-1).equals("Rain is easing"),style+" cannot suppress the easing alert");
    weather(false,.02f);require(EmberRainStatus.indicatorVisible(),style+" keeps the badge through the fade");weather(false,0);require(!EmberRainStatus.indicatorVisible()&&messages.get(messages.size()-1).equals("Rain has stopped"),style+" cannot suppress rain stopping");
   }
   c.weatherStyle.set(WeatherSimulation.Kind.Rain);weather(true,1);int overlapping=messages.size();c.customWeather.set(false);weather(true,1);require(EmberRainStatus.indicatorVisible()&&messages.size()==overlapping,"Disabling local rain does not stop real rain");
@@ -121,6 +124,28 @@ public class RainAndSettingsChecks{
   c.ambience.set(true);c.worldAtmosphere.set(true);c.customWeather.set(true);c.weatherStyle.set(WeatherSimulation.Kind.Rain);weather(false,0);require(EmberRainStatus.indicatorVisible(),"Custom rain in a skylit weatherless dimension must match the actual particle renderer");
   c.weatherDensity.set(0.0);weather(false,0);require(!EmberRainStatus.indicatorVisible(),"Zero local density leaves no phantom rain");c.weatherDensity.set(.5);MeteorClient.mc.world.sky=false;weather(false,0);require(!EmberRainStatus.indicatorVisible(),"Local rain needs a skylit dimension");
   var tracker=new RainTracker();require(tracker.update(false,0)==RainTracker.Change.None,"Quiet baseline");require(tracker.update(true,0)==RainTracker.Change.Started,"Rain request precedes visible strength");require(tracker.update(false,1)==RainTracker.Change.Ending,"Easing event");require(tracker.update(true,.7f)==RainTracker.Change.None&&!tracker.ending(),"Rain restarting during fade clears easing without a false fresh start");
+  // Plugin servers may send intensity without matching the vanilla boolean flag.
+  c.customWeather.set(false);MeteorClient.mc.world=new MeteorClient.World();weather(false,0);int pluginBaseline=messages.size();
+  var level=net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket.RAIN_GRADIENT_CHANGED;
+  MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.packets.PacketEvent.Receive(new net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket(level,.8f)));
+  weather(false,0);require(EmberRainStatus.indicatorVisible()&&!EmberRainStatus.ending()&&messages.size()==pluginBaseline+1,"Intensity-only rain must show Rain rather than Easing, even with a clear native flag");
+  for(int i=0;i<200;i++){MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.packets.PacketEvent.Receive(new net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket(level,.8f)));weather(false,0);}
+  require(messages.size()==pluginBaseline+1&&!EmberRainStatus.ending(),"Duplicate plugin weather packets do not spam or invent easing");
+  MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.packets.PacketEvent.Receive(new net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket(level,.4f)));weather(false,0);require(EmberRainStatus.ending(),"Falling intensity is observed as easing");
+  for(int i=0;i<45;i++)weather(false,0);require(EmberRainStatus.indicatorVisible()&&!EmberRainStatus.ending(),"Settled nonzero intensity does not stay stuck on Easing");
+  MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.packets.PacketEvent.Receive(new net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket(level,0)));weather(true,1);require(!EmberRainStatus.indicatorVisible(),"Explicit zero intensity overrides a stale rainy native flag");
+  var stopped=net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket.RAIN_STOPPED;
+  int clearMessages=messages.size();
+  for(int i=0;i<5;i++){MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.packets.PacketEvent.Receive(new net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket(stopped,0)));weather(false,1);require(!EmberRainStatus.indicatorVisible()&&messages.size()==clearMessages,"A clear packet cannot invent a new rain event from vanilla's gradient reset");}
+  MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.packets.PacketEvent.Receive(new net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket(level,.8f)));weather(false,0);
+  for(int i=0;i<130;i++){MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.packets.PacketEvent.Receive(new net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket(stopped,0)));weather(false,1);}
+  require(!EmberRainStatus.indicatorVisible(),"Repeated clear packets cannot keep a phantom fade alive forever");
+  MeteorClient.mc.world=new MeteorClient.World();weather(false,0);require(!EmberRainStatus.indicatorVisible(),"Changing worlds discards server-specific weather state");
+  var started=net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket.RAIN_STARTED;
+  MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.packets.PacketEvent.Receive(new net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket(started,0)));weather(false,0);
+  require(EmberRainStatus.indicatorVisible()&&!EmberRainStatus.ending(),"An explicit start works even before the native rainy flag updates");
+  MeteorClient.EVENT_BUS.post(new meteordevelopment.meteorclient.events.packets.PacketEvent.Receive(new net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket(stopped,0)));weather(false,1);
+  require(EmberRainStatus.indicatorVisible()&&EmberRainStatus.ending(),"An actual stop retains the visible fade");weather(false,0);require(!EmberRainStatus.indicatorVisible(),"An actual fade still completes normally");
   var glyph=new meteordevelopment.meteorclient.systems.hud.HudRenderer();EmberIcons.draw(glyph,EmberIcons.Glyph.RAIN,0,0,32,new meteordevelopment.meteorclient.utils.render.color.Color(255,255,255,255),new meteordevelopment.meteorclient.utils.render.color.Color(0,0,0,255));require(glyph.primitives>4&&glyph.primitives<120,"Rain icon has a bounded primitive budget");
   c.rainNotifications.set(true);c.rainEndingNotification.set(true);c.rainStatusIcon.set(true);c.customWeather.set(false);c.ambience.set(true);c.worldAtmosphere.set(true);
   Utils.width=1000;Utils.height=700;var menu=new Menu(EmberClientSettingsScreen.Page.Weather);menu.draw();
@@ -147,7 +172,7 @@ with tempfile.TemporaryDirectory(prefix='ember-rain-checks-') as temp:
     temp=Path(temp);sources=temp/'src';classes=temp/'classes'
     for name,body in stubs.items():
         target=sources/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_text(body,encoding='utf-8')
-    for name in ['gui/screens/EmberClientSettingsScreen','utils/render/StartMenuLayout','utils/render/RainTracker','utils/render/EmberRainStatus','utils/render/EmberIcons','utils/PostInit','events/world/TickEvent','events/game/GameLeftEvent']:
+    for name in ['gui/screens/EmberClientSettingsScreen','utils/render/StartMenuLayout','utils/render/RainTracker','utils/render/ServerRainState','utils/render/EmberRainStatus','utils/render/EmberIcons','utils/PostInit','events/world/TickEvent','events/game/GameLeftEvent']:
         target=sources/(P+name+'.java');target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/'src/main/java'/(P+name+'.java'),target)
     (sources/'RainAndSettingsChecks.java').write_text(HARNESS,encoding='utf-8')
     compiled=subprocess.run([str(JAVA/'javac'),'-encoding','UTF-8','-cp',ORBIT,'-d',str(classes),*map(str,sources.rglob('*.java'))],capture_output=True,text=True)

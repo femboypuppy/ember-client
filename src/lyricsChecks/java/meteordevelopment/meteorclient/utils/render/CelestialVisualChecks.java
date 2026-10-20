@@ -10,6 +10,7 @@ public final class CelestialVisualChecks {
         HatVisualChecks.run();
         SceneVisualChecks.run();
         WeatherChecks.run();
+        SpawnerTypeChecks.run();
         InteractionVisualChecks.run();
         EspGeometryChecks.run();
         terrainSurfaces();

@@ -12,8 +12,12 @@ public final class RainTracker {
     private boolean initialized, raining, ending;
 
     public Change update(boolean requested, float strength) {
+        return update(requested, strength, !requested);
+    }
+
+    public Change update(boolean requested, float strength, boolean fading) {
         boolean wet = requested || Float.isFinite(strength) && strength > .001f;
-        boolean easing = wet && !requested;
+        boolean easing = wet && fading;
         Change change = Change.None;
         if (initialized) {
             if (!raining && wet) change = Change.Started;
