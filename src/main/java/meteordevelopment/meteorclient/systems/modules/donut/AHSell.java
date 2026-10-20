@@ -121,15 +121,28 @@ public class AHSell extends Module {
 
     private final Setting<Integer> pages = sgUndercut.add(new IntSetting.Builder()
         .name("pages")
-        .description("Auction house pages to read each time.")
-        .defaultValue(2)
+        .description("Auction house pages to read each time. One is safest; each extra page is another click on the menu.")
+        .defaultValue(1)
         .range(1, 5)
         .sliderRange(1, 5)
         .visible(undercut::get)
         .build()
     );
 
-    private enum Step { NEXT, LOOKUP, TURNING, SELL, CONFIRM }
+    private enum Step { NEXT, LOOKUP, TURNING, CLOSING, SELL, CONFIRM }
+
+    private String pageBefore = "";
+
+    /** The first few listings of a page, to tell when the next page has replaced it. */
+    private static String signature(GenericContainerScreenHandler handler) {
+        StringBuilder sb = new StringBuilder();
+        Inventory inventory = handler.getInventory();
+        for (int i = 0; i < Math.min(9, inventory.size()); i++) {
+            ItemStack stack = inventory.getStack(i);
+            sb.append(stack.getItem()).append(stack.getCount()).append(priceOf(stack)).append('|');
+        }
+        return sb.toString();
+    }
 
     /** "$ 467", "$1.2K", "$ 1,500,000": the price line of an auction house listing. */
     private static final Pattern PRICE_LINE = Pattern.compile("\\$\\s*([0-9][0-9,]*(?:\\.[0-9]+)?\\s*[kmbtKMBT]?)");
@@ -245,27 +258,39 @@ public class AHSell extends Module {
                     read(handler);
                     ItemStack next = handler.getInventory().size() > NEXT_PAGE_SLOT ? handler.getInventory().getStack(NEXT_PAGE_SLOT) : ItemStack.EMPTY;
                     if (page < pages.get() && next.isOf(Items.ARROW)) {
+                        pageBefore = signature(handler);
                         mc.interactionManager.clickSlot(handler.syncId, NEXT_PAGE_SLOT, 0, SlotActionType.PICKUP, mc.player);
                         page++;
                         waited = 0;
                         step = Step.TURNING;
                     } else {
-                        mc.player.closeHandledScreen();
                         cachedEach = cheapestEach;
                         cachedMatches = matches;
                         cachedAt = System.currentTimeMillis();
-                        step = Step.SELL;
-                        // A short gap between closing the menu and the next command.
-                        timer = 20;
+                        // Like a person: a moment on the menu before closing it, and before the next command. Closing
+                        // the auction house mid-load, then commanding right away, seems to lock it for a minute.
+                        step = Step.CLOSING;
+                        timer = 10;
                     }
                 }
             }
             case TURNING -> {
-                if (++waited >= 6) {
+                // Wait for the next page to actually arrive before reading it.
+                GenericContainerScreenHandler handler = container();
+                if (handler == null) {
+                    step = Step.CLOSING;
+                    return;
+                }
+                if (!signature(handler).equals(pageBefore) || ++waited >= 60) {
                     waited = stable = 0;
                     lastMatches = -1;
                     step = Step.LOOKUP;
                 }
+            }
+            case CLOSING -> {
+                if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
+                step = Step.SELL;
+                timer = 30;
             }
             case SELL -> {
                 if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
