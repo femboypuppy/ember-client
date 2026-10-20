@@ -52,12 +52,12 @@ public final class MenuSettingsScreen extends MenuScreen {
         cx=px+232;cy=py+104;cw=pw-256;bottom=py+ph-25;
         String savedQuery=query;search=new MenuControl.Input("Search settings",px+17,py+88,181,34,false,this::searchChanged);search.value(savedQuery);
         for(int i=0;i<7;i++){Section page=SECTIONS[i];sidebar[i]=new MenuControl.Button(page.title,px+13,py+143+i*42,190,35,()->select(page));sidebar[i].enabled=()->!accounts.busy&&matches(page);}
-        focused=null;buildContent();
+        focus(null);buildContent();
         if(modal){String saved=credential==null?"":credential.value();buildSheet();credential.value(saved);}
     }
     private boolean matches(Section page){return matched[page.ordinal()];}
     private void searchChanged(String value){query=value;String needle=query.toLowerCase(java.util.Locale.ROOT);for(Section page:SECTIONS)matched[page.ordinal()]=needle.isBlank()||(MenuLanguage.text(page.title)+" "+MenuLanguage.text(page.description)).toLowerCase(java.util.Locale.ROOT).contains(needle);if(!matches(section))for(Section page:SECTIONS)if(matches(page)){select(page);break;}}
-    private void select(Section next){if(next==section||accounts.busy)return;pendingSection=next;focused=null;dragging=null;MenuAudio.click();}
+    private void select(Section next){if(next==(pendingSection==null?section:pendingSection)||accounts.busy)return;pendingSection=next;focus(null);if(dragging!=null)dragging.release();dragging=null;MenuAudio.click();}
     private double row(double y,MenuControl control){content.add(control);return y+control.h+7;}
     private MenuControl.Button button(String label,double y,Runnable action){return new MenuControl.Button(label,cx+12,y,cw-24,40,action);}
     private void info(double y,String... lines){content.add(new Info(cx+12,y,cw-24,lines));}
@@ -158,7 +158,7 @@ public final class MenuSettingsScreen extends MenuScreen {
     private double panelScale(){return ConfigManager.get().motion()?.95+.05*MenuAnimation.cubic(progress):1;}
     @Override public void tick(){super.tick();accounts.refresh();}
 
-    private void openAdd(){if(accounts.busy)return;modal=true;buildSheet();focused=null;}
+    private void openAdd(){if(accounts.busy)return;modal=true;buildSheet();focus(null);}
     private void buildSheet(){
         sheet.clear();double x=vw/2-210,y=vh/2-148;
         sheet.add(new MenuControl.Segments("Account type",x+18,y+53,384,new String[]{"Microsoft","Offline","Session","Altening"},()->switch(adding){case Microsoft->0;case Cracked->1;case Session->2;default->3;},v->{adding=switch(v){case 0->AccountType.Microsoft;case 1->AccountType.Cracked;case 2->AccountType.Session;default->AccountType.TheAltening;};buildSheet();}));
@@ -166,7 +166,7 @@ public final class MenuSettingsScreen extends MenuScreen {
         credential=new MenuControl.Input(adding==AccountType.Cracked?"Minecraft username":"Account token",x+26,y+141,368,38,adding!=AccountType.Cracked,value->{});
         credential.enabled=()->!accounts.busy&&adding!=AccountType.Microsoft;sheet.add(credential);
         MenuControl.Button add=new MenuControl.Button(adding==AccountType.Microsoft?"Sign in with Microsoft":"Add & switch",x+26,y+196,368,39,()->accounts.add(adding,credential.value()));add.primary=true;add.enabled=()->!accounts.busy;sheet.add(add);
-        MenuControl.Button cancel=new MenuControl.Button("Cancel",x+26,y+243,368,32,()->{if(accounts.canLeave()){modal=false;focused=null;}});cancel.enabled=()->!accounts.busy||accounts.browser;sheet.add(cancel);
+        MenuControl.Button cancel=new MenuControl.Button("Cancel",x+26,y+243,368,32,()->{if(accounts.canLeave()){modal=false;focus(null);}});cancel.enabled=()->!accounts.busy||accounts.browser;sheet.add(cancel);
     }
     private void paintSheet(double mx,double my){
         double old=canvas.opacity;canvas.rect(0,0,vw,vh,MenuTheme.alpha(0x8A000000,modalFade));canvas.opacity*=modalFade;

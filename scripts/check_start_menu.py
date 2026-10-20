@@ -31,7 +31,15 @@ public class MenuChecks {
    near(d.y[2],d.top+13,1e-9,"Reduced motion disables bounce");check(d.active==2,"Active marker persists");
   }
   var invalid=new MenuConfig();invalid.uiScale=Double.NaN;invalid.musicVolume=Double.POSITIVE_INFINITY;invalid.wallpaper=null;invalid.language=null;invalid.blurIntensity=-9;invalid.fpsLimit=9999;invalid.validate();
-  check(invalid.uiScale==1&&invalid.musicVolume==.45&&invalid.blurIntensity==0&&invalid.fpsLimit==240,"Validate damaged numbers");check(invalid.wallpaper!=null&&invalid.language.equals("system"),"Validate unknown enum/language");
+  check(invalid.uiScale==.9&&invalid.musicVolume==.45&&invalid.blurIntensity==0&&invalid.fpsLimit==240,"Validate damaged numbers");check(invalid.wallpaper!=null&&invalid.language.equals("system"),"Validate unknown enum/language");
+  check(new MenuConfig().uiScale==.9,"Fresh menus default to 90% scale");
+  Path legacy=ConfigManager.PATH.resolveSibling("old-scale.json");Files.createDirectories(legacy.getParent());
+  for(double scale:new double[]{.8,.9,1,1.1,1.25}){
+   Files.writeString(legacy,"{\"schema\":1,\"uiScale\":"+scale+",\"clock24\":true}");var migrated=ConfigManager.load(legacy);
+   near(migrated.uiScale,scale==1?.9:scale,1e-12,"Migrate only previous default scale");check(migrated.schema==2&&migrated.clock24,"Scale migration retains other preferences");
+   migrated.validate();near(migrated.uiScale,scale==1?.9:scale,1e-12,"Migration is idempotent");
+  }
+  Files.writeString(legacy,"{\"schema\":2,\"uiScale\":1}");near(ConfigManager.load(legacy).uiScale,1,1e-12,"New custom 100% scale is retained");
   Path damaged=ConfigManager.PATH.resolveSibling("damaged.json");Files.createDirectories(damaged.getParent());Files.writeString(damaged,"{broken");check(ConfigManager.load(damaged).wallpaper==MenuConfig.Wallpaper.LIVE,"Malformed config fallback");check(Files.readString(damaged).equals("{broken"),"Malformed file preserved");
   String[][] renamed={{"CHROME_LIVE","LIVE"},{"CHROME","OBSIDIAN"},{"MIDNIGHT","SUMMIT"},{"SILK","SILK"}};
   for(String[] pair:renamed){Path old=ConfigManager.PATH.resolveSibling("old-"+pair[0]+".json");Files.writeString(old,"{\"wallpaper\":\""+pair[0]+"\",\"clock24\":true}");var loaded=ConfigManager.load(old);check(loaded.wallpaper.name().equals(pair[1])&&loaded.clock24,"Saved wallpaper "+pair[0]+" migrates");}
@@ -70,6 +78,7 @@ def main():
  for name in ('ui','clock'):
   provider=json.loads((assets/f'font/{name}.json').read_text())['providers'][0];file=provider['file'].removeprefix('ember:')
   assert provider['type']=='ttf' and (assets/'font'/file).is_file();assert (assets/'font'/file).read_bytes()[:4] in (b'\x00\x01\x00\x00',b'OTTO')
+  if name=='ui':assert provider['oversample']>=4,'Body text needs enough atlas detail at 1440p'
  for lang in ('en_us','fr_fr'):assert 'wallpaper.live' in json.loads((assets/f'menu_lang/{lang}.json').read_text(encoding='utf-8'))
  assert json.loads((assets/'sounds.json').read_text())['ui.click']['sounds'][0]['type']=='event'
  metadata=json.loads((ROOT/'src/main/resources/fabric.mod.json').read_text());assert any('EmberMenuClient' in str(e) for e in metadata['entrypoints']['client'])

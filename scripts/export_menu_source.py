@@ -19,7 +19,7 @@ def files():
                 ROOT / JAVA / 'utils/render/EmberMenuWallpaper.java',
                 ROOT / JAVA / 'utils/render/StartMenuLayout.java']
     selected += sorted((ROOT / JAVA / 'gui/screens/menu').glob('*.java'))
-    for name in ('EmberMenuMinecraftMixin', 'EmberMenuScreenMixin', 'EmberMenuFpsMixin',
+    for name in ('EmberMenuMinecraftMixin', 'EmberMenuScreenMixin', 'EmberMenuFpsMixin', 'EmberMenuGlyphMixin',
                  'EmberMenuSoundMixin', 'EmberMenuBackgroundMixin', 'TitleScreenMixin', 'GameRendererMixin'):
         selected.append(ROOT / JAVA / f'mixin/{name}.java')
     selected += [ROOT / name for name in ('src/main/resources/fabric.mod.json',

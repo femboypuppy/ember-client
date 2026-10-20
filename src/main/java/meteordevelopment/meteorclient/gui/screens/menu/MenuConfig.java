@@ -4,12 +4,13 @@ import com.google.gson.annotations.SerializedName;
 
 /** Menu-only preferences. Accounts and Minecraft's own options stay in their existing stores. */
 public final class MenuConfig {
-    public int schema = 1;
+    public static final double DEFAULT_UI_SCALE = .9;
+    public int schema = 2;
     public boolean clock24 = false, showDate = true;
     public String language = "system";
     public Wallpaper wallpaper = Wallpaper.LIVE;
     public int accent = 0xB49AFF;
-    public double blurIntensity = .65, uiScale = 1;
+    public double blurIntensity = .65, uiScale = DEFAULT_UI_SCALE;
     public boolean lightGlass = false, animations = true, parallax = true, magnification = true;
     public double animationSpeed = 1;
     public boolean music = true, clicks = true;
@@ -30,12 +31,14 @@ public final class MenuConfig {
     }
 
     public void validate() {
-        schema = 1;
+        // Move the previous default to 90%, while retaining explicitly customized scales.
+        if (schema < 2 && uiScale == 1) uiScale = DEFAULT_UI_SCALE;
+        schema = 2;
         if (wallpaper == null) wallpaper = Wallpaper.LIVE;
         if (!"en_us".equals(language) && !"fr_fr".equals(language)) language = "system";
         accent &= 0xFFFFFF;
         blurIntensity = finite(blurIntensity, .65, 0, 1);
-        uiScale = finite(uiScale, 1, .8, 1.25);
+        uiScale = finite(uiScale, DEFAULT_UI_SCALE, .8, 1.25);
         animationSpeed = finite(animationSpeed, 1, .4, 2);
         musicVolume = finite(musicVolume, .45, 0, 1);
         fpsLimit = Math.clamp(fpsLimit, 30, 240);

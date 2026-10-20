@@ -22,7 +22,7 @@ The sidebar search filters sections. Content scrolls in compact windows. Tab foc
 
 All new assets live under `src/main/resources/assets/ember/`:
 
-- `font/ui.json`, `font/inter.ttf`: native Inter regular font, 16 logical-pixel base, 2x oversampling.
+- `font/ui.json`, `font/inter.ttf`: native Inter regular font, 16 logical-pixel base, 4x oversampling.
 - `font/clock.json`, `font/inter_display_semibold.ttf`: native Inter Display SemiBold, 96 logical-pixel base, 3x oversampling.
 - `font/ofl.txt`: Inter license. SF Pro is not bundled.
 - `textures/menu/nebula.png`, `silk.png`, `obsidian.png`, `summit.png`: bundled 2560 x 1440 wallpapers.
@@ -42,6 +42,8 @@ Shapes are placed on the window's physical pixel grid rather than the GUI-scaled
 Text height is normalized to the bundled Inter cap heights (12 body / 70 clock), so small-window labels retain their intended visible size. The providers use vertical shifts of 5 (body) and 64 (clock) to align Inter cap heights with the top-based layout despite Minecraft's fixed text baseline. Font JSON IDs are `ember:ui` and `ember:clock`. In 1.21.11, `Style.withFont` takes `new StyleSpriteSource.Font(Identifier.of(...))`; DrawContext matrices are a `Matrix3x2fStack`. Text uses `drawText(TextRenderer, Text, x, y, color, false)`. Texture commands use `RenderPipelines.GUI_TEXTURED` and the current `drawTexture` overload with source region and texture dimensions. Font providers automatically resolve `ember:inter.ttf` below `assets/ember/font/`.
 
 The native Minecraft resource system caches/owns textures and glyph atlases. The menu caches labels/widths and control objects. A Fabric resource-loader-v1 synchronous reloader invalidates menu labels/layout after a resource-pack reload; it does not allocate or upload textures itself.
+
+Minecraft 1.21.11's `GlyphGuiElementRenderState.textureSetup()` selects a nearest sampler directly. `EmberMenuGlyphMixin` changes that selection to the cached linear sampler while an Ember `MenuScreen` is open, allowing the oversampled Inter glyphs to blend smoothly at fractional scales. Vanilla screens and gameplay keep their original font sampling. The default UI scale is 90%; schema-1 preferences at the former 100% default migrate to 90%, while custom values are retained. Sidebar focus is cleared through the focus setter on page changes, so previously clicked sections cannot retain an accent fill.
 
 ## Integration
 

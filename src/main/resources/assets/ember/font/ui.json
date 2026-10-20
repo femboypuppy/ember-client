@@ -4,7 +4,7 @@
       "type": "ttf",
       "file": "ember:inter.ttf",
       "size": 16,
-      "oversample": 2,
+      "oversample": 4,
       "shift": [
         0,
         5
