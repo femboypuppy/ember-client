@@ -534,10 +534,13 @@ public class AHSell extends Module {
             mc.currentScreen == null ? "?" : mc.currentScreen.getTitle().getString(), priced, matches, item.get(), matches == 0 ? "-" : cheapestEach, names);
     }
 
-    /** A plain one of the chosen item: renamed or enchanted copies are priced differently. */
+    /**
+     * A plain one of the chosen item. The auction house gives every listing a custom name, so a renamed copy is told
+     * apart by the shown name, not by having one; enchanted copies are priced differently.
+     */
     private boolean sameItem(ItemStack listing) {
         if (!listing.isOf(item.get())) return false;
-        if (listing.get(DataComponentTypes.CUSTOM_NAME) != null) return false;
+        if (!listing.getName().getString().trim().equalsIgnoreCase(item.get().getName().getString())) return false;
         var enchants = listing.get(DataComponentTypes.ENCHANTMENTS);
         return enchants == null || enchants.isEmpty();
     }
