@@ -166,6 +166,10 @@ public class AHSell extends Module {
     /** Server messages to log after a command: chat, above the hotbar and titles. */
     private volatile int serverLinesToLog;
     private volatile boolean listedMessage;
+    /** The server said "You have too many listed items" to the last /ah sell. */
+    private volatile boolean slotsFull;
+    /** This listing's sell slot has been clicked with the inventory open, so the server agrees what's in it. */
+    private boolean synced;
     /** Last price check: cheapest per item and how many listings matched, and when. */
     private double cachedEach = Double.MAX_VALUE;
     private int cachedMatches = -1;
@@ -223,6 +227,7 @@ public class AHSell extends Module {
                     return;
                 }
                 waitingFor = "";
+                synced = false;
                 InvUtils.swap(sellSlot.get() - 1, false);
                 boolean fresh = cachedMatches >= 0 && System.currentTimeMillis() - cachedAt < priceCheck.get() * 1000L;
                 if (!undercut.get() || fresh) {
@@ -301,7 +306,8 @@ public class AHSell extends Module {
             case CLOSING -> {
                 if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
                 step = Step.SELL;
-                timer = 30;
+                // /ah sell sent 2 s after closing the auction house got no answer at all; 3 s+ worked.
+                timer = 70;
             }
             case SELL -> {
                 if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
@@ -311,9 +317,21 @@ public class AHSell extends Module {
                 planMove();
                 if (clicks.isEmpty()) {
                     // More than one listing's worth that couldn't be split (no free slot): never list it all.
-                    step = held() > 0 && held() <= amount.get() ? Step.SEND : Step.NEXT;
-                    return;
+                    if (held() <= 0 || held() > amount.get()) {
+                        step = Step.NEXT;
+                        return;
+                    }
+                    if (synced) {
+                        step = Step.SEND;
+                        return;
+                    }
+                    // Already in the slot, but the server may not agree (then /ah sell gets no answer at all): pick
+                    // it up and put it back, which makes the server send what's really there.
+                    int sellId = SlotUtils.indexToId(sellSlot.get() - 1);
+                    clicks.add(new int[] {sellId, 0});
+                    clicks.add(new int[] {sellId, 0});
                 }
+                synced = true;
                 // The server ignores clicks sent with the inventory closed, all at once: the item only looks moved.
                 // So, like a person: open the inventory, one click at a time, close it.
                 inventoryLinesToLog = 8;
@@ -335,7 +353,8 @@ public class AHSell extends Module {
                         mc.player.closeHandledScreen();
                         InvUtils.swap(sellSlot.get() - 1, false);
                         step = held() > 0 && held() <= amount.get() ? Step.SEND : Step.NEXT;
-                        timer = 10;
+                        // A moment for the server's answer to the clicks before /ah sell.
+                        timer = 12;
                     }
                     return;
                 }
@@ -356,6 +375,7 @@ public class AHSell extends Module {
                 int count = held.getCount();
                 long at = listingPrice(count);
                 listedMessage = false;
+                slotsFull = false;
                 serverLinesToLog = 4;
                 mc.player.networkHandler.sendChatCommand("ah sell " + at);
                 own.addLast(new Own(count, at, System.currentTimeMillis()));
@@ -365,18 +385,27 @@ public class AHSell extends Module {
                 step = Step.CONFIRM;
             }
             case CONFIRM -> {
-                // Listed when the server says "You listed ..." or the item left the sell slot; neither after 3
-                // seconds means it said no.
+                // Listed when the server says "You listed ...". "You have too many listed items" means the slots are
+                // full: the server also takes the item out of the sell slot then, so an empty slot alone only counts
+                // once a refusal had time to arrive. No answer at all after 3 seconds: it ignored the command.
                 ItemStack inSlot = mc.player.getInventory().getStack(sellSlot.get() - 1);
-                if (listedMessage || !inSlot.isOf(item.get())) {
+                waited++;
+                if (slotsFull) {
+                    waitingFor = "auction slots full, retry in " + retryWait.get() + "s";
+                    info("Your auction slots are full: trying again in %d seconds.", retryWait.get());
+                    step = Step.NEXT;
+                    nextAllowed = System.currentTimeMillis() + retryWait.get() * 1000L;
+                } else if (listedMessage || !inSlot.isOf(item.get()) && waited >= 40) {
                     listed++;
                     step = Step.NEXT;
                     nextAllowed = System.currentTimeMillis() + delay.get() * 1000L;
-                } else if (++waited >= 60) {
-                    waitingFor = "slots full? retry in " + retryWait.get() + "s";
-                    info("The listing didn't go through (auction slots full?): trying again in %d seconds.", retryWait.get());
+                } else if (waited >= 60) {
+                    int retry = Math.min(15, retryWait.get());
+                    waitingFor = "no answer, retry in " + retry + "s";
+                    info("The server didn't answer /ah sell: trying again in %d seconds.", retry);
+                    MeteorClient.LOG.info("[Ember AHSell] No answer to /ah sell; the sell slot holds {}", inSlot);
                     step = Step.NEXT;
-                    nextAllowed = System.currentTimeMillis() + retryWait.get() * 1000L;
+                    nextAllowed = System.currentTimeMillis() + retry * 1000L;
                 }
             }
         }
@@ -418,6 +447,8 @@ public class AHSell extends Module {
         if (text == null) return;
         String s = text.getString();
         if (s.startsWith("You listed")) listedMessage = true;
+        String lower = s.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("too many listed") || lower.contains("listing limit")) slotsFull = true;
         if (serverLinesToLog > 0 && !s.isBlank()) {
             serverLinesToLog--;
             MeteorClient.LOG.info("[Ember AHSell] Server ({}): {}", where, s);
