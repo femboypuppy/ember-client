@@ -114,7 +114,9 @@ public final class MenuSettingsScreen extends MenuScreen {
                 info(y,"EMBER CLIENT","Client version: "+MeteorClient.VERSION,"Minecraft: "+FabricLoader.getInstance().getModContainer("minecraft").orElseThrow().getMetadata().getVersion().getFriendlyString(),
                     "Mod version: "+MeteorClient.MOD_META.getVersion().getFriendlyString(),"Fabric · Yarn mappings · Java 21");y+=175;
                 info(y,"Typography: Inter / Rasmus Andersson (OFL)","Nebula wallpaper: BoliviaInteligente / Unsplash","Silk wallpaper: Pawel Czerwinski / Unsplash",
-                    "Obsidian wallpaper: Philip Oroni / Unsplash","Summit wallpaper: Benjamin Voros / Unsplash");y+=168;
+                    "Obsidian wallpaper: Philip Oroni / Unsplash","Summit wallpaper: Benjamin Voros / Unsplash",
+                    "Aurora wallpaper: Jonathan Bean / Unsplash","Dunes wallpaper: Fabian Struwe / Unsplash",
+                    "Forest wallpaper: Dave Hoefler / Unsplash","Ocean wallpaper: Josh Withers / Unsplash");y+=296;
                 y=row(y,button("Use classic Minecraft menu",y,()->{Config.get().startMenu.set(StartMenuLayout.Style.Classic);Config.get().save();leaveFor(new TitleScreen());}));
             }
         }

@@ -44,6 +44,11 @@ public class MenuChecks {
   String[][] renamed={{"CHROME_LIVE","LIVE"},{"CHROME","OBSIDIAN"},{"MIDNIGHT","SUMMIT"},{"SILK","SILK"}};
   for(String[] pair:renamed){Path old=ConfigManager.PATH.resolveSibling("old-"+pair[0]+".json");Files.writeString(old,"{\"wallpaper\":\""+pair[0]+"\",\"clock24\":true}");var loaded=ConfigManager.load(old);check(loaded.wallpaper.name().equals(pair[1])&&loaded.clock24,"Saved wallpaper "+pair[0]+" migrates");}
   check(MenuConfig.Wallpaper.LIVE.live&&MenuConfig.Wallpaper.LIVE.file.equals(MenuConfig.Wallpaper.NEBULA.file)&&!MenuConfig.Wallpaper.NEBULA.live,"Live shares Nebula art");
+  for(var wallpaper:MenuConfig.Wallpaper.values()){
+   Path saved=ConfigManager.PATH.resolveSibling("wallpaper-"+wallpaper.name()+".json");
+   Files.writeString(saved,"{\"wallpaper\":\""+wallpaper.name()+"\"}");
+   check(ConfigManager.load(saved).wallpaper==wallpaper,"Restore every wallpaper selection");
+  }
   var c=ConfigManager.get();c.clock24=true;c.wallpaper=MenuConfig.Wallpaper.SUMMIT;c.reduceMotion=true;c.musicVolume=.27;c.accent=0x123ABC;c.language="fr_fr";ConfigManager.init();ConfigManager.changed();ConfigManager.flush();
   long deadline=System.nanoTime()+5_000_000_000L;while(!Files.exists(ConfigManager.PATH)&&System.nanoTime()<deadline)Thread.sleep(10);check(Files.exists(ConfigManager.PATH),"Atomic write completed");
   check(!Files.readString(ConfigManager.PATH).contains("credential"),"No account credentials in menu JSON");System.out.println("Animation, dock and atomic persistence passed");
@@ -65,7 +70,10 @@ def main():
   for phase in ('write','read'):subprocess.run([str(JAVA/'java'),'-Dtest.config='+str(temp/'config'),'-cp',str(classes)+os.pathsep+cp,'MenuChecks',phase],check=True)
  assets=ROOT/'src/main/resources/assets/ember'
  sizes={'':(2560,1440),'_blur':(480,270),'_thumb':(384,216)}
- textures=[(f'textures/menu/{art}{suffix}.png',size) for art in ('nebula','silk','obsidian','summit') for suffix,size in sizes.items()]
+ config=(SOURCE/'MenuConfig.java').read_text(encoding='utf-8')
+ wallpapers=re.findall(r'\b[A-Z_]+\("([a-z]+)", "(wallpaper\.[a-z]+)"',config)
+ assert len(wallpapers)>=9,'Keep all original and additional wallpaper choices'
+ textures=[(f'textures/menu/{art}{suffix}.png',size) for art in dict.fromkeys(art for art,key in wallpapers) for suffix,size in sizes.items()]
  textures+=[(f'textures/menu/icon/{icon}{suffix}.png',(n,n)) for icon in ('play','accounts','settings','display','power') for suffix,n in (('',128),('_64',64))]
  textures+=[('textures/menu/ui/corners.png',(sum(s+2 for s in (4,6,8,12,16,24,32,48,64,96,128)),130)),('textures/menu/ui/shadow.png',(256,256))]
  for name,size in textures:
@@ -79,7 +87,9 @@ def main():
   provider=json.loads((assets/f'font/{name}.json').read_text())['providers'][0];file=provider['file'].removeprefix('ember:')
   assert provider['type']=='ttf' and (assets/'font'/file).is_file();assert (assets/'font'/file).read_bytes()[:4] in (b'\x00\x01\x00\x00',b'OTTO')
   if name=='ui':assert provider['oversample']>=4,'Body text needs enough atlas detail at 1440p'
- for lang in ('en_us','fr_fr'):assert 'wallpaper.live' in json.loads((assets/f'menu_lang/{lang}.json').read_text(encoding='utf-8'))
+ for lang in ('en_us','fr_fr'):
+  labels=json.loads((assets/f'menu_lang/{lang}.json').read_text(encoding='utf-8'))
+  for art,key in wallpapers:assert key in labels,(lang,key)
  assert json.loads((assets/'sounds.json').read_text())['ui.click']['sounds'][0]['type']=='event'
  metadata=json.loads((ROOT/'src/main/resources/fabric.mod.json').read_text());assert any('EmberMenuClient' in str(e) for e in metadata['entrypoints']['client'])
  print('Native resource/font/sound references passed')

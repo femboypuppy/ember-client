@@ -9,7 +9,7 @@ The dock magnifies the hovered icon and its neighbors, fades tooltips, bounces o
 ## System Settings
 
 - **General:** 12/24-hour time, date, menu-only System/English/French language, Minecraft options.
-- **Appearance:** Nebula Live, Nebula, Silk, Obsidian and Summit thumbnails; HSV accent picker; blur amount; UI scale; light/dark glass.
+- **Appearance:** Nebula Live, Nebula, Silk, Obsidian, Summit, Aurora, Dunes, Forest and Ocean thumbnails; HSV accent picker; blur amount; UI scale; light/dark glass.
 - **Animations:** enable animations, speed, wallpaper parallax, dock magnification.
 - **Audio:** Minecraft menu soundtrack and volume; UI click sounds. Minecraft's global sound preferences remain in their own store.
 - **Performance:** 30-240 menu FPS cap, blur, reduced motion. Global FPS and minimized/AFK limits still apply; VSync can impose a lower cap.
@@ -25,7 +25,7 @@ All new assets live under `src/main/resources/assets/ember/`:
 - `font/ui.json`, `font/inter.ttf`: native Inter regular font, 16 logical-pixel base, 4x oversampling.
 - `font/clock.json`, `font/inter_display_semibold.ttf`: native Inter Display SemiBold, 96 logical-pixel base, 3x oversampling.
 - `font/ofl.txt`: Inter license. SF Pro is not bundled.
-- `textures/menu/nebula.png`, `silk.png`, `obsidian.png`, `summit.png`: bundled 2560 x 1440 wallpapers.
+- `textures/menu/nebula.png`, `silk.png`, `obsidian.png`, `summit.png`, `aurora.png`, `dunes.png`, `forest.png`, `ocean.png`: bundled 2560 x 1440 wallpapers.
 - `textures/menu/<art>_blur.png`: 480 x 270 prefiltered versions, sampled behind rounded glass panels and during settings transitions.
 - `textures/menu/<art>_thumb.png`: 384 x 216 picker thumbnails.
 - `textures/menu/icon/<action>.png`, `<action>_64.png`: white dock glyph masks at 128 and 64 pixels, tinted at draw time.
@@ -49,7 +49,7 @@ Minecraft 1.21.11's `GlyphGuiElementRenderState.textureSetup()` selects a neares
 
 `EmberMenuClient` is an additional **client** entrypoint in `fabric.mod.json`. Existing metadata and entrypoints are preserved. `EmberMenuMinecraftMixin` replaces an incoming vanilla `TitleScreen` through `MinecraftClient.setScreen` with an `@ModifyVariable` at HEAD (`argsOnly=true`). The existing `TitleScreenMixin` retains a render-time fallback for early startup and the classic-menu return button. The replacement is disabled while in a world or when classic mode is selected.
 
-The mixin list additionally contains `EmberMenuFpsMixin`, `EmberMenuSoundMixin` and `EmberMenuScreenMixin` for the menu cap, menu-only music multiplier and incoming native-screen fade. `EmberMenuBackgroundMixin` provides the shared wallpaper on out-of-world vanilla child screens. `GameRendererMixin` skips Ember's older glass-capture path for native MenuScreen instances.
+The mixin list additionally contains `EmberMenuFpsMixin`, `EmberMenuSoundMixin` and `EmberMenuScreenMixin` for the menu cap, menu-only music multiplier and incoming native-screen fade. `EmberMenuBackgroundMixin` replaces the complete out-of-world `Screen.renderBackground` path on vanilla child screens, including Singleplayer, Multiplayer, Direct Connection and Add Server. They use the same saved wallpaper, parallax and reduced-motion settings as the desktop, with a subtle dim and prefiltered blur for list readability. This bypasses the deferred vanilla panorama and fullscreen blur, while retaining native screen controls. The panorama hook remains a fallback for screens that invoke it directly. Classic-menu mode and screens opened inside a world keep their normal backgrounds. `GameRendererMixin` skips Ember's older glass-capture path for native MenuScreen instances.
 
 No new Gradle dependency is needed: the existing build already supplies Fabric API resource-loader-v1, Gson, MixinExtras and Minecraft text rendering. Keep **Java 21** and the repository's **1.21.11 Yarn mappings**. The full-code export includes the actual build and metadata files, with existing dependencies preserved; the menu module relies on Ember's existing account/authentication services rather than inventing a second credential store.
 
@@ -82,3 +82,5 @@ Verified API references: [DrawContext 1.21.11](https://maven.fabricmc.net/docs/y
 ## Validation of this revision
 
 The Java 21 build and visual checks passed against Minecraft 1.21.11/Yarn build 3. Startup, held-Enter isolation, all seven native settings layouts at maximum UI scale, resource reload, uninterrupted/reversing wallpaper fades, clock/date positioning, and compact-window rendering were checked in an isolated development client. Current compiled input bytecode also passed Home/End, cursor insertion, select-all replacement and Unicode backspace checks. Existing account UI/authentication, rain/settings and profile-sharing regression checks passed. Microsoft authentication itself was not performed with a real account during this menu preview.
+
+The wallpaper expansion passed the full Gradle build and menu persistence/resource checks for all nine selections. An isolated 1920 x 1080 development client verified the expanded Appearance picker, Aurora behind Multiplayer and Create World, and Ocean behind the populated Select World list. The preview did not connect to a server or load a world.

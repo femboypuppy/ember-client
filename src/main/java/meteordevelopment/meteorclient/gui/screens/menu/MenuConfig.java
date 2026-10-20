@@ -24,7 +24,11 @@ public final class MenuConfig {
         NEBULA("nebula", "wallpaper.nebula", "BoliviaInteligente", false),
         SILK("silk", "wallpaper.silk", "Pawel Czerwinski", false),
         @SerializedName(value = "OBSIDIAN", alternate = "CHROME") OBSIDIAN("obsidian", "wallpaper.obsidian", "Philip Oroni", false),
-        @SerializedName(value = "SUMMIT", alternate = "MIDNIGHT") SUMMIT("summit", "wallpaper.summit", "Benjamin Voros", false);
+        @SerializedName(value = "SUMMIT", alternate = "MIDNIGHT") SUMMIT("summit", "wallpaper.summit", "Benjamin Voros", false),
+        AURORA("aurora", "wallpaper.aurora", "Jonathan Bean", false),
+        DUNES("dunes", "wallpaper.dunes", "Fabian Struwe", false),
+        FOREST("forest", "wallpaper.forest", "Dave Hoefler", false),
+        OCEAN("ocean", "wallpaper.ocean", "Josh Withers", false);
         public final String file, key, artist;
         public final boolean live;
         Wallpaper(String file, String key, String artist, boolean live) { this.file = file; this.key = key; this.artist = artist; this.live = live; }

@@ -2,14 +2,15 @@
 
 Usage: python scripts/generate_menu_assets.py [--wallpapers DIR]
 Requires Pillow. DIR holds the 2560x1440 source JPGs named after MenuConfig art files
-(nebula.jpg, silk.jpg, obsidian.jpg, summit.jpg); see textures/menu/credits.md for sources.
+(nebula.jpg, silk.jpg, obsidian.jpg, summit.jpg, aurora.jpg, dunes.jpg, forest.jpg,
+ocean.jpg); see textures/menu/credits.md for sources. Use --art to rebuild a subset.
 Every texture gets a .mcmeta with linear filtering, so GUI scaling stays smooth at any resolution.
 """
 from pathlib import Path
 import argparse
 import json
 import math
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'src/main/resources/assets/ember/textures/menu'
@@ -17,7 +18,7 @@ SS = 8  # supersampling for procedural shapes
 # Must match MenuCanvas.CORNER_SIZES; each cell is size+2 wide with a 1px gutter on both sides.
 CORNER_SIZES = (4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128)
 SHADOW_SIZE, SHADOW_INSET, SHADOW_RADIUS = 256, 80, 48  # must match MenuCanvas.SHADOW_*
-ART = ('nebula', 'silk', 'obsidian', 'summit')
+ART = ('nebula', 'silk', 'obsidian', 'summit', 'aurora', 'dunes', 'forest', 'ocean')
 LINEAR = {'texture': {'blur': True, 'clamp': True}}
 
 
@@ -128,11 +129,11 @@ def power(draw, p, stroke, disc, k):
     stroke([(12, 2.8), (12, 11.4)], width)
 
 
-def wallpapers(source):
-    for name in ART:
+def wallpapers(source, names=ART):
+    for name in names:
         image = Image.open(source / f'{name}.jpg').convert('RGB')
         if image.size != (2560, 1440):
-            image = image.resize((2560, 1440), Image.LANCZOS)
+            image = ImageOps.fit(image, (2560, 1440), Image.Resampling.LANCZOS)
         save(image, OUT / f'{name}.png')
         # Glass samples this small prefiltered copy; bilinear filtering hides its low resolution.
         save(image.resize((480, 270), Image.LANCZOS).filter(ImageFilter.GaussianBlur(5)), OUT / f'{name}_blur.png')
@@ -142,13 +143,14 @@ def wallpapers(source):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--wallpapers', type=Path)
+    parser.add_argument('--art', nargs='+', choices=ART, default=ART, help='Only rebuild these wallpapers')
     args = parser.parse_args()
     corners()
     shadow()
     for name, paint in (('play', play), ('accounts', accounts), ('settings', settings), ('display', display), ('power', power)):
         icon(name, paint)
     if args.wallpapers:
-        wallpapers(args.wallpapers)
+        wallpapers(args.wallpapers, args.art)
     print('Generated menu assets in', OUT)
 
 

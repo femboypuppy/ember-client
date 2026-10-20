@@ -7,4 +7,13 @@ The wallpapers are bundled at 2560 × 1440 and work offline. The distributed PNG
 - **Obsidian:** “Black curved fan-like stacked shapes” by **Philip Oroni**. Original: https://unsplash.com/photos/black-curved-fan-like-stacked-shapes-VfOGf5RWkeg
 - **Summit:** “Snow mountain under stars” by **Benjamin Voros**. Original: https://unsplash.com/photos/snow-mountain-under-stars-phIFdC6lA4E
 
-All four images are offered under the [Unsplash License](https://unsplash.com/license), which permits free use and distribution. Downloaded October 19, 2026. Creator credits also appear in the menu; the original photo pages are linked above.
+All eight images are offered under the [Unsplash License](https://unsplash.com/license), which permits free use and distribution. Downloaded October 19, 2026. Creator credits also appear in the menu; the original photo pages are linked above.
+
+## Additional wallpapers (October 20, 2026)
+
+- **Aurora:** "Green Northern Lights at night" by **Jonathan Bean**. Original: https://unsplash.com/photos/green-northern-lights-at-night-Ejpx_sdKEKo
+- **Dunes:** "Sand dunes during sunset" by **Fabian Struwe**. Original: https://unsplash.com/photos/sand-dunes-during-sunset-4cloovdyuvw
+- **Forest:** "Forest covered with fogs" by **Dave Hoefler**. Original: https://unsplash.com/photos/forest-covered-with-fogs-rcE3_D-u2NE
+- **Ocean:** "Aerial view of ocean waves" by **Josh Withers**. Original: https://unsplash.com/photos/aerial-view-of-ocean-waves-G1R1I3PefNE
+
+These four additions are also offered under the Unsplash License linked above. Images are center-cropped to 2560 x 1440, without altering their colors. All derivatives are bundled for offline use.
