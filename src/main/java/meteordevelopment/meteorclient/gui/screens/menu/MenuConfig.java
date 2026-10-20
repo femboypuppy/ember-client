@@ -10,6 +10,7 @@ public final class MenuConfig {
     public String language = "system";
     public Wallpaper wallpaper = Wallpaper.LIVE;
     public int accent = 0xB49AFF;
+    public boolean matchWallpaperAccent = true;
     public double blurIntensity = .65, uiScale = DEFAULT_UI_SCALE;
     public boolean lightGlass = false, animations = true, parallax = true, magnification = true;
     public double animationSpeed = 1;
@@ -20,18 +21,20 @@ public final class MenuConfig {
 
     /** Selectable wallpapers. Live shares Nebula's artwork and adds slow drift; older saved names map to the closest new art. */
     public enum Wallpaper {
-        @SerializedName(value = "LIVE", alternate = "CHROME_LIVE") LIVE("nebula", "wallpaper.live", "BoliviaInteligente", true),
-        NEBULA("nebula", "wallpaper.nebula", "BoliviaInteligente", false),
-        SILK("silk", "wallpaper.silk", "Pawel Czerwinski", false),
-        @SerializedName(value = "OBSIDIAN", alternate = "CHROME") OBSIDIAN("obsidian", "wallpaper.obsidian", "Philip Oroni", false),
-        @SerializedName(value = "SUMMIT", alternate = "MIDNIGHT") SUMMIT("summit", "wallpaper.summit", "Benjamin Voros", false),
-        AURORA("aurora", "wallpaper.aurora", "Jonathan Bean", false),
-        DUNES("dunes", "wallpaper.dunes", "Fabian Struwe", false),
-        FOREST("forest", "wallpaper.forest", "Dave Hoefler", false),
-        OCEAN("ocean", "wallpaper.ocean", "Josh Withers", false);
+        @SerializedName(value = "LIVE", alternate = "CHROME_LIVE") LIVE("nebula", "wallpaper.live", "BoliviaInteligente", true, 0xA38CFA),
+        NEBULA("nebula", "wallpaper.nebula", "BoliviaInteligente", false, 0xA38CFA),
+        SILK("silk", "wallpaper.silk", "Pawel Czerwinski", false, 0xD467B4),
+        @SerializedName(value = "OBSIDIAN", alternate = "CHROME") OBSIDIAN("obsidian", "wallpaper.obsidian", "Philip Oroni", false, 0x7E8C9F),
+        @SerializedName(value = "SUMMIT", alternate = "MIDNIGHT") SUMMIT("summit", "wallpaper.summit", "Benjamin Voros", false, 0x748FCB),
+        AURORA("aurora", "wallpaper.aurora", "Jonathan Bean", false, 0x58B879),
+        DUNES("dunes", "wallpaper.dunes", "Fabian Struwe", false, 0xCE854B),
+        FOREST("forest", "wallpaper.forest", "Dave Hoefler", false, 0x66968B),
+        OCEAN("ocean", "wallpaper.ocean", "Josh Withers", false, 0x32ADAD);
         public final String file, key, artist;
         public final boolean live;
-        Wallpaper(String file, String key, String artist, boolean live) { this.file = file; this.key = key; this.artist = artist; this.live = live; }
+        /** Curated from the artwork, so rendering never scans or reads back texture pixels. */
+        public final int accent;
+        Wallpaper(String file, String key, String artist, boolean live, int accent) { this.file = file; this.key = key; this.artist = artist; this.live = live; this.accent = accent; }
     }
 
     public void validate() {
@@ -51,4 +54,7 @@ public final class MenuConfig {
         return Double.isFinite(value) ? Math.clamp(value, min, max) : fallback;
     }
     public boolean motion() { return animations && !reduceMotion; }
+    /** Keep the saved custom color separate so automatic matching never destroys it. */
+    public int accentColor() { return matchWallpaperAccent ? wallpaper.accent : accent; }
+    public void setCustomAccent(int color) { accent = color & 0xFFFFFF; matchWallpaperAccent = false; }
 }

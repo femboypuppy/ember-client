@@ -73,7 +73,9 @@ public final class MenuSettingsScreen extends MenuScreen {
             case APPEARANCE->{
                 info(y,"Wallpaper");y+=38;double tile=(cw-40)/3;var wallpapers=MenuConfig.Wallpaper.values();
                 for(int i=0;i<wallpapers.length;i++)content.add(new MenuControl.Wallpaper(wallpapers[i],cx+8+(i%3)*(tile+12),y+(i/3)*142,tile));
-                y+=142*((wallpapers.length-1)/3)+150;y=row(y,new MenuControl.ColorPicker(cx,y,cw));
+                y+=142*((wallpapers.length-1)/3)+150;
+                y=row(y,new MenuControl.Toggle("Match wallpaper accent",cx,y,cw,()->c.matchWallpaperAccent,v->c.matchWallpaperAccent=v));
+                y=row(y,new MenuControl.ColorPicker(cx,y,cw));
                 y=row(y,new MenuControl.Slider("Blur intensity",cx,y,cw,0,1,.01,()->c.blurIntensity,v->c.blurIntensity=v));
                 y=row(y,new MenuControl.Slider("UI scale",cx,y,cw,.8,1.25,.01,()->c.uiScale,v->c.uiScale=v));
                 y=row(y,new MenuControl.Segments("Glass tint",cx,y,cw,new String[]{"Dark","Light"},()->c.lightGlass?1:0,v->c.lightGlass=v==1));

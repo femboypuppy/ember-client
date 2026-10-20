@@ -130,16 +130,20 @@ public abstract class MenuControl {
     }
     public static final class ColorPicker extends MenuControl {
         private double hue,saturation,brightness;private boolean hueDrag;
-        public ColorPicker(double x,double y,double w){super("Accent color",x,y,w,152);float[] hsb=java.awt.Color.RGBtoHSB((ConfigManager.get().accent>>16)&255,(ConfigManager.get().accent>>8)&255,ConfigManager.get().accent&255,null);hue=hsb[0];saturation=hsb[1];brightness=hsb[2];}
-        @Override protected void paint(MenuCanvas c,double dt){c.text(label,x+16,y+8,15,MenuTheme.text());double sx=x+16,sy=y+35,sw=w-105;
+        private final float[] hsb=new float[3];private int shownColor=-1;
+        public ColorPicker(double x,double y,double w){super("Accent color",x,y,w,152);syncColor();}
+        // Wallpaper changes and the automatic toggle can update the color while this control stays open.
+        private void syncColor(){int color=ConfigManager.get().accentColor();if(color==shownColor)return;shownColor=color;java.awt.Color.RGBtoHSB((color>>16)&255,(color>>8)&255,color&255,hsb);hue=hsb[0];saturation=hsb[1];brightness=hsb[2];}
+        private void saveColor(){var config=ConfigManager.get();config.setCustomAccent(java.awt.Color.HSBtoRGB((float)hue,(float)saturation,(float)brightness));shownColor=config.accent;ConfigManager.changed();}
+        @Override protected void paint(MenuCanvas c,double dt){syncColor();c.text(label,x+16,y+8,15,MenuTheme.text());double sx=x+16,sy=y+35,sw=w-105;
             for(int i=0;i<48;i++){int color=java.awt.Color.HSBtoRGB((float)hue,i/47f,1);c.gradient(sx+i*sw/48,sy,sw/48,90,color,0xFF000000);}
             double cx=sx+saturation*sw,cy=sy+(1-brightness)*90;c.round(cx-5,cy-5,10,10,5,0xFFFFFFFF);c.round(cx-3,cy-3,6,6,3,MenuTheme.accent());
             for(int i=0;i<48;i++)c.rect(x+w-65,sy+i*90/48.0,24,Math.ceil(90/48.0),java.awt.Color.HSBtoRGB(i/47f,1,1));
             c.border(x+w-68,sy+hue*90-3,30,6,3,0xFFFFFFFF);
         }
-        private void assign(double mx,double my){if(hueDrag)hue=Math.clamp((my-y-35)/90,0,1);else{saturation=Math.clamp((mx-x-16)/(w-105),0,1);brightness=1-Math.clamp((my-y-35)/90,0,1);}ConfigManager.get().accent=java.awt.Color.HSBtoRGB((float)hue,(float)saturation,(float)brightness)&0xFFFFFF;ConfigManager.changed();}
-        @Override public boolean click(double mx,double my){pressed=true;hueDrag=mx>x+w-80;assign(mx,my);return true;}
+        private void assign(double mx,double my){if(hueDrag)hue=Math.clamp((my-y-35)/90,0,1);else{saturation=Math.clamp((mx-x-16)/(w-105),0,1);brightness=1-Math.clamp((my-y-35)/90,0,1);}saveColor();}
+        @Override public boolean click(double mx,double my){syncColor();pressed=true;hueDrag=mx>x+w-80;assign(mx,my);return true;}
         @Override public void drag(double mx,double my){assign(mx,my);}
-        @Override public boolean key(KeyInput k){if(k.key()!=GLFW_KEY_LEFT&&k.key()!=GLFW_KEY_RIGHT)return false;hue=(hue+(k.key()==GLFW_KEY_LEFT?-.01:.01)+1)%1;ConfigManager.get().accent=java.awt.Color.HSBtoRGB((float)hue,(float)saturation,(float)brightness)&0xFFFFFF;ConfigManager.changed();return true;}
+        @Override public boolean key(KeyInput k){if(k.key()!=GLFW_KEY_LEFT&&k.key()!=GLFW_KEY_RIGHT)return false;syncColor();hue=(hue+(k.key()==GLFW_KEY_LEFT?-.01:.01)+1)%1;saveColor();return true;}
     }
 }

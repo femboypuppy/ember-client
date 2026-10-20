@@ -9,7 +9,7 @@ The dock magnifies the hovered icon and its neighbors, fades tooltips, bounces o
 ## System Settings
 
 - **General:** 12/24-hour time, date, menu-only System/English/French language, Minecraft options.
-- **Appearance:** Nebula Live, Nebula, Silk, Obsidian, Summit, Aurora, Dunes, Forest and Ocean thumbnails; HSV accent picker; blur amount; UI scale; light/dark glass.
+- **Appearance:** Nebula Live, Nebula, Silk, Obsidian, Summit, Aurora, Dunes, Forest and Ocean thumbnails; automatic wallpaper accent matching with a manual HSV color override; blur amount; UI scale; light/dark glass.
 - **Animations:** enable animations, speed, wallpaper parallax, dock magnification.
 - **Audio:** Minecraft menu soundtrack and volume; UI click sounds. Minecraft's global sound preferences remain in their own store.
 - **Performance:** 30-240 menu FPS cap, blur, reduced motion. Global FPS and minimized/AFK limits still apply; VSync can impose a lower cap.
@@ -84,3 +84,5 @@ Verified API references: [DrawContext 1.21.11](https://maven.fabricmc.net/docs/y
 The Java 21 build and visual checks passed against Minecraft 1.21.11/Yarn build 3. Startup, held-Enter isolation, all seven native settings layouts at maximum UI scale, resource reload, uninterrupted/reversing wallpaper fades, clock/date positioning, and compact-window rendering were checked in an isolated development client. Current compiled input bytecode also passed Home/End, cursor insertion, select-all replacement and Unicode backspace checks. Existing account UI/authentication, rain/settings and profile-sharing regression checks passed. Microsoft authentication itself was not performed with a real account during this menu preview.
 
 The wallpaper expansion passed the full Gradle build and menu persistence/resource checks for all nine selections. An isolated 1920 x 1080 development client verified the expanded Appearance picker, Aurora behind Multiplayer and Create World, and Ocean behind the populated Select World list. The preview did not connect to a server or load a world.
+
+Accent matching is enabled by default, including for older preference files. Each artwork has a curated complementary color; no texture scanning or GPU readback runs during rendering. Appearance > Match wallpaper accent toggles matching. Editing the color picker selects manual mode; the last custom color remains saved while automatic matching is enabled. Both modes apply live and persist across restarts.

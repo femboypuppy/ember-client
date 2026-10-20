@@ -11,7 +11,7 @@ public class MenuChecks {
  public static void main(String[] args)throws Exception{
   if(args[0].equals("read")){
    var c=ConfigManager.get();check(c.wallpaper==MenuConfig.Wallpaper.SUMMIT&&c.clock24&&c.reduceMotion,"Preferences restored in fresh JVM");
-   near(c.musicVolume,.27,1e-10,"Volume round trip");check(c.accent==0x123ABC&&c.language.equals("fr_fr"),"Color/language round trip");check(!c.motion(),"Reduced motion saved");
+   near(c.musicVolume,.27,1e-10,"Volume round trip");check(c.accent==0x123ABC&&c.language.equals("fr_fr"),"Color/language round trip");check(!c.matchWallpaperAccent&&MenuTheme.accent()==0xFF123ABC,"Manual accent mode restored");check(!c.motion(),"Reduced motion saved");
    System.out.println("Fresh-session restore passed");return;
   }
   for(int fps:new int[]{15,30,60,144,240}){
@@ -49,7 +49,18 @@ public class MenuChecks {
    Files.writeString(saved,"{\"wallpaper\":\""+wallpaper.name()+"\"}");
    check(ConfigManager.load(saved).wallpaper==wallpaper,"Restore every wallpaper selection");
   }
-  var c=ConfigManager.get();c.clock24=true;c.wallpaper=MenuConfig.Wallpaper.SUMMIT;c.reduceMotion=true;c.musicVolume=.27;c.accent=0x123ABC;c.language="fr_fr";ConfigManager.init();ConfigManager.changed();ConfigManager.flush();
+  var c=ConfigManager.get();check(c.matchWallpaperAccent,"Wallpaper matching defaults on");
+  c.wallpaper=MenuConfig.Wallpaper.AURORA;int green=MenuTheme.accent();
+  c.wallpaper=MenuConfig.Wallpaper.DUNES;check(MenuTheme.accent()!=green,"Switching wallpaper updates the menu theme");
+  check(MenuConfig.Wallpaper.LIVE.accent==MenuConfig.Wallpaper.NEBULA.accent,"Same artwork uses the same accent");
+  c.setCustomAccent(0xFF123ABC);check(!c.matchWallpaperAccent&&MenuTheme.accent()==0xFF123ABC,"Manual selection overrides automatic color");
+  for(var wallpaper:MenuConfig.Wallpaper.values()){c.wallpaper=wallpaper;check(MenuTheme.accent()==0xFF123ABC,"Custom color survives wallpaper changes");}
+  c.matchWallpaperAccent=true;c.wallpaper=MenuConfig.Wallpaper.AURORA;check(MenuTheme.accent()==green&&c.accent==0x123ABC,"Automatic mode restores palette and retains custom color");
+  Path automatic=ConfigManager.PATH.resolveSibling("automatic-accent.json");
+  Files.writeString(automatic,"{\"wallpaper\":\"DUNES\",\"accent\":1194684,\"matchWallpaperAccent\":true}");
+  var restored=ConfigManager.load(automatic);check(restored.matchWallpaperAccent&&restored.accentColor()==MenuConfig.Wallpaper.DUNES.accent&&restored.accent==0x123ABC,"Automatic preference reloads without overwriting custom color");
+  Files.writeString(automatic,"{\"wallpaper\":\"OCEAN\",\"accent\":1194684}");restored=ConfigManager.load(automatic);check(restored.matchWallpaperAccent&&restored.accent==0x123ABC,"Existing preferences enable matching and preserve custom color");
+  c.matchWallpaperAccent=false;c.clock24=true;c.wallpaper=MenuConfig.Wallpaper.SUMMIT;c.reduceMotion=true;c.musicVolume=.27;c.language="fr_fr";ConfigManager.init();ConfigManager.changed();ConfigManager.flush();
   long deadline=System.nanoTime()+5_000_000_000L;while(!Files.exists(ConfigManager.PATH)&&System.nanoTime()<deadline)Thread.sleep(10);check(Files.exists(ConfigManager.PATH),"Atomic write completed");
   check(!Files.readString(ConfigManager.PATH).contains("credential"),"No account credentials in menu JSON");System.out.println("Animation, dock and atomic persistence passed");
  }

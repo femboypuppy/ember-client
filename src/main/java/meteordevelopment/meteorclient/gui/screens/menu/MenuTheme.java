@@ -11,7 +11,7 @@ public final class MenuTheme {
     public static int alpha(int color, double alpha) {
         return (color & 0xFFFFFF) | (int) Math.round(((color >>> 24) & 255) * Math.clamp(alpha, 0, 1)) << 24;
     }
-    public static int accent() { return 0xFF000000 | ConfigManager.get().accent; }
+    public static int accent() { return 0xFF000000 | ConfigManager.get().accentColor(); }
     public static int text() { return ConfigManager.get().lightGlass ? 0xFF20232D : WHITE; }
     public static int dim() { return ConfigManager.get().lightGlass ? 0xFF626776 : DIM; }
     public static int glass() { return ConfigManager.get().lightGlass ? 0xB8EEF0F7 : 0xB8181B25; }
