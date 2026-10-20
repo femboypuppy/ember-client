@@ -185,8 +185,6 @@ public class AHSell extends Module {
     private volatile boolean listedMessage;
     /** The server said "You have too many listed items" to the last /ah sell. */
     private volatile boolean slotsFull;
-    /** This listing's sell slot has been clicked with the inventory open, so the server agrees what's in it. */
-    private boolean synced;
     /** Last price check: cheapest per item and how many listings matched, and when. */
     private double cachedEach = Double.MAX_VALUE;
     private int cachedMatches = -1;
@@ -258,7 +256,6 @@ public class AHSell extends Module {
                 cycleConfiguredAmount = amount.get();
                 cycleAmount = Math.min(Math.min(amount.get(), item.get().getMaxCount()), available());
                 cycleMatchSize = matchListingSize.get();
-                synced = false;
                 InvUtils.swap(sellSlot.get() - 1, false);
                 boolean sameMarket = cachedItem == cycleItem && cachedAmount == cycleAmount && cachedMatchSize == cycleMatchSize;
                 boolean fresh = sameMarket && cachedMatches >= 0 && System.currentTimeMillis() - cachedAt < priceCheck.get() * 1000L;
@@ -352,19 +349,12 @@ public class AHSell extends Module {
                         step = Step.NEXT;
                         return;
                     }
-                    if (synced) {
-                        inventoryCloseSent = true;
-                        sellNotBefore = System.currentTimeMillis() + 3500;
-                        step = Step.SELECT;
-                        return;
-                    }
                     // Already in the slot, but the server may not agree (then /ah sell gets no answer at all): pick
                     // it up and put it back, which makes the server send what's really there.
                     int sellId = SlotUtils.indexToId(sellSlot.get() - 1);
                     clicks.add(new int[] {sellId, 0});
                     clicks.add(new int[] {sellId, 0});
                 }
-                synced = true;
                 // The server ignores clicks sent with the inventory closed, all at once: the item only looks moved.
                 // So, like a person: open the inventory, one click at a time, close it.
                 inventoryLinesToLog = 8;
