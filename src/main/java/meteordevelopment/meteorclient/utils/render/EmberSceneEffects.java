@@ -28,7 +28,9 @@ public final class EmberSceneEffects {
             || mc.player.hasStatusEffect(StatusEffects.BLINDNESS) || mc.player.hasStatusEffect(StatusEffects.DARKNESS)) return;
         MESH.clear();
         var accent = EmberPalette.accent(); int rgb = accent.r << 16 | accent.g << 8 | accent.b;
-        double time = (mc.world.getTime() + (mc.isPaused() ? 0 : event.tickDelta)) * .05 * c.sceneEffectSpeed.get();
+        // Promote the world counter before adding the float partial tick. Otherwise Java
+        // rounds the entire sum to float, losing sub-tick motion on long-running worlds.
+        double time = ((double) mc.world.getTime() + (mc.isPaused() ? 0 : event.tickDelta)) * .05 * c.sceneEffectSpeed.get();
         SceneEffectsGeometry.ambient(MESH, event.offsetX, event.offsetY, event.offsetZ, time,
             c.geometricParticles.get() ? c.geometricDensity.get() : 0, c.geometricSize.get(),
             c.curvedTrails.get() ? c.curvedTrailDensity.get() : 0, c.sceneEffectBrightness.get(), rgb);
