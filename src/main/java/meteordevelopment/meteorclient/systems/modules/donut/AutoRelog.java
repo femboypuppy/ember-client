@@ -52,6 +52,15 @@ public class AutoRelog extends Module {
         .build()
     );
 
+    private final Setting<Integer> joinGap = sgGeneral.add(new IntSetting.Builder()
+        .name("join-gap")
+        .description("Seconds since your last join before it relogs. DonutSMP seems to send the real blocks only if you haven't joined in the last ~3 minutes: rejoins 1.4 and 2.4 minutes apart came back hidden, 3.7 and 9 minutes apart came back real.")
+        .defaultValue(210)
+        .range(0, 1800)
+        .sliderRange(0, 600)
+        .build()
+    );
+
     private final Setting<Boolean> skipInCombat = sgGeneral.add(new BoolSetting.Builder()
         .name("skip-in-combat")
         .description("Don't relog if you took damage in the last 20 seconds: leaving in combat gets you killed.")
@@ -102,9 +111,57 @@ public class AutoRelog extends Module {
         attempts = 0;
         joinGrace = JOIN_GRACE_TICKS;
         aboveTicks = 0;
-        if (relogged) {
-            relogged = false;
-            EmberNotificationsHud.push("Auto relog", "Rejoined below the deepslate", EmberNotificationsHud.GOOD);
+        long now = System.currentTimeMillis();
+        sinceLastJoin = lastJoinAt == 0 ? -1 : now - lastJoinAt;
+        lastJoinAt = now;
+        checkAfterJoin = relogged;
+        relogged = false;
+    }
+
+    /** When you last joined (any join: relog, reconnect or shard switch), and the gap before this one (-1 unknown). */
+    private static long lastJoinAt;
+    private long sinceLastJoin = -1;
+    /** This join was its relog: once the chunks are in, check the deep data really came. */
+    private boolean checkAfterJoin;
+    /** Relogs in a row that came back hidden, so a dig spot isn't relogged forever. */
+    private int hiddenStreak;
+    private long waitNoticeAt;
+
+    /** Milliseconds until join-gap has passed since the last join; 0 when a relog would work now. */
+    public long joinWait() {
+        if (lastJoinAt == 0) return 0;
+        return Math.max(0, lastJoinAt + joinGap.get() * 1000L - System.currentTimeMillis());
+    }
+
+    /**
+     * After a relog: how many of the loaded chunks around you arrived with real blocks below Y 0. Logged every time,
+     * so the gap DonutSMP needs between joins can be read off the log; a hidden result re-arms for one more try.
+     */
+    private void checkDeepData() {
+        checkAfterJoin = false;
+        int real = 0, hidden = 0;
+        int cx = mc.player.getBlockPos().getX() >> 4, cz = mc.player.getBlockPos().getZ() >> 4;
+        for (int x = cx - 3; x <= cx + 3; x++) {
+            for (int z = cz - 3; z <= cz + 3; z++) {
+                var chunk = mc.world.getChunkManager().getWorldChunk(x, z);
+                if (chunk == null) continue;
+                if (DeepslateHiding.realFloor(chunk) == chunk.getBottomY()) real++;
+                else hidden++;
+            }
+        }
+        String gap = sinceLastJoin < 0 ? "unknown" : String.format(Locale.ROOT, "%.1f min", sinceLastJoin / 60_000.0);
+        meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] Rejoined {} after the previous join, at Y {}: deep data {} ({} of {} nearby chunks real)",
+            gap, (int) mc.player.getY(), real > hidden ? "REAL" : "HIDDEN", real, real + hidden);
+        if (real + hidden == 0) return;
+        if (real > hidden) {
+            hiddenStreak = 0;
+            EmberNotificationsHud.push("Auto relog", "Rejoined: the blocks below the deepslate are real", EmberNotificationsHud.GOOD);
+        } else if (++hiddenStreak <= 2 && mc.player.getY() < triggerY.get()) {
+            // Most likely rejoined too soon: try once more when join-gap has passed.
+            armed = true;
+            EmberNotificationsHud.push("Auto relog", "Came back hidden (rejoined too soon?): trying again in " + (joinWait() / 1000) + "s", EmberNotificationsHud.WARN);
+        } else {
+            EmberNotificationsHud.push("Auto relog", "Still hidden after relogging", EmberNotificationsHud.WARN);
         }
     }
 
@@ -122,13 +179,19 @@ public class AutoRelog extends Module {
         // one; acting on it re-armed and fired again in testing, so the first seconds are ignored.
         if (joinGrace > 0) {
             // Joined below the deepslate: the server already sent everything down here.
-            if (--joinGrace == 0 && mc.player.getY() < triggerY.get()) armed = false;
+            if (--joinGrace == 0) {
+                if (mc.player.getY() < triggerY.get()) armed = false;
+                if (checkAfterJoin) checkDeepData();
+            }
             return;
         }
 
         double y = mc.player.getY();
         aboveTicks = y >= triggerY.get() + REARM_MARGIN ? aboveTicks + 1 : 0;
-        if (aboveTicks >= REARM_TICKS) armed = true;
+        if (aboveTicks >= REARM_TICKS) {
+            armed = true;
+            hiddenStreak = 0;
+        }
         if (!armed || y >= triggerY.get() || mc.world.getRegistryKey() != World.OVERWORLD) return;
         if (donutOnly.get() && !onDonut()) return;
         if (server() == null) return;
@@ -138,6 +201,16 @@ public class AutoRelog extends Module {
             if (System.currentTimeMillis() - combatNoticeAt > 10_000) {
                 combatNoticeAt = System.currentTimeMillis();
                 EmberNotificationsHud.push("Auto relog", "Waiting: you took damage recently", EmberNotificationsHud.WARN);
+            }
+            return;
+        }
+
+        // Too soon after the last join and the server sends the deepslate hidden anyway: wait it out.
+        long wait = joinWait();
+        if (wait > 0) {
+            if (System.currentTimeMillis() - waitNoticeAt > 60_000) {
+                waitNoticeAt = System.currentTimeMillis();
+                EmberNotificationsHud.push("Auto relog", "Relogging in " + (wait / 1000) + "s: rejoining sooner gets the deepslate hidden", EmberNotificationsHud.WARN);
             }
             return;
         }
@@ -155,6 +228,8 @@ public class AutoRelog extends Module {
         if (!isActive() || reconnectAt >= 0 || mc.player == null || mc.getNetworkHandler() == null || server() == null) return false;
         if (donutOnly.get() && !onDonut()) return false;
         if (skipInCombat.get() && System.currentTimeMillis() - lastHurt < COMBAT_MS) return false;
+        // Too soon after the last join: it would come back hidden. Callers wait on joinWait() first.
+        if (joinWait() > 0) return false;
         relog(why);
         return true;
     }
@@ -205,6 +280,8 @@ public class AutoRelog extends Module {
 
     @Override
     public String getInfoString() {
+        long wait = joinWait();
+        if (armed && wait > 0) return String.format(Locale.ROOT, "wait %d:%02d", wait / 60_000, wait / 1000 % 60);
         return armed ? null : "used";
     }
 }

@@ -352,6 +352,7 @@ public class AutoMiner extends Module {
     private FindsStorage.Context context = new FindsStorage.Context("", "");
     private Plan lastPlan;
     private int lastDir, lineY, maxDeviation, progress, hiddenRelogs, relogProgress, replanTimer, joinGrace, saveTimer, switchSlot = -1;
+    private long relogWaitNotice;
     private boolean replan, walking, holdStyle, waitingRejoin;
     private long walkAt, settledAt, switchAt, hesitateUntil, nextGlance, glanceUntil, userAt, lastProgressAt, rejoinDeadline, chunkWaitSince;
     private float lastHealth;
@@ -717,7 +718,19 @@ public class AutoMiner extends Module {
             stop("the deepslate ahead stayed hidden after relogging", EmberNotificationsHud.WARN);
             return;
         }
-        if (relogHidden.get() && Modules.get().get(AutoRelog.class).relogNow("Relogging to load the deepslate ahead")) {
+        AutoRelog autoRelog = Modules.get().get(AutoRelog.class);
+        long wait = autoRelog.isActive() ? autoRelog.joinWait() : 0;
+        if (relogHidden.get() && wait > 0) {
+            // Rejoining this soon after the last join gets the deepslate hidden again: wait here, then relog.
+            // Time spent waiting isn't time stuck.
+            lastProgressAt = System.currentTimeMillis();
+            if (System.currentTimeMillis() - relogWaitNotice > 60_000) {
+                relogWaitNotice = System.currentTimeMillis();
+                EmberNotificationsHud.push("Auto miner", "The deepslate ahead is hidden: relogging in " + (wait / 1000) + "s", EmberNotificationsHud.WARN);
+            }
+            return;
+        }
+        if (relogHidden.get() && autoRelog.relogNow("Relogging to load the deepslate ahead")) {
             hiddenRelogs++;
             relogProgress = progress;
             EmberNotificationsHud.push("Auto miner", "The deepslate ahead is hidden: relogging to load it", EmberNotificationsHud.WARN);
