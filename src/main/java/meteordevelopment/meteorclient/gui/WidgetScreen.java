@@ -233,6 +233,11 @@ public abstract class WidgetScreen extends Screen {
             || (control && input.key() == GLFW_KEY_V && fromClipboard());
     }
 
+    /** Custom controls can claim keys before global shortcuts run, without cancelling screen input. */
+    public boolean capturesKeyboardInput() {
+        return false;
+    }
+
     public void keyRepeated(KeyInput input) {
         if (locked) return;
 

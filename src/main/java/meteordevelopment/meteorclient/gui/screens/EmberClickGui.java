@@ -775,6 +775,12 @@ public class EmberClickGui extends TabScreen {
     }
 
     @Override
+    public boolean capturesKeyboardInput() {
+        // The popup also owns keys while capturing a bind or editing nested lists/numbers.
+        return searchFocused || popup.isVisible();
+    }
+
+    @Override
     public boolean keyPressed(KeyInput input) {
         if (popup.isVisible()) return popup.keyPressed(input);
 

@@ -45,9 +45,12 @@ public abstract class KeyboardMixin {
                 ((WidgetScreen) client.currentScreen).keyRepeated(new KeyInput(input.key(), input.scancode(), modifiers));
             }
 
+            // Read custom focus now: a click and key press can arrive before another render.
+            // Leave the callback uncancelled so vanilla still delivers the key to the screen.
+            boolean screenOwnsKeys = client.currentScreen instanceof WidgetScreen screen && screen.capturesKeyboardInput();
             if (GuiKeyEvents.canUseKeys) {
                 Input.setKeyState(input.key(), action != GLFW.GLFW_RELEASE);
-                if (MeteorClient.EVENT_BUS.post(KeyEvent.get(new KeyInput(input.key(), input.scancode(), modifiers), KeyAction.get(action))).isCancelled()) ci.cancel();
+                if (!screenOwnsKeys && MeteorClient.EVENT_BUS.post(KeyEvent.get(new KeyInput(input.key(), input.scancode(), modifiers), KeyAction.get(action))).isCancelled()) ci.cancel();
             }
         }
     }
