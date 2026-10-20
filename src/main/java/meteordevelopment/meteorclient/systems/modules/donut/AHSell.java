@@ -129,7 +129,11 @@ public class AHSell extends Module {
         .build()
     );
 
-    private enum Step { NEXT, LOOKUP, TURNING, CLOSING, SELL, CONFIRM }
+    private enum Step { NEXT, LOOKUP, TURNING, CLOSING, SELL, SEND, CONFIRM }
+
+    /** Whether ready() moved items this time, and server inventory updates still to log. */
+    private boolean moved;
+    private volatile int inventoryLinesToLog;
 
     private String pageBefore = "";
 
@@ -294,12 +298,31 @@ public class AHSell extends Module {
             }
             case SELL -> {
                 if (mc.currentScreen instanceof GenericContainerScreen) mc.player.closeHandledScreen();
+                moved = false;
                 int count = ready();
                 if (count <= 0) {
                     step = Step.NEXT;
                     return;
                 }
                 InvUtils.swap(sellSlot.get() - 1, false);
+                // After moving items, give the server a moment to take them, and log what it says the slot holds.
+                step = Step.SEND;
+                if (moved) {
+                    inventoryLinesToLog = 6;
+                    timer = 10;
+                }
+            }
+            case SEND -> {
+                int sell = sellSlot.get() - 1;
+                ItemStack held = mc.player.getInventory().getStack(sell);
+                if (!held.isOf(item.get())) {
+                    MeteorClient.LOG.info("[Ember AHSell] Sell slot no longer holds the item ({}): getting it again", held);
+                    step = Step.SELL;
+                    return;
+                }
+                // Tell the server again which slot is held, so /ah sell takes this one.
+                mc.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket(sell));
+                int count = held.getCount();
                 long at = listingPrice(count);
                 listedMessage = false;
                 serverLinesToLog = 4;
@@ -347,6 +370,18 @@ public class AHSell extends Module {
             text = p.text();
             where = "subtitle";
         }
+        if (inventoryLinesToLog > 0) {
+            int sellId = 36 + sellSlot.get() - 1;
+            if (event.packet instanceof net.minecraft.network.packet.s2c.play.ScreenHandlerSlotUpdateS2CPacket p) {
+                inventoryLinesToLog--;
+                MeteorClient.LOG.info("[Ember AHSell] Server sets window {} slot {} to {}{}", p.getSyncId(), p.getSlot(), p.getStack(),
+                    p.getSlot() == sellId ? " (the sell slot)" : "");
+            } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.InventoryS2CPacket p) {
+                inventoryLinesToLog--;
+                MeteorClient.LOG.info("[Ember AHSell] Server resends window {}: sell slot holds {}", p.syncId(),
+                    p.syncId() == 0 && p.contents().size() > sellId ? p.contents().get(sellId) : "?");
+            }
+        }
         if (text == null) return;
         String s = text.getString();
         if (s.startsWith("You listed")) listedMessage = true;
@@ -374,17 +409,17 @@ public class AHSell extends Module {
                 waitFor("sell slot taken, inventory full");
                 return 0;
             }
-            mc.interactionManager.clickSlot(syncId, SlotUtils.indexToId(sell), 0, SlotActionType.PICKUP, mc.player);
-            mc.interactionManager.clickSlot(syncId, SlotUtils.indexToId(free), 0, SlotActionType.PICKUP, mc.player);
+            click(syncId, SlotUtils.indexToId(sell), 0, SlotActionType.PICKUP, mc.player);
+            click(syncId, SlotUtils.indexToId(free), 0, SlotActionType.PICKUP, mc.player);
             current = inv.getStack(sell);
         }
         // Too many: put the extra back.
         if (current.isOf(item.get()) && current.getCount() > want) {
             int free = emptyMainSlot(inv);
             if (free < 0) return current.getCount();
-            mc.interactionManager.clickSlot(syncId, SlotUtils.indexToId(sell), 0, SlotActionType.PICKUP, mc.player);
-            for (int i = 0; i < want; i++) mc.interactionManager.clickSlot(syncId, SlotUtils.indexToId(sell), 1, SlotActionType.PICKUP, mc.player);
-            mc.interactionManager.clickSlot(syncId, SlotUtils.indexToId(free), 0, SlotActionType.PICKUP, mc.player);
+            click(syncId, SlotUtils.indexToId(sell), 0, SlotActionType.PICKUP, mc.player);
+            for (int i = 0; i < want; i++) click(syncId, SlotUtils.indexToId(sell), 1, SlotActionType.PICKUP, mc.player);
+            click(syncId, SlotUtils.indexToId(free), 0, SlotActionType.PICKUP, mc.player);
             return inv.getStack(sell).getCount();
         }
         // Top it up from the rest of the inventory, one item at a time.
@@ -399,15 +434,20 @@ public class AHSell extends Module {
             }
             if (from < 0) break;
             int take = Math.min(want - have, inv.getStack(from).getCount());
-            mc.interactionManager.clickSlot(syncId, SlotUtils.indexToId(from), 0, SlotActionType.PICKUP, mc.player);
-            for (int i = 0; i < take; i++) mc.interactionManager.clickSlot(syncId, SlotUtils.indexToId(sell), 1, SlotActionType.PICKUP, mc.player);
+            click(syncId, SlotUtils.indexToId(from), 0, SlotActionType.PICKUP, mc.player);
+            for (int i = 0; i < take; i++) click(syncId, SlotUtils.indexToId(sell), 1, SlotActionType.PICKUP, mc.player);
             if (!mc.player.currentScreenHandler.getCursorStack().isEmpty()) {
-                mc.interactionManager.clickSlot(syncId, SlotUtils.indexToId(from), 0, SlotActionType.PICKUP, mc.player);
+                click(syncId, SlotUtils.indexToId(from), 0, SlotActionType.PICKUP, mc.player);
             }
             have += take;
         }
         if (have <= 0) waitFor("out of " + item.get().getName().getString().toLowerCase(Locale.ROOT));
         return have;
+    }
+
+    private void click(int syncId, int slotId, int button, SlotActionType action, net.minecraft.entity.player.PlayerEntity player) {
+        moved = true;
+        mc.interactionManager.clickSlot(syncId, slotId, button, action, player);
     }
 
     private void waitFor(String why) {
