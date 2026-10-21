@@ -183,6 +183,9 @@ public class AHSell extends Module {
     /** Server messages to log after a command: chat, above the hotbar and titles. */
     private volatile int serverLinesToLog;
     private volatile boolean listedMessage;
+    /** /ah sell commands in a row the server didn't confirm; the last thing it said while one was pending. */
+    private int unanswered;
+    private volatile String lastServerLine;
     /** The server said "You have too many listed items" to the last /ah sell. */
     private volatile boolean slotsFull;
     /** Last price check: cheapest per item and how many listings matched, and when. */
@@ -344,8 +347,10 @@ public class AHSell extends Module {
                 clicks.clear();
                 planMove();
                 if (clicks.isEmpty()) {
-                    // More than one listing's worth that couldn't be split (no free slot): never list it all.
-                    if (held() <= 0 || held() > amount.get()) {
+                    // More than one listing's worth that couldn't be split (no free slot): never list it all. Say so
+                    // and wait, instead of silently starting over every tick.
+                    if (held() <= 0 || held() > cycleAmount) {
+                        waitFor(held() > cycleAmount ? "sell slot holds too many, no free slot to split it" : "couldn't move the item into the sell slot");
                         step = Step.NEXT;
                         return;
                     }
@@ -379,7 +384,11 @@ public class AHSell extends Module {
                         inventoryCloseSent = false;
                         mc.player.closeHandledScreen();
                         InvUtils.swap(sellSlot.get() - 1, false);
-                        step = held() > 0 && held() <= amount.get() ? Step.SELECT : Step.NEXT;
+                        if (held() > 0 && held() <= cycleAmount) step = Step.SELECT;
+                        else {
+                            waitFor(held() > cycleAmount ? "sell slot holds too many, no free slot to split it" : "couldn't move the item into the sell slot");
+                            step = Step.NEXT;
+                        }
                         // The final inventory close is another GUI action. The auction-house-only
                         // delay previously expired before this close and sent /ah sell just 0.6s later.
                         sellNotBefore = System.currentTimeMillis() + 3500;
@@ -406,8 +415,11 @@ public class AHSell extends Module {
                 int sell = sellSlot.get() - 1;
                 ItemStack held = mc.player.getInventory().getStack(sell);
                 if (!held.isOf(item.get()) || held.getCount() != cycleAmount || !mc.player.currentScreenHandler.getCursorStack().isEmpty()) {
-                    MeteorClient.LOG.info("[Ember AHSell] Sell slot no longer holds the item ({}): getting it again", held);
-                    step = Step.SELL;
+                    // Start the cycle over (it recounts what's available), rather than SELL, which would keep comparing
+                    // against a count that can't come back if items were picked up or lost meanwhile.
+                    MeteorClient.LOG.info("[Ember AHSell] Sell slot holds {} instead of {}: starting the listing over", held, cycleAmount);
+                    step = Step.NEXT;
+                    timer = 10;
                     return;
                 }
                 if (mc.player.getInventory().getSelectedSlot() != sell) { step = Step.SELECT; return; }
@@ -418,6 +430,7 @@ public class AHSell extends Module {
                 slotsFull = false;
                 serverLinesToLog = 4;
                 pendingOwn = new Own(count, at, System.currentTimeMillis());
+                lastServerLine = null;
                 pendingCommand = "ah sell " + at;
                 commandSent = false;
                 commandSentAt = 0;
@@ -440,6 +453,7 @@ public class AHSell extends Module {
                     nextAllowed = System.currentTimeMillis() + retryWait.get() * 1000L;
                 } else if (listedMessage) {
                     listed++;
+                    unanswered = 0;
                     if (pendingOwn != null) own.addLast(pendingOwn);
                     while (own.size() > 50) own.removeFirst();
                     saleFeedback("Server confirmed the auction listing.");
@@ -453,9 +467,24 @@ public class AHSell extends Module {
                         saleFeedback("The client did not dispatch /" + pendingCommand + ". AH Sell stopped; check packet cancellation or buffering.");
                         pendingCommand = null;pendingOwn = null;toggle();return;
                     }
-                    saleFeedback("No server confirmation for /" + pendingCommand + "; " + (inSlot.isOf(item.get()) ? "the item is still in the sell slot" : "the item moved, so the sale is unconfirmed") + ". Retry in " + retry + " seconds.");
+                    // If it went up after all (a late answer), it must not be taken for a competitor and undercut.
+                    if (pendingOwn != null && !inSlot.isOf(item.get())) {
+                        own.addLast(pendingOwn);
+                        while (own.size() > 50) own.removeFirst();
+                    }
+                    String said = lastServerLine;
+                    MeteorClient.LOG.info("[Ember AHSell] No answer to /ah sell; the sell slot holds {}; last server line: {}", inSlot, said);
+                    // A refusal it doesn't recognise would otherwise repeat every 15 s forever, unseen: after three in a
+                    // row, say what the server last said and pause longer.
+                    if (++unanswered >= 3) {
+                        unanswered = 0;
+                        retry = Math.max(retry, 300);
+                        saleFeedback("DonutSMP didn't confirm 3 listings in a row" + (said == null ? "" : "; it last said: \"" + said + "\"") + ". Pausing 5 minutes.");
+                    } else {
+                        saleFeedback("No server confirmation for /" + pendingCommand + "; " + (inSlot.isOf(item.get()) ? "the item is still in the sell slot" : "the item moved, so the sale is unconfirmed") + ". Retry in " + retry + " seconds.");
+                    }
+                    waitingFor = "no answer, retry in " + retry + "s";
                     pendingCommand = null; pendingOwn = null;
-                    MeteorClient.LOG.info("[Ember AHSell] No answer to /ah sell; the sell slot holds {}", inSlot);
                     step = Step.NEXT;
                     nextAllowed = System.currentTimeMillis() + retry * 1000L;
                 }
@@ -529,6 +558,7 @@ public class AHSell extends Module {
         if (pendingCommand != null && confirmsListing(s)) listedMessage = true;
         String lower = s.toLowerCase(java.util.Locale.ROOT);
         if (pendingCommand != null && (lower.contains("too many listed") || lower.contains("listing limit"))) slotsFull = true;
+        if (pendingCommand != null && !s.isBlank()) lastServerLine = s;
         if (serverLinesToLog > 0 && !s.isBlank()) {
             serverLinesToLog--;
             MeteorClient.LOG.info("[Ember AHSell] Server ({}): {}", where, s);
@@ -558,7 +588,7 @@ public class AHSell extends Module {
      */
     private void planMove() {
         PlayerInventory inv = mc.player.getInventory();
-        int sell = sellSlot.get() - 1, want = Math.min(amount.get(), item.get().getMaxCount());
+        int sell = sellSlot.get() - 1, want = cycleAmount > 0 ? cycleAmount : Math.min(amount.get(), item.get().getMaxCount());
         int sellId = SlotUtils.indexToId(sell);
         ItemStack current = inv.getStack(sell);
 
