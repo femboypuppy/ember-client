@@ -143,9 +143,9 @@ public class FlipBot extends Module {
     );
 
     private final Setting<Double> tax = sgProfit.add(new DoubleSetting.Builder()
-        .name("ah-tax")
-        .description("Percent the auction house keeps from a sale.")
-        .defaultValue(5)
+        .name("auction-tax")
+        .description("Percent the auction house keeps from a sale. DonutSMP keeps nothing.")
+        .defaultValue(0)
         .range(0, 50)
         .sliderRange(0, 20)
         .build()
@@ -375,7 +375,12 @@ public class FlipBot extends Module {
         Map<String, ItemInfo> items = new HashMap<>();
         List<Listing> listings = new ArrayList<>();
         long profit;
+        /** How the saved price history was read; older history is dropped on load (see {@link #load()}). */
+        int version;
     }
+
+    /** 2: prices per listing size. Earlier scans mixed stacks and singles, so their "usual" prices can't be trusted. */
+    private static final int STATE_VERSION = 2;
 
     // Not pretty-printed: it's rewritten after every scan. NaN/Infinity allowed so one bad number can't stop saving.
     private static final Gson GSON = new GsonBuilder().serializeSpecialFloatingPointValues().create();
@@ -400,6 +405,19 @@ public class FlipBot extends Module {
         if (state.positions == null) state.positions = new ArrayList<>();
         if (state.items == null) state.items = new HashMap<>();
         if (state.listings == null) state.listings = new ArrayList<>();
+        if (state.version < STATE_VERSION) {
+            // Price history from before scans compared like with like: drop it, with the crashes and cooldowns it
+            // caused. Orders, stock and listings stay.
+            for (ItemInfo info : state.items.values()) {
+                info.obs.clear();
+                info.cooldownUntil = info.holdUntil = info.lastScan = info.lastAhScan = 0;
+                info.goodStreak = 0;
+                info.lot = 0;
+                info.holdNotified = false;
+            }
+            state.version = STATE_VERSION;
+            MeteorClient.LOG.info("[Ember FlipBot] Old price history dropped; starting fresh");
+        }
     }
 
     private void save() {
@@ -612,10 +630,20 @@ public class FlipBot extends Module {
             backoffUntil = now + 3000;
             return;
         }
+        // Minecraft opens the pause menu by itself when the window loses focus (alt-tab, Parsec, another window): that
+        // isn't someone using the game, and left alone it would stop an overnight run for good.
+        if (mc.currentScreen instanceof net.minecraft.client.gui.screen.GameMenuScreen && !mc.isWindowFocused()) {
+            mc.setScreen(null);
+            return;
+        }
         // The player is using a menu or typing: don't fight them for the screen. A menu nobody touches for 3 minutes
         // (a server dialog left open, a stuck "waiting for response") gets closed, so an overnight run can't stall.
         if (mc.currentScreen != null) {
             status = "paused, menu open";
+            if (now - idleLoggedAt >= 60_000) {
+                idleLoggedAt = now;
+                MeteorClient.LOG.info("[Ember FlipBot] Paused: a menu is open ({})", mc.currentScreen.getClass().getSimpleName());
+            }
             // Moving the mouse means someone's using it: only a menu left alone for 3 minutes counts as stuck.
             double mouse = mc.mouse.getX() * 31 + mc.mouse.getY();
             if (mc.currentScreen != idleScreen || mouse != idleMouse) {
@@ -676,6 +704,7 @@ public class FlipBot extends Module {
         }
         if (!free) {
             status = stockCount() > 0 || anyOpen ? "flipping, waiting for sales" : "waiting";
+            logIdle(now, false);
             return;
         }
 
@@ -700,6 +729,7 @@ public class FlipBot extends Module {
             return;
         }
         status = stockCount() > 0 && activeListings() >= maxListings.get() ? "listings full, waiting" : "watching " + candidates().size() + " items";
+        logIdle(now, free);
     }
 
     private List<Item> candidates() {
@@ -714,6 +744,39 @@ public class FlipBot extends Module {
         for (Position p : state.positions) if (!p.state.equals("DONE")) set.add(item(p.item));
         set.remove(Items.AIR);
         return new ArrayList<>(set);
+    }
+
+    private long idleLoggedAt;
+
+    /**
+     * Once a minute while it has nothing to do: why, in the log. "Watching" for a long time should always be
+     * explainable from this line (free to buy or not and why, each item's streak and next check).
+     */
+    private void logIdle(long now, boolean free) {
+        if (now - idleLoggedAt < 60_000) return;
+        idleLoggedAt = now;
+        StringBuilder sb = new StringBuilder();
+        for (Item item : candidates()) {
+            ItemInfo info = info(item);
+            boolean confirming = info.goodStreak > 0 && info.goodStreak < confirmScans.get();
+            long due = info.lastScan + (confirming ? 60_000L : rescan.get() * 60_000L) - now;
+            sb.append(name(item)).append(" streak ").append(info.goodStreak).append(" next check ")
+                .append(due <= 0 ? "now" : due / 1000 + "s");
+            if (now < info.cooldownUntil) sb.append(" (cooldown ").append((info.cooldownUntil - now) / 1000).append("s)");
+            sb.append("; ");
+        }
+        MeteorClient.LOG.info("[Ember FlipBot] Idle ({}): free to buy {} [busy items {}, listings {}/{}, free slots {}, budget left {}, pipeline {}]; {}",
+            status, free, busyCount(now), activeListings(), maxListings.get(), freeSlots(), budgetLeft(), String.format(Locale.ROOT, "%.1f", pipelineListings()), sb);
+    }
+
+    private int busyCount(long now) {
+        Set<String> busy = new HashSet<>();
+        for (Position p : state.positions) {
+            if (p.state.equals("DONE")) continue;
+            boolean stock = p.collected > p.listed || p.delivered > p.collected;
+            if (live(p) || stock && now >= info(item(p.item)).cooldownUntil) busy.add(p.item);
+        }
+        return busy.size();
     }
 
     /** The candidate due a scan the longest; with onlyHeld, only items it has an order or stock in. */
@@ -813,7 +876,9 @@ public class FlipBot extends Module {
                 double hours = Math.max(1, (now - info.firstSale) / 3_600_000.0);
                 sixHours = (long) (info.soldUnits / hours * 6);
             }
-            amount = (int) Math.min(amount, Math.max(slotsFull, sixHours));
+            // But never a token order: worth at least a tenth of max-per-item (20 droppers for $3.7K was pointless).
+            long worthwhile = (long) Math.ceil(parsePrice(maxPerItem.get()) / 10.0 / Math.max(1, buy));
+            amount = (int) Math.min(amount, Math.max(Math.max(slotsFull, sixHours), worthwhile));
             // Scraps aren't worth an order (and the visits to collect it): under four listings' worth and under
             // 1% of max-per-item, wait until more money is free.
             if (amount < 1 || amount < lot * 4 && (double) amount * buy < parsePrice(maxPerItem.get()) / 100.0) continue;
@@ -992,16 +1057,54 @@ public class FlipBot extends Module {
         return new Ask(o.ahEach, o.ahSlack);
     }
 
+    /** Sold one or two at a time, as opposed to by the stack. A page of singles and a page of stacks aren't the same market. */
+    private static boolean singles(int lot) {
+        return lot <= 2;
+    }
+
+    /** Same kind of listing: singles with singles (up to 2), stacks with stacks of about the same size. */
+    private static boolean sameLotClass(int count, int lot) {
+        if (lot <= 2) return count <= 2;
+        return count >= lot / 2 && count <= lot;
+    }
+
+    private boolean sortLogged;
+
+    /** Once per session: what the auction house's sort button offers, to learn how DonutSMP orders its pages. */
+    private void logSortOnce(GenericContainerScreenHandler h) {
+        if (sortLogged || h == null) return;
+        int size = Math.min(h.getInventory().size(), h.getRows() * 9);
+        for (int i = (h.getRows() - 1) * 9; i < size; i++) {
+            ItemStack s = h.getInventory().getStack(i);
+            if (s.isOf(Items.HOPPER)) {
+                sortLogged = true;
+                MeteorClient.LOG.info("[Ember FlipBot] Auction sort button \"{}\": {}", s.getName().getString(), loreText(s).replace('\n', '|'));
+                return;
+            }
+        }
+    }
+
     /**
-     * The item's usual auction price: the median of its "low five" averages over the last 3 hours, leaving out scans
-     * taken during a crash (so a crash can't drag "usual" down with it). A crash that lasts longer than that has no
-     * usual price left to compare with, so it's taken as the new level.
+     * The item's usual auction price: the median of its "low five" averages over the last 3 hours, from scans of the
+     * same listing size and leaving out scans taken during a crash (so a crash can't drag "usual" down with it). Needs
+     * three such scans over 20 minutes or more, else there's no usual price yet (0): one odd page must not count as
+     * "usual". A crash that lasts past the 3 hours has no usual price left to compare with: it's the new level.
      */
     private double reference(Item item) {
+        return reference(item, info(item).lot);
+    }
+
+    private double reference(Item item, int lot) {
         long now = System.currentTimeMillis();
         List<Double> values = new ArrayList<>();
-        for (Obs o : info(item).obs) if (o.ahCount > 0 && !o.crash && now - o.t < 3 * 3_600_000L) values.add(o.ahLow5);
-        if (values.isEmpty()) return 0;
+        long first = Long.MAX_VALUE, last = 0;
+        for (Obs o : info(item).obs) {
+            if (o.ahCount <= 0 || o.crash || now - o.t >= 3 * 3_600_000L || singles(o.lot) != singles(lot)) continue;
+            values.add(o.ahLow5);
+            first = Math.min(first, o.t);
+            last = Math.max(last, o.t);
+        }
+        if (values.size() < 3 || last - first < 20 * 60_000L) return 0;
         Collections.sort(values);
         return values.get(values.size() / 2);
     }
@@ -1041,10 +1144,12 @@ public class FlipBot extends Module {
     private void recordScan(Item item, Obs o) {
         ItemInfo info = info(item);
         long now = System.currentTimeMillis();
-        double ref = reference(item);
+        double ref = reference(item, o.lot);
         // Panic selling is many cheap listings, not one: judge by the five cheapest together.
         boolean crashed = ref > 0 && o.ahCount > 0 && o.ahLow5 < ref * (1 - crashDrop.get() / 100.0);
         o.crash = crashed;
+        // For the buy confirmation: the scan before this one, to tell a steady market from pages that disagree.
+        Obs previous = latestFull(item);
         if (o.ahCount > 0 && o.lot > 0) info.lot = o.lot;
         info.obs.add(o);
         info.obs.removeIf(x -> now - x.t > 24 * 3_600_000L);
@@ -1065,7 +1170,13 @@ public class FlipBot extends Module {
         double ratio = 0;
         double net = o.ahCount > 0 ? netEach(o) : 0;
         if (o.hasOrder && o.ahCount > 0) ratio = net / bidPrice(o.orderEach, o.orderSlack);
-        if (o.full && !crashed) info.goodStreak = ratio >= minProfit.get() ? info.goodStreak + 1 : 0;
+        if (o.full && !crashed) {
+            // Two good scans only confirm each other when they saw the same market: same listing size, cheapest within
+            // a third. Otherwise this one starts the count again.
+            boolean steady = previous != null && previous.ahCount > 0 && singles(previous.lot) == singles(o.lot)
+                && Math.abs(o.ahEach - previous.ahEach) <= previous.ahEach / 3;
+            info.goodStreak = ratio < minProfit.get() ? 0 : steady ? info.goodStreak + 1 : 1;
+        }
 
         // An order that no longer pays (or whose item is crashing): stop buying.
         for (Position p : state.positions) {
@@ -1151,6 +1262,18 @@ public class FlipBot extends Module {
                     asks.add(new Ask(each, Math.min(total.slack / stack.getCount(), singleSlack(each)), stack.getCount()));
                 }
                 asks.sort(Comparator.comparingDouble(Ask::each));
+                if (!asks.isEmpty()) {
+                    // The usual listing size among the ten cheapest: what buyers of this item take in one go.
+                    List<Integer> counts = new ArrayList<>();
+                    for (int i = 0; i < Math.min(10, asks.size()); i++) counts.add(asks.get(i).count);
+                    Collections.sort(counts);
+                    o.lot = counts.get(counts.size() / 2);
+                    // Prices from listings of that size only: on DonutSMP one page can hold stacks of droppers at
+                    // $1.2K each and singles at $15K each, and mixing them made crashes and 80x flips out of nothing.
+                    List<Ask> same = new ArrayList<>();
+                    for (Ask a : asks) if (sameLotClass(a.count, o.lot)) same.add(a);
+                    if (same.size() >= 2) asks = same;
+                }
                 o.ahCount = asks.size();
                 if (!asks.isEmpty()) {
                     o.ahEach = asks.getFirst().each;
@@ -1162,12 +1285,8 @@ public class FlipBot extends Module {
                     int n = Math.min(5, asks.size());
                     for (int i = 0; i < n; i++) sum += asks.get(i).each;
                     o.ahLow5 = sum / n;
-                    // The usual listing size among the ten cheapest: what buyers of this item take in one go.
-                    List<Integer> counts = new ArrayList<>();
-                    for (int i = 0; i < Math.min(10, asks.size()); i++) counts.add(asks.get(i).count);
-                    Collections.sort(counts);
-                    o.lot = counts.get(counts.size() / 2);
                 }
+                logSortOnce(h);
                 return true;
             })
             .pause(10)
