@@ -85,9 +85,9 @@ public class FlipBot extends Module {
     );
 
     private final Setting<Boolean> discover = sgGeneral.add(new BoolSetting.Builder()
-        .name("discover")
-        .description("Also consider items other players are ordering in /orders, not only the watchlist.")
-        .defaultValue(true)
+        .name("discover-items")
+        .description("Also flip items other players are ordering in /orders (up to 30 more items to check, so much slower). Off: only the watchlist.")
+        .defaultValue(false)
         .build()
     );
 
@@ -724,7 +724,9 @@ public class FlipBot extends Module {
             if (onlyHeld && !hasStake(item)) continue;
             ItemInfo info = info(item);
             if (now < info.cooldownUntil && !hasStake(item)) continue;
-            if (now - info.lastScan < rescan.get() * 60_000L) continue;
+            // An item that looked good once gets its confirming scan a minute later, not a whole rescan later.
+            boolean confirming = info.goodStreak > 0 && info.goodStreak < confirmScans.get();
+            if (now - info.lastScan < (confirming ? 60_000L : rescan.get() * 60_000L)) continue;
             if (info.lastScan < oldestAt) {
                 oldestAt = info.lastScan;
                 oldest = item;
