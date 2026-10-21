@@ -34,6 +34,30 @@ import java.util.Locale;
 public class AutoRelog extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
+    public enum Method {
+        /** Leave and rejoin (needs a few minutes between joins). */
+        Relog,
+        /** /sethome here, /rtp away, /home back: arriving reloads the chunks. No disconnect, no join cooldown. */
+        Home,
+        /** Pearl straight up a shaft, /rtp away, the landing pearl brings you back (home as a backup). */
+        Pearl
+    }
+
+    private final Setting<Method> method = sgGeneral.add(new EnumSetting.Builder<Method>()
+        .name("method")
+        .description("How to get the real blocks below the deepslate. Relog: leave and rejoin. Home: /sethome, /rtp, /home. Pearl: throw a pearl up the shaft you dug, /rtp, the pearl brings you back (needs 12+ blocks of air above you, else Home).")
+        .defaultValue(Method.Relog)
+        .build()
+    );
+
+    private final Setting<String> homeName = sgGeneral.add(new StringSetting.Builder()
+        .name("home")
+        .description("Which home Home and Pearl use (it's replaced each time): a number or a name. Pick one you don't need.")
+        .defaultValue("3")
+        .visible(() -> method.get() != Method.Relog)
+        .build()
+    );
+
     private final Setting<Integer> triggerY = sgGeneral.add(new IntSetting.Builder()
         .name("trigger-y")
         .description("Relog once your feet go below this height. 0 is where the deepslate starts.")
@@ -116,6 +140,11 @@ public class AutoRelog extends Module {
         lastJoinAt = now;
         checkAfterJoin = relogged;
         relogged = false;
+        // A Home or Pearl run cut short by a disconnect: start over from scratch later.
+        if (seq != null) {
+            meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] {} method interrupted by a rejoin", seq.how);
+            seq = null;
+        }
     }
 
     /** When you last joined (any join: relog, reconnect or shard switch), and the gap before this one (-1 unknown). */
@@ -127,9 +156,9 @@ public class AutoRelog extends Module {
     private int hiddenStreak;
     private long waitNoticeAt;
 
-    /** Milliseconds until join-gap has passed since the last join; 0 when a relog would work now. */
+    /** Milliseconds until join-gap has passed since the last join; 0 when a relog would work now (or isn't a relog). */
     public long joinWait() {
-        if (lastJoinAt == 0) return 0;
+        if (lastJoinAt == 0 || method.get() != Method.Relog) return 0;
         return Math.max(0, lastJoinAt + joinGap.get() * 1000L - System.currentTimeMillis());
     }
 
@@ -150,8 +179,9 @@ public class AutoRelog extends Module {
             }
         }
         String gap = sinceLastJoin < 0 ? "unknown" : String.format(Locale.ROOT, "%.1f min", sinceLastJoin / 60_000.0);
-        meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] Rejoined {} after the previous join, at Y {}: deep data {} ({} of {} nearby chunks real)",
-            gap, (int) mc.player.getY(), real > hidden ? "REAL" : "HIDDEN", real, real + hidden);
+        String how = seq != null ? seq.how + " method" : "Rejoined " + gap + " after the previous join";
+        meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] {}, at Y {}: deep data {} ({} of {} nearby chunks real)",
+            how, (int) mc.player.getY(), real > hidden ? "REAL" : "HIDDEN", real, real + hidden);
         if (real + hidden == 0) return;
         if (real > hidden) {
             hiddenStreak = 0;
@@ -159,7 +189,9 @@ public class AutoRelog extends Module {
         } else if (++hiddenStreak <= 2 && mc.player.getY() < triggerY.get()) {
             // Most likely rejoined too soon: try once more when join-gap has passed.
             armed = true;
-            EmberNotificationsHud.push("Auto relog", "Came back hidden (rejoined too soon?): trying again in " + (joinWait() / 1000) + "s", EmberNotificationsHud.WARN);
+            EmberNotificationsHud.push("Auto relog", method.get() == Method.Relog
+                ? "Came back hidden (rejoined too soon?): trying again in " + (joinWait() / 1000) + "s"
+                : "Came back hidden: trying once more", EmberNotificationsHud.WARN);
         } else {
             EmberNotificationsHud.push("Auto relog", "Still hidden after relogging", EmberNotificationsHud.WARN);
         }
@@ -174,6 +206,11 @@ public class AutoRelog extends Module {
         if (mc.player == null || mc.world == null || mc.getNetworkHandler() == null) return;
 
         if (mc.player.hurtTime > 0) lastHurt = System.currentTimeMillis();
+
+        if (seq != null) {
+            tickSequence();
+            return;
+        }
 
         // Right after a join the player sits at a placeholder position until the server sends the real
         // one; acting on it re-armed and fired again in testing, so the first seconds are ignored.
@@ -205,6 +242,11 @@ public class AutoRelog extends Module {
             return;
         }
 
+        if (method.get() != Method.Relog) {
+            startSequence();
+            return;
+        }
+
         // Too soon after the last join and the server sends the deepslate hidden anyway: wait it out.
         long wait = joinWait();
         if (wait > 0) {
@@ -228,6 +270,11 @@ public class AutoRelog extends Module {
         if (!isActive() || reconnectAt >= 0 || mc.player == null || mc.getNetworkHandler() == null || server() == null) return false;
         if (donutOnly.get() && !onDonut()) return false;
         if (skipInCombat.get() && System.currentTimeMillis() - lastHurt < COMBAT_MS) return false;
+        if (seq != null) return true;
+        if (method.get() != Method.Relog) {
+            startSequence();
+            return seq != null;
+        }
         // Too soon after the last join: it would come back hidden. Callers wait on joinWait() first.
         if (joinWait() > 0) return false;
         relog(why);
@@ -237,6 +284,157 @@ public class AutoRelog extends Module {
     /** Whether the disconnect under way is this module's relog, so other modules know you'll be right back. */
     public boolean relogging() {
         return isActive() && relogged;
+    }
+
+    /** A Home or Pearl method under way: you're about to be, or are, somewhere else. Auto Miner pauses meanwhile. */
+    public boolean busy() {
+        return isActive() && seq != null;
+    }
+
+    // Home and Pearl methods
+
+    private enum Phase { DELHOME, SETHOME, AIM, THROW, RTP, AWAY, HOME, BACK, CHECK }
+
+    /** One run of the Home or Pearl method. */
+    private static final class Sequence {
+        final String how;
+        final boolean pearl;
+        final net.minecraft.util.math.Vec3d origin;
+        Phase phase = Phase.DELHOME;
+        int ticks, pearlSlot = -1;
+        float pitch;
+        boolean homeSent;
+        long startedAt = System.currentTimeMillis();
+
+        Sequence(String how, boolean pearl, net.minecraft.util.math.Vec3d origin) {
+            this.how = how;
+            this.pearl = pearl;
+            this.origin = origin;
+        }
+    }
+
+    private Sequence seq;
+
+    private void startSequence() {
+        armed = false;
+        boolean pearl = method.get() == Method.Pearl;
+        int slot = -1;
+        if (pearl) {
+            for (int i = 0; i < 9; i++) if (mc.player.getInventory().getStack(i).isOf(net.minecraft.item.Items.ENDER_PEARL)) slot = i;
+            int air = airAbove();
+            // A pearl that hits a ceiling a block up lands before /rtp, and /rtp then strands you: only up a shaft.
+            if (slot < 0 || air < 12) {
+                info("Pearl method needs %s: using the Home method this time.", slot < 0 ? "an ender pearl in your hotbar" : "12+ blocks of air above you (only " + air + ")");
+                pearl = false;
+            }
+        }
+        seq = new Sequence(pearl ? "Pearl" : "Home", pearl, mc.player.getEntityPos());
+        seq.pearlSlot = slot;
+        meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] {} method from {} {} {}", seq.how, (int) seq.origin.x, (int) seq.origin.y, (int) seq.origin.z);
+        EmberNotificationsHud.push("Auto relog", seq.how + " method: home " + homeName.get() + " set here, /rtp, then back", EmberNotificationsHud.WARN);
+    }
+
+    /** Air blocks straight above your head, up to 40. */
+    private int airAbove() {
+        net.minecraft.util.math.BlockPos head = mc.player.getBlockPos().up(2);
+        int n = 0;
+        while (n < 40 && mc.world.getBlockState(head.up(n)).isAir()) n++;
+        return n;
+    }
+
+    private void command(String c) {
+        meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] /{}", c);
+        mc.player.networkHandler.sendChatCommand(c);
+    }
+
+    private void endSequence(String why, boolean ok) {
+        meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] {} method {} after {}s: {}", seq.how, ok ? "done" : "stopped",
+            (System.currentTimeMillis() - seq.startedAt) / 1000, why);
+        if (!ok) EmberNotificationsHud.push("Auto relog", seq.how + " method: " + why, EmberNotificationsHud.WARN);
+        seq = null;
+    }
+
+    private void tickSequence() {
+        Sequence s = seq;
+        s.ticks++;
+        double away = mc.player.getEntityPos().distanceTo(s.origin);
+        switch (s.phase) {
+            case DELHOME -> {
+                command("delhome " + homeName.get());
+                next(Phase.SETHOME);
+            }
+            case SETHOME -> {
+                if (s.ticks < 10) return;
+                command("sethome " + homeName.get());
+                next(s.pearl ? Phase.AIM : Phase.RTP);
+            }
+            case AIM -> {
+                if (s.ticks < 10) return;
+                s.pitch = mc.player.getPitch();
+                mc.player.setPitch(-90);
+                meteordevelopment.meteorclient.utils.player.InvUtils.swap(s.pearlSlot, true);
+                next(Phase.THROW);
+            }
+            case THROW -> {
+                // A few ticks so the server has the new look and slot before the throw.
+                mc.player.setPitch(-90);
+                if (s.ticks < 6) return;
+                mc.interactionManager.interactItem(mc.player, net.minecraft.util.Hand.MAIN_HAND);
+                mc.player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
+                meteordevelopment.meteorclient.utils.player.InvUtils.swapBack();
+                mc.player.setPitch(s.pitch);
+                next(Phase.RTP);
+            }
+            case RTP -> {
+                if (s.ticks < (s.pearl ? 2 : 10)) return;
+                command("rtp");
+                next(Phase.AWAY);
+            }
+            case AWAY -> {
+                if (mc.currentScreen instanceof net.minecraft.client.gui.screen.ingame.HandledScreen<?> screen) {
+                    // Don't guess in a menu: say what it was, so it can be handled.
+                    meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] /rtp opened \"{}\"", screen.getTitle().getString());
+                    mc.player.closeHandledScreen();
+                    endSequence("/rtp opened a menu (" + screen.getTitle().getString() + ")", false);
+                    return;
+                }
+                if (away > 64) {
+                    next(s.pearl ? Phase.BACK : Phase.HOME);
+                } else if (s.ticks > 600) {
+                    // Never left (an /rtp cooldown?): you're still where you were, nothing lost.
+                    endSequence("/rtp didn't move you within 30 s (cooldown?)", false);
+                }
+            }
+            case HOME -> {
+                if (s.ticks < 40) return;
+                command("home " + homeName.get());
+                s.homeSent = true;
+                next(Phase.BACK);
+            }
+            case BACK -> {
+                if (away < 4) {
+                    next(Phase.CHECK);
+                } else if (s.pearl && !s.homeSent && s.ticks > 400) {
+                    // The pearl didn't bring you back within 20 s: the home is the backup.
+                    command("home " + homeName.get());
+                    s.homeSent = true;
+                    s.ticks = 0;
+                } else if (s.ticks > 600) {
+                    endSequence("didn't get back within 30 s: use /home " + homeName.get(), false);
+                }
+            }
+            case CHECK -> {
+                // The chunks around you come in again on arrival; give them three seconds.
+                if (s.ticks < 60) return;
+                checkDeepData();
+                endSequence("back where you were", true);
+            }
+        }
+    }
+
+    private void next(Phase phase) {
+        seq.phase = phase;
+        seq.ticks = 0;
     }
 
     private void relog(String why) {

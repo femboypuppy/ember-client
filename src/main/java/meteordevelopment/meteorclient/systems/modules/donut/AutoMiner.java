@@ -776,6 +776,8 @@ public class AutoMiner extends Module {
     /** Hands off while you use the keyboard, mouse or a screen, while Auto Eat eats, and during a hesitation. */
     private boolean paused(long now) {
         if (mc.currentScreen != null || Modules.get().isActive(Freecam.class)) return true;
+        // Auto Relog's Home or Pearl method is taking you away and back: never dig wherever /rtp put you.
+        if (Modules.get().get(AutoRelog.class).busy()) return true;
         AutoEat autoEat = Modules.get().get(AutoEat.class);
         if (autoEat.isActive() && autoEat.eating) return true;
         if (userInput()) userAt = now;
