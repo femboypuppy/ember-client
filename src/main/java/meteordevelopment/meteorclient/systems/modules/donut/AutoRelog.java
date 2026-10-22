@@ -140,6 +140,7 @@ public class AutoRelog extends Module {
         lastJoinAt = now;
         checkAfterJoin = relogged;
         relogged = false;
+        recheckTicks = 0;
         // A Home or Pearl run cut short by a disconnect: start over from scratch later.
         if (seq != null) {
             meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] {} method interrupted by a rejoin", seq.how);
@@ -169,6 +170,7 @@ public class AutoRelog extends Module {
     private void checkDeepData() {
         checkAfterJoin = false;
         int real = 0, hidden = 0;
+        String rings = deepDataRings();
         int cx = mc.player.getBlockPos().getX() >> 4, cz = mc.player.getBlockPos().getZ() >> 4;
         for (int x = cx - 3; x <= cx + 3; x++) {
             for (int z = cz - 3; z <= cz + 3; z++) {
@@ -180,8 +182,9 @@ public class AutoRelog extends Module {
         }
         String gap = sinceLastJoin < 0 ? "unknown" : String.format(Locale.ROOT, "%.1f min", sinceLastJoin / 60_000.0);
         String how = seq != null ? seq.how + " method" : "Rejoined " + gap + " after the previous join";
-        meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] {}, at Y {}: deep data {} ({} of {} nearby chunks real)",
-            how, (int) mc.player.getY(), real > hidden ? "REAL" : "HIDDEN", real, real + hidden);
+        meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] {}, at {} {} {}: deep data {} ({} of {} nearby chunks real; by distance {})",
+            how, (int) mc.player.getX(), (int) mc.player.getY(), (int) mc.player.getZ(), real > hidden ? "REAL" : "HIDDEN", real, real + hidden, rings);
+        recheckTicks = RECHECK_TICKS;
         if (real + hidden == 0) return;
         if (real > hidden) {
             hiddenStreak = 0;
@@ -197,6 +200,31 @@ public class AutoRelog extends Module {
         }
     }
 
+    /** Ticks until the deep data is counted once more after a relog (chunks still arriving, or re-sent hidden). */
+    private int recheckTicks;
+    private static final int RECHECK_TICKS = 400;
+
+    /**
+     * Real chunks out of loaded ones, by ring (Chebyshev distance in chunks) around you, 0 to 6: "0:1/1 1:8/8 2:3/16 ...".
+     * On 2026-10-23 relogs came back with 9 and 19 of 49 real, which looks like a radius rather than all-or-nothing.
+     */
+    private String deepDataRings() {
+        int cx = mc.player.getBlockPos().getX() >> 4, cz = mc.player.getBlockPos().getZ() >> 4;
+        int[] real = new int[7], all = new int[7];
+        for (int x = -6; x <= 6; x++) {
+            for (int z = -6; z <= 6; z++) {
+                var chunk = mc.world.getChunkManager().getWorldChunk(cx + x, cz + z);
+                if (chunk == null) continue;
+                int ring = Math.max(Math.abs(x), Math.abs(z));
+                all[ring]++;
+                if (DeepslateHiding.realFloor(chunk) == chunk.getBottomY()) real[ring]++;
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 7; i++) sb.append(i == 0 ? "" : " ").append(i).append(':').append(real[i]).append('/').append(all[i]);
+        return sb.toString();
+    }
+
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (reconnectAt >= 0) {
@@ -204,6 +232,11 @@ public class AutoRelog extends Module {
             return;
         }
         if (mc.player == null || mc.world == null || mc.getNetworkHandler() == null) return;
+
+        if (recheckTicks > 0 && --recheckTicks == 0) {
+            meteordevelopment.meteorclient.MeteorClient.LOG.info("[Ember AutoRelog] 20 s later, at {} {} {}: real deep chunks by distance {}",
+                (int) mc.player.getX(), (int) mc.player.getY(), (int) mc.player.getZ(), deepDataRings());
+        }
 
         if (mc.player.hurtTime > 0) lastHurt = System.currentTimeMillis();
 

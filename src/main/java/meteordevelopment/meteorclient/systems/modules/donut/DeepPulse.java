@@ -231,6 +231,7 @@ public class DeepPulse extends Module {
         running.clear();
         presences.clear();
         selfTrail.clear();
+        chunkSentAt.clear();
         onActivate();
     }
 
@@ -257,6 +258,8 @@ public class DeepPulse extends Module {
         } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.SimulationDistanceS2CPacket p) {
             simDistance = p.simulationDistance();
         } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket p) {
+            if (chunkSentAt.size() > 100_000) chunkSentAt.clear();
+            chunkSentAt.put(ChunkPos.toLong(p.getChunkX(), p.getChunkZ()), System.currentTimeMillis());
             if (staticLight.get()) scanLight(p.getChunkX(), p.getChunkZ(), p.getLightData());
         } else if (event.packet instanceof LightUpdateS2CPacket p) {
             if (!light.get()) return;
@@ -512,6 +515,25 @@ public class DeepPulse extends Module {
         return null;
     }
 
+    /** When each chunk last arrived (network thread), to tell fresh edge chunks from settled ones. */
+    private final Map<Long, Long> chunkSentAt = new ConcurrentHashMap<>();
+
+    /**
+     * DonutSMP sends light updates for the chunks at the edge of your view as you move (a ring of them ~90 m away,
+     * 711 in 5 minutes on 2026-10-23), with nobody there. A light change only counts in a chunk that arrived 10+
+     * seconds ago with all eight neighbours loaded.
+     */
+    private boolean atViewEdge(int chunkX, int chunkZ, long now) {
+        Long sent = chunkSentAt.get(ChunkPos.toLong(chunkX, chunkZ));
+        if (sent == null || now - sent < 10_000) return true;
+        for (int x = -1; x <= 1; x++) {
+            for (int z = -1; z <= 1; z++) {
+                if (!mc.world.getChunkManager().isChunkLoaded(chunkX + x, chunkZ + z)) return true;
+            }
+        }
+        return false;
+    }
+
     private void take(Event e, long now) {
         if (mc.world.getRegistryKey() != World.OVERWORLD) return;
         if (e.kind.equals("running")) {
@@ -529,6 +551,10 @@ public class DeepPulse extends Module {
             }
             stats.merge("deep light: " + (source.contains("fake") ? "under fake deepslate" : "real blocks"), 1, Integer::sum);
             e = new Event("light", e.x, e.y, e.z, e.weight, source + ", " + e.detail);
+        }
+        if (e.kind.equals("light change") && atViewEdge((int) Math.floor(e.x) >> 4, (int) Math.floor(e.z) >> 4, now)) {
+            stats.merge("light change at the view edge (ignored)", 1, Integer::sum);
+            return;
         }
         boolean deep = e.y < maxY.get();
         double dx = e.x - mc.player.getX(), dy = e.y - mc.player.getY(), dz = e.z - mc.player.getZ();
