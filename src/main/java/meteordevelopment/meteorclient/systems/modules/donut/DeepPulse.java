@@ -117,6 +117,33 @@ public class DeepPulse extends Module {
         .build()
     );
 
+    private final SettingGroup sgPlayers = settings.createGroup("Player Chunks");
+
+    private final Setting<Boolean> playerChunks = sgPlayers.add(new BoolSetting.Builder()
+        .name("player-chunks")
+        .description("Find players you can't see: chunks far outside your own simulation distance that are still running (plants growing, mobs moving) have someone near them, maybe AFK at a base under the deepslate.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> presenceChunks = sgPlayers.add(new IntSetting.Builder()
+        .name("min-chunks")
+        .description("Running chunks that must group together before it reports a player there.")
+        .defaultValue(3)
+        .range(1, 50)
+        .sliderRange(1, 10)
+        .visible(playerChunks::get)
+        .build()
+    );
+
+    private final Setting<SettingColor> runningColor = sgPlayers.add(new ColorSetting.Builder()
+        .name("running-color")
+        .description("Color of running chunks and of where the unseen player probably is.")
+        .defaultValue(new SettingColor(60, 230, 160, 60))
+        .visible(playerChunks::get)
+        .build()
+    );
+
     private final Setting<SettingColor> color = sgRender.add(new ColorSetting.Builder()
         .name("color")
         .description("Color of marked spots.")
@@ -170,7 +197,7 @@ public class DeepPulse extends Module {
     private long statsAt;
 
     public DeepPulse() {
-        super(Categories.Donut, "deep-pulse", "Spots live bases under the deepslate from what the server can't hide: explosions, lit TNT, falling sand and flickering light.");
+        super(Categories.Donut, "deep-pulse", "Spots live bases under the deepslate from what the server can't hide (explosions, lit TNT, falling sand, block changes) and unseen players from the chunks they keep running.");
     }
 
     @Override
@@ -193,6 +220,10 @@ public class DeepPulse extends Module {
     @EventHandler
     private void onGameJoined(GameJoinedEvent event) {
         spots.clear();
+        // A new connection (or shard) starts its running chunks and your trail over.
+        running.clear();
+        presences.clear();
+        selfTrail.clear();
         onActivate();
     }
 
@@ -209,11 +240,15 @@ public class DeepPulse extends Module {
                 if (fallingBlocks.get()) incoming.add(new Event("falling block", p.getX(), p.getY(), p.getZ(), 1));
             }
         } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket p) {
-            if (blockChanges.get() && p.getPos().getY() < maxY.get()) blockChange(p.getPos(), p.getState());
+            if (blockChanges.get() || playerChunks.get()) blockChange(p.getPos(), p.getState());
         } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket p) {
-            if (blockChanges.get()) p.visitUpdates((pos, state) -> {
-                if (pos.getY() < maxY.get()) blockChange(pos, state);
-            });
+            if (blockChanges.get() || playerChunks.get()) p.visitUpdates(this::blockChange);
+        } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.EntityS2CPacket p) {
+            if (playerChunks.get() && p.isPositionChanged()) moved.add(p);
+        } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.GameJoinS2CPacket p) {
+            simDistance = p.simulationDistance();
+        } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.SimulationDistanceS2CPacket p) {
+            simDistance = p.simulationDistance();
         } else if (event.packet instanceof LightUpdateS2CPacket p) {
             if (!light.get()) return;
             // Bit i is the section (i - 1) above the world's bottom one: the light data has one extra section below.
@@ -230,8 +265,12 @@ public class DeepPulse extends Module {
     /** Network thread. The block's name says what's down there: a lamp, a piston, or just stone being dug. */
     private void blockChange(BlockPos pos, net.minecraft.block.BlockState state) {
         String block = state.isAir() ? "air" : net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).getPath();
-        if (natural(block)) return;
-        incoming.add(new Event("block change", pos.getX(), pos.getY(), pos.getZ(), 1, block));
+        if (natural(block)) {
+            // Natural changes only happen in chunks someone keeps running: far from you, that someone isn't you.
+            if (playerChunks.get()) incoming.add(new Event("running", pos.getX(), pos.getY(), pos.getZ(), 0, block));
+            return;
+        }
+        if (blockChanges.get() && pos.getY() < maxY.get()) incoming.add(new Event("block change", pos.getX(), pos.getY(), pos.getZ(), 1, block));
     }
 
     /** Parts of names of blocks that change by themselves (growth, spreading, aging, flowing, mobs stepping on them). */
@@ -252,19 +291,159 @@ public class DeepPulse extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null) return;
         long now = System.currentTimeMillis();
+
+        // Where you've been lately: the chunks you kept running yourself (they keep running a moment after you leave).
+        if (now - selfAt > 2000) {
+            selfAt = now;
+            ChunkPos here = mc.player.getChunkPos();
+            selfTrail.addLast(new long[] {now, here.x, here.z});
+            while (!selfTrail.isEmpty() && now - selfTrail.peekFirst()[0] > 120_000) selfTrail.removeFirst();
+        }
+
+        // Mobs and items that moved: whose entity, and where.
+        net.minecraft.network.packet.s2c.play.EntityS2CPacket moveP;
+        while ((moveP = moved.poll()) != null) {
+            net.minecraft.entity.Entity entity = moveP.getEntity(mc.world);
+            if (entity == null || entity instanceof net.minecraft.entity.player.PlayerEntity || entity == mc.player.getVehicle()) continue;
+            double d = Math.sqrt(entity.squaredDistanceTo(mc.player));
+            if (d > farthestMove) farthestMove = d;
+            String type = net.minecraft.registry.Registries.ENTITY_TYPE.getId(entity.getType()).getPath();
+            take(new Event("running", entity.getX(), entity.getY(), entity.getZ(), 0, type), now);
+        }
+
         Event e;
         while ((e = incoming.poll()) != null) take(e, now);
+
+        // Running chunks and presences fade once nothing more is seen there.
+        running.values().removeIf(r -> now - r.last > 5 * 60_000L);
+        presences.removeIf(p -> now - p.last > 10 * 60_000L);
 
         // Every 5 minutes, what arrived: tells from the log whether DonutSMP sends these from below at all.
         if (now - statsAt > 300_000) {
             statsAt = now;
-            if (!stats.isEmpty()) MeteorClient.LOG.info("[Ember DeepPulse] Last 5 minutes: {}", stats);
+            if (farthestMove > 0) stats.put("farthest mob move (m)", (int) farthestMove);
+            stats.put("simulation distance", sim());
+            MeteorClient.LOG.info("[Ember DeepPulse] Last 5 minutes: {}", stats);
             stats.clear();
+            farthestMove = 0;
         }
+    }
+
+    // Player chunks
+
+    /** The server's simulation distance in chunks (how far around a player chunks run); 10 until it says. */
+    private volatile int simDistance;
+    private final ConcurrentLinkedQueue<net.minecraft.network.packet.s2c.play.EntityS2CPacket> moved = new ConcurrentLinkedQueue<>();
+    private final java.util.ArrayDeque<long[]> selfTrail = new java.util.ArrayDeque<>();
+    private long selfAt;
+    private double farthestMove;
+
+    /** A chunk seen running far from you: when, and what (a plant growing, a mob moving). */
+    private static final class Running {
+        final int chunkX, chunkZ;
+        int y, count;
+        long last;
+        final java.util.Set<String> what = new java.util.LinkedHashSet<>();
+
+        Running(int chunkX, int chunkZ) {
+            this.chunkX = chunkX;
+            this.chunkZ = chunkZ;
+        }
+    }
+
+    /** A group of running chunks: one player keeping them running, about at their middle. */
+    private static final class Presence {
+        final java.util.Set<Long> chunks = new java.util.HashSet<>();
+        double centerX, centerZ;
+        int y;
+        long last;
+        boolean told;
+    }
+
+    private final Map<Long, Running> running = new ConcurrentHashMap<>();
+    private final List<Presence> presences = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    private int sim() {
+        return simDistance > 0 ? simDistance : 10;
+    }
+
+    /** Within your own running area now or in the last two minutes (plus a chunk of margin). */
+    private boolean yours(int chunkX, int chunkZ) {
+        int r = sim() + 1;
+        for (long[] p : selfTrail) if (Math.abs(p[1] - chunkX) <= r && Math.abs(p[2] - chunkZ) <= r) return true;
+        ChunkPos here = mc.player.getChunkPos();
+        return Math.abs(here.x - chunkX) <= r && Math.abs(here.z - chunkZ) <= r;
+    }
+
+    private void running(Event e, long now) {
+        int cx = (int) Math.floor(e.x) >> 4, cz = (int) Math.floor(e.z) >> 4;
+        if (yours(cx, cz)) {
+            stats.merge("running near you", 1, Integer::sum);
+            return;
+        }
+        stats.merge("running far", 1, Integer::sum);
+        long key = ChunkPos.toLong(cx, cz);
+        Running r = running.computeIfAbsent(key, k -> new Running(cx, cz));
+        boolean fresh = r.count == 0;
+        r.count++;
+        r.last = now;
+        r.y = (int) Math.floor(e.y);
+        if (r.what.size() < 5) r.what.add(e.detail);
+        if (fresh) MeteorClient.LOG.info("[Ember DeepPulse] Running chunk {}, {} ({}) far from you", cx, cz, e.detail);
+
+        // The player keeping it running is within their simulation distance of it: join the group it fits in.
+        Presence group = null;
+        for (Presence p : presences) {
+            if (Math.abs(p.centerX - cx) <= 2 * sim() + 1 && Math.abs(p.centerZ - cz) <= 2 * sim() + 1) {
+                group = p;
+                break;
+            }
+        }
+        if (group == null) {
+            group = new Presence();
+            presences.add(group);
+        }
+        group.chunks.add(key);
+        group.last = now;
+        group.y = r.y;
+        double sx = 0, sz = 0;
+        for (long k : group.chunks) {
+            sx += ChunkPos.getPackedX(k);
+            sz += ChunkPos.getPackedZ(k);
+        }
+        group.centerX = sx / group.chunks.size();
+        group.centerZ = sz / group.chunks.size();
+
+        if (!group.told && group.chunks.size() >= presenceChunks.get()) {
+            group.told = true;
+            int x = (int) Math.round(group.centerX * 16 + 8), z = (int) Math.round(group.centerZ * 16 + 8);
+            String seen = visiblePlayerNear(x, z);
+            MeteorClient.LOG.info("[Ember DeepPulse] Player chunks: {} running chunks around {}, {}{}", group.chunks.size(), x, z,
+                seen == null ? " (no player visible there)" : " (" + seen + " is there)");
+            if (seen == null && notify.get()) {
+                String text = "around " + x + ", " + z + " (" + group.chunks.size() + " chunks running)";
+                if (!EmberNotificationsHud.shouldInterceptChat()) info("Unseen player (highlight)%s", text);
+                EmberNotificationsHud.push("Unseen player", text, EmberNotificationsHud.WARN);
+            }
+        }
+    }
+
+    /** A player you can see near there, by name, or null. */
+    private String visiblePlayerNear(int x, int z) {
+        double r = (sim() + 1) * 16.0;
+        for (net.minecraft.entity.player.PlayerEntity p : mc.world.getPlayers()) {
+            if (p == mc.player) continue;
+            if (Math.abs(p.getX() - x) <= r && Math.abs(p.getZ() - z) <= r) return p.getName().getString();
+        }
+        return null;
     }
 
     private void take(Event e, long now) {
         if (mc.world.getRegistryKey() != World.OVERWORLD) return;
+        if (e.kind.equals("running")) {
+            running(e, now);
+            return;
+        }
         boolean deep = e.y < maxY.get();
         double dx = e.x - mc.player.getX(), dy = e.y - mc.player.getY(), dz = e.z - mc.player.getZ();
         double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -313,6 +492,25 @@ public class DeepPulse extends Module {
         Color fill = color.get();
         Color line = new Color(fill.r, fill.g, fill.b, Math.min(255, fill.a * 3));
         double range = (double) renderRange.get() * renderRange.get();
+
+        if (playerChunks.get()) {
+            Color rf = runningColor.get();
+            Color rl = new Color(rf.r, rf.g, rf.b, Math.min(255, rf.a * 3));
+            for (Running r : running.values()) {
+                double x0 = r.chunkX * 16.0, z0 = r.chunkZ * 16.0;
+                double dx = x0 + 8 - mc.player.getX(), dz = z0 + 8 - mc.player.getZ();
+                if (dx * dx + dz * dz > range) continue;
+                event.renderer.box(x0, r.y, z0, x0 + 16, r.y, z0 + 16, rf, rl, ShapeMode.Both, 0);
+            }
+            // Where the unseen player probably is: a tall column at the middle of their running chunks.
+            for (Presence p : presences) {
+                if (p.chunks.size() < presenceChunks.get()) continue;
+                double x = p.centerX * 16 + 8, z = p.centerZ * 16 + 8;
+                double dx = x - mc.player.getX(), dz = z - mc.player.getZ();
+                if (dx * dx + dz * dz > range) continue;
+                event.renderer.box(x - 1, mc.world.getBottomY(), z - 1, x + 1, p.y + 40, z + 1, new Color(rf.r, rf.g, rf.b, 40), rl, ShapeMode.Both, 0);
+            }
+        }
         for (Spot s : spots.values()) {
             if (!s.marked) continue;
             double dx = s.x + 0.5 - mc.player.getX(), dz = s.z + 0.5 - mc.player.getZ();
