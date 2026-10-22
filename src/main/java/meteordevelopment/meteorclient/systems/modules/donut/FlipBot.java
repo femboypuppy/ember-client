@@ -1902,29 +1902,34 @@ public class FlipBot extends Module {
             .then("close inventory", 2, t -> {
                 mc.player.closeHandledScreen();
                 InvUtils.swap(slot, false);
+                // Closing the inventory counts too: /ah sell 0.5 s after it got no answer at all on DonutSMP.
+                lastClosedAt = System.currentTimeMillis();
                 return true;
             })
             .pause(10)
-            // /ah sell 2 s after closing the auction house got no answer at all on DonutSMP; 3 s+ worked.
-            .then("gap after the auction house", 200, t -> System.currentTimeMillis() - lastClosedAt >= 3500)
+            // /ah sell 2 s after closing a menu (the auction house or the inventory) gets no answer at all on
+            // DonutSMP; 3 s+ worked.
+            .then("gap after closing menus", 200, t -> System.currentTimeMillis() - lastClosedAt >= 3500)
             .then("list", 2, t -> {
                 ItemStack held = mc.player.getInventory().getStack(slot);
                 if (!held.isOf(item) || held.getCount() != units) throw new Fail("sell slot holds " + held);
                 mc.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(slot));
                 listedMessage = false;
                 listFail = null;
-                serverLinesToLog = 3;
+                serverLinesToLog = 6;
                 had[0] = count(item);
                 mc.player.networkHandler.sendChatCommand("ah sell " + price);
+                MeteorClient.LOG.info("[Ember FlipBot] /ah sell {} for {} {} ({} ms after the last menu closed)", price, units, name(item),
+                    System.currentTimeMillis() - lastClosedAt);
                 sent[0] = true;
                 return true;
             })
-            .then("listed", 70, t -> {
+            .then("listed", 110, t -> {
                 // "You listed" confirms it. "You have too many listed items" (slots full) also takes the item out of the
                 // sell slot, so an empty slot only counts once a refusal had time to arrive.
                 if (listedMessage) return true;
                 if (listFail != null) throw new Fail(listFail);
-                return t >= 40 && !mc.player.getInventory().getStack(slot).isOf(item);
+                return t >= 60 && !mc.player.getInventory().getStack(slot).isOf(item);
             });
         lastListAttempt = now;
         Runnable booked = () -> {
@@ -1961,6 +1966,8 @@ public class FlipBot extends Module {
                 booked.run();
                 return;
             }
+            if (sent[0]) MeteorClient.LOG.info("[Ember FlipBot] No listing for /ah sell {}: the sell slot holds {}, screen {}", price,
+                mc.player.getInventory().getStack(slot), mc.currentScreen == null ? "none" : mc.currentScreen.getClass().getSimpleName());
             listingsFullUntil = System.currentTimeMillis() + 2 * 60_000L;
             info("A %s listing didn't go through (auction slots full?): trying again in 2 minutes.", name(item));
         };
