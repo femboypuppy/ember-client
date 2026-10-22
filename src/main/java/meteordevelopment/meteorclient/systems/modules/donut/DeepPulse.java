@@ -87,6 +87,13 @@ public class DeepPulse extends Module {
         .build()
     );
 
+    private final Setting<Boolean> staticLight = sgGeneral.add(new BoolSetting.Builder()
+        .name("static-light")
+        .description("Torches, lanterns, glowstone or lamps below max-y, from the light values sent with a chunk: a small bright spot where nothing natural glows. Lava lakes and glow berries are left out.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> light = sgGeneral.add(new BoolSetting.Builder()
         .name("light-changes")
         .description("Light updates the server sends for a section below max-y. Servers rarely send these (the client works light out itself), so it's a bonus signal.")
@@ -249,6 +256,8 @@ public class DeepPulse extends Module {
             simDistance = p.simulationDistance();
         } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.SimulationDistanceS2CPacket p) {
             simDistance = p.simulationDistance();
+        } else if (event.packet instanceof net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket p) {
+            if (staticLight.get()) scanLight(p.getChunkX(), p.getChunkZ(), p.getLightData());
         } else if (event.packet instanceof LightUpdateS2CPacket p) {
             if (!light.get()) return;
             // Bit i is the section (i - 1) above the world's bottom one: the light data has one extra section below.
@@ -260,6 +269,69 @@ public class DeepPulse extends Module {
                 incoming.add(new Event("light change", p.getChunkX() * 16 + 8, sectionMinY + 8, p.getChunkZ() * 16 + 8, 1));
             }
         }
+    }
+
+    /**
+     * Network thread: the block light sent with a chunk, for its sections below max-y. A light source leaves its own
+     * level at its block and fades one per block around it; a torch or a lantern makes a small bright spot, a lava
+     * lake hundreds of bright blocks. Small bright spots are queued with the brightest block, to be checked.
+     */
+    private void scanLight(int chunkX, int chunkZ, net.minecraft.network.packet.s2c.play.LightData data) {
+        BitSet sections = data.getInitedBlock();
+        java.util.List<byte[]> nibbles = data.getBlockNibbles();
+        int bottom = mc.world != null ? mc.world.getBottomY() : -64;
+        int n = 0;
+        for (int i = sections.nextSetBit(0); i >= 0 && n < nibbles.size(); i = sections.nextSetBit(i + 1), n++) {
+            int sectionMinY = bottom + (i - 1) * 16;
+            if (sectionMinY >= maxY.get() || sectionMinY < bottom) continue;
+            byte[] b = nibbles.get(n);
+            if (b == null || b.length < 2048) continue;
+            int bright = 0, max = 0, best = -1;
+            for (int idx = 0; idx < 4096; idx++) {
+                int v = (b[idx >> 1] >> ((idx & 1) << 2)) & 15;
+                if (v >= 12) bright++;
+                if (v > max) {
+                    max = v;
+                    best = idx;
+                }
+            }
+            lightStats.merge(max > 0 ? "deep sections with block light" : "deep sections dark", 1, Integer::sum);
+            if (max < 13 || bright == 0) continue;
+            if (bright > 60) {
+                // Lots of bright blocks: a lava lake (or a big lit room, which is rarer than lava down there).
+                lightStats.merge("lava-like", 1, Integer::sum);
+                continue;
+            }
+            int x = (chunkX << 4) + (best & 15), y = sectionMinY + (best >> 8), z = (chunkZ << 4) + ((best >> 4) & 15);
+            incoming.add(new Event("light", x, y, z, 2, "level " + max));
+        }
+    }
+
+    private final Map<String, Integer> lightStats = new ConcurrentHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet seenLights = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+
+    /** Blocks that glow by themselves down there: a bright spot made by one of these is nature, not a base. */
+    private static final String[] NATURAL_LIGHT = {"lava", "cave_vines", "glow_lichen", "magma", "amethyst", "sculk", "fire", "glow"};
+
+    /**
+     * Main thread: what made a bright spot. Where the chunk's blocks are real, a natural light (lava, glow berries)
+     * rules it out; where they were sent as plain deepslate there's nothing to check, which is the interesting case.
+     * @return the light's source if it's a base light, "hidden" if the blocks can't be checked, null if natural
+     */
+    private String lightSource(int x, int y, int z) {
+        var chunk = mc.world.getChunkManager().getWorldChunk(x >> 4, z >> 4);
+        if (chunk == null) return "hidden";
+        if (DeepslateHiding.realFloor(chunk) > y) return "under fake deepslate";
+        BlockPos center = new BlockPos(x, y, z);
+        for (BlockPos p : BlockPos.iterate(center.add(-1, -1, -1), center.add(1, 1, 1))) {
+            var state = mc.world.getBlockState(p);
+            if (state.getLuminance() < 10) continue;
+            String block = net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).getPath();
+            for (String n : NATURAL_LIGHT) if (block.contains(n)) return null;
+            return block;
+        }
+        // Bright but no light-giving block there now (changed since): treat as unknown, not natural.
+        return "unknown source";
     }
 
     /** Network thread. The block's name says what's down there: a lamp, a piston, or just stone being dug. */
@@ -322,6 +394,8 @@ public class DeepPulse extends Module {
         if (now - statsAt > 300_000) {
             statsAt = now;
             if (farthestMove > 0) stats.put("farthest mob move (m)", (int) farthestMove);
+            lightStats.forEach(stats::put);
+            lightStats.clear();
             stats.put("simulation distance", sim());
             MeteorClient.LOG.info("[Ember DeepPulse] Last 5 minutes: {}", stats);
             stats.clear();
@@ -443,6 +517,18 @@ public class DeepPulse extends Module {
         if (e.kind.equals("running")) {
             running(e, now);
             return;
+        }
+        if (e.kind.equals("light")) {
+            // The same light comes again each time its chunk is sent: it counts once.
+            if (!seenLights.add(BlockPos.asLong((int) e.x, (int) e.y, (int) e.z))) return;
+            if (seenLights.size() > 200_000) seenLights.clear();
+            String source = lightSource((int) e.x, (int) e.y, (int) e.z);
+            if (source == null) {
+                stats.merge("deep light: natural", 1, Integer::sum);
+                return;
+            }
+            stats.merge("deep light: " + (source.contains("fake") ? "under fake deepslate" : "real blocks"), 1, Integer::sum);
+            e = new Event("light", e.x, e.y, e.z, e.weight, source + ", " + e.detail);
         }
         boolean deep = e.y < maxY.get();
         double dx = e.x - mc.player.getX(), dy = e.y - mc.player.getY(), dz = e.z - mc.player.getZ();
