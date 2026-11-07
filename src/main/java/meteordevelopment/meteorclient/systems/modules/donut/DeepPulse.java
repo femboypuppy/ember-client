@@ -124,6 +124,16 @@ public class DeepPulse extends Module {
         .build()
     );
 
+    private final Setting<Boolean> undergroundPlayers = sgGeneral.add(new BoolSetting.Builder()
+        .name("underground-players")
+        .description("Since Nov 2026 DonutSMP reveals the real blocks around every player and sends them to everyone nearby: bursts of them far from you are someone underground (their tunnel, their base). Each one counts 1, once per 5 seconds per chunk.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Map<Long, long[]> revealBuckets = new ConcurrentHashMap<>();
+    private long revealsAt;
+
     private final SettingGroup sgPlayers = settings.createGroup("Player Chunks");
 
     private final Setting<Boolean> playerChunks = sgPlayers.add(new BoolSetting.Builder()
@@ -339,6 +349,18 @@ public class DeepPulse extends Module {
 
     /** Network thread. The block's name says what's down there: a lamp, a piston, or just stone being dug. */
     private void blockChange(BlockPos pos, net.minecraft.block.BlockState state) {
+        // Fake filler swapped for the real block: the server revealing around some player, not activity.
+        if (mc.world != null && DeepslateHiding.isReveal(pos, mc.world.getBlockState(pos), state)) {
+            if (!undergroundPlayers.get()) return;
+            long[] b = revealBuckets.computeIfAbsent(ChunkPos.toLong(pos.getX() >> 4, pos.getZ() >> 4), k -> new long[4]);
+            synchronized (b) {
+                b[0]++;
+                b[1] += pos.getX();
+                b[2] += pos.getY();
+                b[3] += pos.getZ();
+            }
+            return;
+        }
         String block = state.isAir() ? "air" : net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).getPath();
         if (natural(block)) {
             // Natural changes only happen in chunks someone keeps running: far from you, that someone isn't you.
@@ -384,6 +406,18 @@ public class DeepPulse extends Module {
             if (d > farthestMove) farthestMove = d;
             String type = net.minecraft.registry.Registries.ENTITY_TYPE.getId(entity.getType()).getPath();
             take(new Event("running", entity.getX(), entity.getY(), entity.getZ(), 0, type), now);
+        }
+
+        // Reveal bursts, per chunk every 2 seconds: a player underground there, at the middle of what got revealed.
+        if (now - revealsAt > 2000) {
+            revealsAt = now;
+            revealBuckets.entrySet().removeIf(en -> {
+                long[] b = en.getValue();
+                synchronized (b) {
+                    if (b[0] >= 4) incoming.add(new Event("player underground", (double) b[1] / b[0], (double) b[2] / b[0], (double) b[3] / b[0], 1, b[0] + " blocks revealed"));
+                }
+                return true;
+            });
         }
 
         Event e;
@@ -571,7 +605,7 @@ public class DeepPulse extends Module {
         // Light changes count once per 20 seconds per chunk, block changes once per 5: a burst (one lamp switched,
         // a few blocks dug) is one event, a clock or a farm keeps adding up.
         Long lastOfKind = s.lastByKind.get(e.kind);
-        long gap = e.kind.equals("light change") ? 20_000 : e.kind.equals("block change") ? 5_000 : 0;
+        long gap = e.kind.equals("light change") ? 20_000 : e.kind.equals("block change") || e.kind.equals("player underground") ? 5_000 : 0;
         if (lastOfKind != null && now - lastOfKind < gap) return;
         s.lastByKind.put(e.kind, now);
         s.last = now;

@@ -64,6 +64,7 @@ public class DonutProbe extends Module {
     /** Reveals: fake deepslate replaced by something else, relative to you. */
     private final Queue<int[]> reveals = new ConcurrentLinkedQueue<>();
     private final List<int[]> minuteReveals = new ArrayList<>();
+    private final Map<String, AtomicInteger> revealedBlocks = new ConcurrentHashMap<>();
     private long lastReport;
 
     public DonutProbe() {
@@ -162,7 +163,8 @@ public class DonutProbe extends Module {
     private void change(BlockPos pos, BlockState state) {
         if (pos.getY() >= maxY.get()) return;
         BlockState before = mc.world.getBlockState(pos);
-        if (before.isOf(Blocks.DEEPSLATE) && !state.isOf(Blocks.DEEPSLATE)) {
+        if (DeepslateHiding.isReveal(pos, before, state)) {
+            revealedBlocks.computeIfAbsent(name(state), k -> new AtomicInteger()).incrementAndGet();
             BlockPos me = mc.player.getBlockPos();
             reveals.add(new int[] {pos.getX() - me.getX(), pos.getY() - me.getY(), pos.getZ() - me.getZ(), me.getY()});
         } else {
@@ -218,6 +220,10 @@ public class DonutProbe extends Module {
             }
             MeteorClient.LOG.info("[Ember DonutProbe] Reveals: {} blocks, distance up to {} (by 2m: {}), height relative to your feet {}..{}",
                 minuteReveals.size(), maxDist, Arrays.toString(hist), minDy, maxDy);
+            StringBuilder kinds = new StringBuilder();
+            revealedBlocks.entrySet().stream().sorted((a, b) -> b.getValue().get() - a.getValue().get()).limit(25)
+                .forEach(e -> kinds.append(' ').append(e.getKey()).append(" x").append(e.getValue().get()).append(';'));
+            MeteorClient.LOG.info("[Ember DonutProbe] Revealed blocks:{}", kinds);
             minuteReveals.stream().limit(samples.get()).forEach(v -> MeteorClient.LOG.info("[Ember DonutProbe] Reveal at dx {} dy {} dz {} (you at Y {})", v[0], v[1], v[2], v[3]));
         }
 
@@ -233,6 +239,7 @@ public class DonutProbe extends Module {
         nearDetail.clear();
         hiddenShapes.clear();
         minuteReveals.clear();
+        revealedBlocks.clear();
         leakCounts.clear();
         leakSampled.clear();
         leakSamples.clear();
