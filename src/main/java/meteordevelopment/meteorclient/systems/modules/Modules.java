@@ -397,6 +397,7 @@ public class Modules extends System<Modules> {
         add(new meteordevelopment.meteorclient.systems.modules.donut.AHSell());
         add(new meteordevelopment.meteorclient.systems.modules.donut.FlipBot());
         add(new meteordevelopment.meteorclient.systems.modules.donut.DeepPulse());
+        add(new meteordevelopment.meteorclient.systems.modules.donut.DonutProbe());
         add(new meteordevelopment.meteorclient.systems.modules.donut.AnchorMacro());
         add(new meteordevelopment.meteorclient.systems.modules.donut.AntiVanish());
         add(new meteordevelopment.meteorclient.systems.modules.donut.AutoHome());
