@@ -149,6 +149,10 @@ public class DonutProbe extends Module {
             case BlockEntityUpdateS2CPacket p -> leak("block entity " + Registries.BLOCK_ENTITY_TYPE.getId(p.getBlockEntityType()).getPath(), p.getPos().getX(), p.getPos().getY(), p.getPos().getZ());
             case EntitySpawnS2CPacket p -> leak("entity " + Registries.ENTITY_TYPE.getId(p.getEntityType()).getPath(), p.getX(), p.getY(), p.getZ());
             case ParticleS2CPacket p -> leak("particle " + Registries.PARTICLE_TYPE.getId(p.getParameters().getType()).getPath(), p.getX(), p.getY(), p.getZ());
+            // The block entities listed in a chunk packet (chests, spawners...): the client drops the ones whose block
+            // is fake deepslate, so they're only visible here. Anubis's "Storage ESP bypass" reads storage from packets.
+            case ChunkDataS2CPacket p -> p.getChunkData().getBlockEntities(p.getChunkX(), p.getChunkZ()).accept((pos, type, nbt) ->
+                leak("chunk block entity " + Registries.BLOCK_ENTITY_TYPE.getId(type).getPath(), pos.getX(), pos.getY(), pos.getZ()));
             default -> {
             }
         }
