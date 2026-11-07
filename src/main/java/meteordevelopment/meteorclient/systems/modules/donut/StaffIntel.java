@@ -115,6 +115,9 @@ public final class StaffIntel {
     private final List<Consumer<LeakEvent>> leakListeners = new ArrayList<>();
 
     private final Map<Integer, Long> probeSentAt = new ConcurrentHashMap<>();
+    private static final String[] PROBE_CANDIDATES = {PROBE_COMMAND, "msg ", "tell ", "w ", "tpa ", "tpahere ", "pay ", "trade ", "ignore ", "minecraft:tell "};
+    private final Map<Integer, String> probeCommandOf = new ConcurrentHashMap<>();
+    private final Map<String, Integer> probeAnswers = new ConcurrentHashMap<>();
     private final Map<String, Long> probeSeen = new HashMap<>();
     private volatile ProbeAnswer pendingProbe;
     private List<String> lastProbeNames = List.of();
@@ -374,6 +377,15 @@ public final class StaffIntel {
                 String text = suggestion.getText();
                 if (text != null && !text.isBlank()) names.add(text.trim());
             }
+            String command = probeCommandOf.remove(suggestions.id());
+            if (command != null && probeAnswers.merge(command, 1, Integer::sum) <= 3) {
+                log("probe '/%s' answered %d names %s", command, names.size(), names.subList(0, Math.min(8, names.size())));
+            }
+            // Only /minecraft:msg is known to list your shard; the others are logged until we know what they list.
+            if (!PROBE_COMMAND.equals(command)) {
+                event.cancel();
+                return;
+            }
             pendingProbe = new ProbeAnswer(names, sentAt);
             // Our own probe; never let it reach the chat box.
             event.cancel();
@@ -409,6 +421,16 @@ public final class StaffIntel {
             if (!staff.isEmpty() || packet.getEntries().size() <= 3) {
                 log("tab ADD %s x%d staff=%s", actions, packet.getEntries().size(), staff);
             }
+        } else if (actions.contains(PlayerListS2CPacket.Action.UPDATE_LIST_ORDER)) {
+            // A re-sort without anyone joining: what rival anti-vanish clients call a "tab rearrangement".
+            List<String> who = new ArrayList<>();
+            for (PlayerListS2CPacket.Entry entry : packet.getEntries()) {
+                if (entry == null) continue;
+                PlayerListEntry known = mc.getNetworkHandler() == null ? null : mc.getNetworkHandler().getPlayerListEntry(entry.profileId());
+                String name = known != null && known.getProfile() != null ? known.getProfile().name() : entry.profileId().toString();
+                if (who.size() < 6 || isRosterOrStarred(name)) who.add(name + "@" + entry.listOrder() + (isRosterOrStarred(name) ? "*" : ""));
+            }
+            log("tab REORDER %s x%d %s", actions, packet.getEntries().size(), who);
         } else if (actions.contains(PlayerListS2CPacket.Action.UPDATE_LISTED)) {
             for (PlayerListS2CPacket.Entry entry : packet.getEntries()) {
                 if (entry == null || entry.listed()) continue;
@@ -495,10 +517,31 @@ public final class StaffIntel {
         }
 
         long now = System.currentTimeMillis();
+        if (debug && now - tabSnapshotAt > 300_000) {
+            tabSnapshotAt = now;
+            logTabSnapshot(conn);
+        }
         for (PlayerEntity player : mc.world.getPlayers()) {
             if (player != mc.player) entitySeenAt.put(player.getUuid(), now);
         }
         entitySeenAt.values().removeIf(at -> now - at > ENTITY_GRACE_MS);
+    }
+
+    private long tabSnapshotAt;
+
+    /** Every 5 minutes: who the tab holds, by team and by the first word of the shown name (ranks like media). */
+    private void logTabSnapshot(ClientPlayNetworkHandler conn) {
+        Map<String, Integer> teams = new TreeMap<>(), tags = new TreeMap<>();
+        List<String> staff = new ArrayList<>();
+        for (PlayerListEntry e : conn.getPlayerList()) {
+            String team = e.getScoreboardTeam() == null ? "-" : e.getScoreboardTeam().getName().replaceAll("-.*", "");
+            teams.merge(team, 1, Integer::sum);
+            String shown = e.getDisplayName() == null ? "" : e.getDisplayName().getString().trim();
+            tags.merge(shown.isEmpty() ? "-" : shown.split("\\s+")[0], 1, Integer::sum);
+            String name = e.getProfile() == null ? "?" : e.getProfile().name();
+            if (isRosterOrStarred(name)) staff.add(name + "@" + e.getListOrder() + " team " + team + " '" + shown + "'");
+        }
+        log("tab snapshot: %d entries, teams %s, name tags %s, staff %s", conn.getPlayerList().size(), teams, tags, staff);
     }
 
     private void expireLeaks() {
@@ -538,8 +581,12 @@ public final class StaffIntel {
         probeSentAt.put(id, System.currentTimeMillis());
         if (probeSentAt.size() > 8) probeSentAt.remove(Collections.min(probeSentAt.keySet()));
 
+        // Nov 2026: /minecraft:msg completion stopped answering; try the others in turn and log which still list players.
+        String command = PROBE_CANDIDATES[(int) (probesSent % PROBE_CANDIDATES.length)];
+        probeCommandOf.put(id, command);
+        if (probeCommandOf.size() > 32) probeCommandOf.remove(Collections.min(probeCommandOf.keySet()));
         try {
-            conn.sendPacket(new RequestCommandCompletionsC2SPacket(id, PROBE_COMMAND));
+            conn.sendPacket(new RequestCommandCompletionsC2SPacket(id, command));
             probesSent++;
         } catch (Throwable ignored) {}
 
