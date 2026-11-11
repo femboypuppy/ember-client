@@ -131,6 +131,43 @@ public class DeepPulse extends Module {
         .build()
     );
 
+    private final Setting<Boolean> revealFinder = sgGeneral.add(new BoolSetting.Builder()
+        .name("reveal-finder")
+        .description("A man-made block (chest, barrel, shulker, spawner, hopper, furnace, piston, redstone, glass, bed...) among the blocks the server reveals: far away it marks the chunk at once, near you it tells you where it is while you dig and outlines it through the walls.")
+        .defaultValue(true)
+        .build()
+    );
+
+    /** Parts of names of blocks nature doesn't put underground (structures aside: dungeons and mineshafts can still trip spawner/chest). */
+    private static final String[] MAN_MADE = {"chest", "barrel", "shulker", "spawner", "hopper", "furnace", "smoker", "piston",
+        "observer", "dropper", "dispenser", "repeater", "comparator", "redstone_wire", "redstone_lamp", "redstone_block",
+        "redstone_torch", "glass", "_bed", "crafting_table", "anvil", "enchanting", "brewing", "beacon", "lever", "button",
+        "pressure_plate", "trapdoor", "_door", "ladder", "_sign", "carpet", "concrete", "_wool", "torch", "lantern",
+        "bookshelf", "target", "note_block", "jukebox", "smithing", "loom", "cartographer", "grindstone", "stonecutter",
+        "composter", "campfire", "respawn_anchor", "lodestone", "item_frame", "slime_block", "honey_block", "tnt"};
+
+    private static boolean manMade(net.minecraft.block.BlockState state) {
+        String id = net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).getPath();
+        if (id.startsWith("ender_chest") || id.startsWith("trial_") || id.startsWith("soul_")) return false;
+        for (String m : MAN_MADE) if (id.contains(m)) return true;
+        return false;
+    }
+
+    /** Man-made blocks revealed right around you, outlined for a minute: what you're digging towards. */
+    private final List<long[]> nearReveals = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * Deep evidence near a chunk, {x, y, z, score} each: what the Sus Chunk Finder's Dig Guide steers by. Only what
+     * was seen below max-y and away from you.
+     */
+    public List<int[]> evidenceNear(int chunkX, int chunkZ, int radius) {
+        List<int[]> out = new ArrayList<>();
+        for (Spot s : spots.values()) {
+            if (Math.abs(s.chunkX - chunkX) <= radius && Math.abs(s.chunkZ - chunkZ) <= radius && s.score > 0) out.add(new int[] {s.x, s.y, s.z, s.score});
+        }
+        return out;
+    }
+
     private final Map<Long, long[]> revealBuckets = new ConcurrentHashMap<>();
     private long revealsAt;
 
@@ -351,6 +388,11 @@ public class DeepPulse extends Module {
     private void blockChange(BlockPos pos, net.minecraft.block.BlockState state) {
         // Fake filler swapped for the real block: the server revealing around some player, not activity.
         if (mc.world != null && DeepslateHiding.isReveal(pos, mc.world.getBlockState(pos), state)) {
+            // A man-made block among the revealed ones: a base, around someone else or right where you dig.
+            if (revealFinder.get() && pos.getY() < maxY.get() && manMade(state)) {
+                incoming.add(new Event("revealed", pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, 3,
+                    net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).getPath()));
+            }
             if (!undergroundPlayers.get()) return;
             long[] b = revealBuckets.computeIfAbsent(ChunkPos.toLong(pos.getX() >> 4, pos.getZ() >> 4), k -> new long[4]);
             synchronized (b) {
@@ -595,6 +637,16 @@ public class DeepPulse extends Module {
         double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
         boolean near = distance < minDistance.get();
         stats.merge(e.kind + (deep ? " deep" : " high") + (near ? " near" : ""), 1, Integer::sum);
+        if (near && deep && e.kind.equals("revealed")) {
+            // Right where you dig: say where it is, outline it for a minute.
+            long key = BlockPos.asLong((int) Math.floor(e.x), (int) Math.floor(e.y), (int) Math.floor(e.z));
+            if (nearReveals.stream().anyMatch(r -> r[0] == key)) return;
+            nearReveals.add(new long[] {key, now});
+            String text = String.format("%s %dm away, %s", e.detail, Math.round(distance), dy < -1 ? Math.round(-dy) + " below you" : dy > 1 ? Math.round(dy) + " above you" : "at your height");
+            MeteorClient.LOG.info("[Ember DeepPulse] Revealed near you: {} at {} {} {}", text, (int) e.x, (int) e.y, (int) e.z);
+            if (notify.get()) EmberNotificationsHud.push("Revealed", text, EmberNotificationsHud.WARN);
+            return;
+        }
         if (!deep || near) return;
 
         int bx = (int) Math.floor(e.x), by = (int) Math.floor(e.y), bz = (int) Math.floor(e.z);
@@ -638,6 +690,13 @@ public class DeepPulse extends Module {
         Color fill = color.get();
         Color line = new Color(fill.r, fill.g, fill.b, Math.min(255, fill.a * 3));
         double range = (double) renderRange.get() * renderRange.get();
+
+        long nowR = System.currentTimeMillis();
+        nearReveals.removeIf(r -> nowR - r[1] > 60_000);
+        for (long[] r : nearReveals) {
+            BlockPos p = BlockPos.fromLong(r[0]);
+            event.renderer.box(p.getX(), p.getY(), p.getZ(), p.getX() + 1, p.getY() + 1, p.getZ() + 1, fill, line, ShapeMode.Both, 0);
+        }
 
         if (playerChunks.get()) {
             Color rf = runningColor.get();
